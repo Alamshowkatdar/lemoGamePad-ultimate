@@ -1302,8 +1302,14 @@ def _setup_folder() -> str:
     base = os.path.join(
         os.environ.get("LOCALAPPDATA") or tempfile.gettempdir(), "lemoGamePad"
     )
-    os.makedirs(base, exist_ok=True)
-    return base
+    try:
+        os.makedirs(base, exist_ok=True)
+        return base
+    except OSError:
+        # A locked-down LOCALAPPDATA must not stop the server from starting.
+        fallback = os.path.join(tempfile.gettempdir(), "lemoGamePad")
+        os.makedirs(fallback, exist_ok=True)
+        return fallback
 
 
 def _file_sha256(path: str) -> str:
@@ -1438,14 +1444,15 @@ def _ensure_firewall(checks, install: bool) -> None:
         fh.write("@echo off\r\n")
         for command in commands:
             fh.write(command + "\r\n")
-    code = _run_elevated("cmd.exe", f'/c ""{script}" > "{log}" 2>&1"', folder)
+    cmd = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "cmd.exe")
+    code = _run_elevated(cmd, f'/c ""{script}" > "{log}" 2>&1"', folder)
     if code == -2:
         print("  !! Firewall rules were cancelled at the Windows prompt.")
-        print("     Run pc\\allow_firewall.ps1 as Administrator, or start the server as Administrator.")
+        print("     Run the netsh lines printed by this server as Administrator.")
         return
     if _firewall_fix_commands(checks):
         print("  !! Could not add the firewall rules automatically.")
-        print("     Run this once in an Administrator PowerShell:  pc\\allow_firewall.ps1")
+        print("     Run the netsh lines printed by this server as Administrator.")
         if os.path.isfile(log):
             print(f"     Details: {log}")
         return
