@@ -50,6 +50,8 @@ and download both files:
 
 The binaries are attached to the release, not stored in the git history.
 `release/` is a local build folder and is ignored by git.
+The `pc\...` scripts mentioned below (firewall repair, ghost-pad cleanup, tests)
+ship with the **source repository**, not with the two release files.
 
 > **Windows SmartScreen:** the EXE is not code-signed (a certificate costs money),
 > so Windows may show *"Windows protected your PC"*. Click **More info → Run
@@ -109,8 +111,9 @@ The banner always tells you the real state, so you can see what is missing.
 ### If UAC is cancelled
 
 Nothing breaks — the server still starts and prints the exact commands you can
-run later. Install ViGEmBus manually and/or run this in an **Administrator**
-PowerShell from the project folder:
+run later. Install ViGEmBus manually and/or run the `netsh` lines the server
+prints in an **Administrator** PowerShell (or `pc\allow_firewall.ps1` from the
+source repository):
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\pc\allow_firewall.ps1
