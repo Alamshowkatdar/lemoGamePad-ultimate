@@ -1,0 +1,30 @@
+# --- signing keys ----------------------------------------------------------
+# Never publish a keystore or its passwords. Generate your own:
+# see "Signing the APK yourself" in README.md.
+android/keystore/
+
+# --- Android build output --------------------------------------------------
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+*.iml
+.idea/
+
+# --- PC build output -------------------------------------------------------
+pc/build/
+pc/dist/
+pc/*.spec
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# --- generated at runtime --------------------------------------------------
+release/
+lemoGamePad-qr-*.png
+pc/lemoGamePad-qr-*.png
+
+# --- editors / OS ----------------------------------------------------------
+.vscode/
+.DS_Store
+Thumbs.db
