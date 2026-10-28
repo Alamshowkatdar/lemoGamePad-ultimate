@@ -53,8 +53,8 @@ The binaries are attached to the release, not stored in the git history.
 
 > **Windows SmartScreen:** the EXE is not code-signed (a certificate costs money),
 > so Windows may show *"Windows protected your PC"*. Click **More info → Run
-> anyway**. The server never touches the internet except to download the official
-> ViGEmBus driver the first time, and to nothing else.
+> anyway**. Apart from downloading ViGEmBus when it is missing, the server does
+> not use the internet.
 
 ---
 
@@ -118,8 +118,9 @@ powershell -ExecutionPolicy Bypass -File .\pc\allow_firewall.ps1
 
 ### Moving the EXE later
 
-The firewall rules are tied to the port, not to a folder, so moving the EXE keeps
-working. If Windows ever asks again, click **Allow**.
+The rules the server adds are tied to the port, not to a folder, so moving the
+EXE keeps working. (Rules added by `pc\allow_firewall.ps1` are tied to the old
+EXE path — rerun that script after moving if you used it.)
 
 ---
 
@@ -138,7 +139,7 @@ signed with the same key; see [Signing the APK yourself](#signing-the-apk-yourse
 
 ## 4. Choose how the phone talks to the PC
 
-All three modes use the same encrypted-free local protocol and all three are
+All three modes use the same unencrypted local protocol and all three are
 supported by the same APK. Pick the one that fits your situation:
 
 | Mode | Best for | Phone setting | PC setting | Typical latency |
