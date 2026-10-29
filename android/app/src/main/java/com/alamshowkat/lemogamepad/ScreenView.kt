@@ -29,7 +29,7 @@ import kotlin.math.min
  * The PC streams length-prefixed JPEG frames over TCP (video port = UDP port + 1).
  * Tap toggles small/large, dragging moves it, and the corner button closes it.
  */
-internal enum class ScreenQuality(val wireId: Int, val label: String, val shortLabel: String) {
+enum class ScreenQuality(val wireId: Int, val label: String, val shortLabel: String) {
     LOW(0, "LOW", "LOW"),
     BALANCED(1, "BALANCED", "BAL"),
     HIGH(2, "HIGH", "HIGH");
@@ -421,6 +421,7 @@ class ScreenView(context: Context) : View(context) {
     private fun dp(v: Float): Float = v * resources.displayMetrics.density
 
     companion object {
+        private const val QUALITY_ACK = -1
         const val SMALL_SCALE = 0.62f
     }
 }
