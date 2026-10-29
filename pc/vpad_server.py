@@ -368,12 +368,13 @@ class PadSlot:
 
 
 class VideoClient:
-    """One PiP viewer. A one-frame queue keeps a slow phone from stalling others."""
+    """One PiP viewer with a latest-frame queue and a negotiated quality profile."""
 
-    def __init__(self, server: "VideoServer", sock: socket.socket, addr: tuple):
+    def __init__(self, server: "VideoServer", sock: socket.socket, addr: tuple, quality: str = "balanced"):
         self.server = server
         self.sock = sock
         self.addr = addr
+        self.quality = quality
         self.queue: "queue.Queue[bytes]" = queue.Queue(maxsize=1)
         self.alive = True
 
@@ -406,6 +407,11 @@ class VideoClient:
 
     def _run(self) -> None:
         try:
+            self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            # Bound kernel buffering so slow phones don't accumulate seconds of
+            # stale video behind the one-frame application queue.
+            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 128 * 1024)
+            self.sock.settimeout(0.75)
             while self.alive and self.server.running:
                 try:
                     frame = self.queue.get(timeout=1.0)
@@ -422,15 +428,12 @@ class VideoClient:
 
 class VideoServer:
     """
-    Streams the PC screen to every phone that asks for it as length-prefixed
-    JPEG frames over TCP.
-
-    Frame layout:  u32 big-endian length  +  JPEG bytes
-    The default port is the control port + 1 (9877), so the phones never need a
-    second address. Several phones can watch at once; each gets every frame and
-    newer frames replace unread ones, so one slow phone cannot hold the others
-    back. Nothing is captured while nobody is watching.
+    Streams length-prefixed JPEG frames over TCP. Phones may request low,
+    balanced or high quality independently. Each viewer has a one-frame queue,
+    so a slow phone cannot hold up capture or other viewers.
     """
+
+    QUALITY_IDS = {0: "low", 1: "balanced", 2: "high"}
 
     def __init__(
         self,
@@ -458,6 +461,21 @@ class VideoServer:
     def viewers(self) -> int:
         with self._client_lock:
             return len(self._clients)
+
+    def _profile_options(self, profile: str) -> tuple[int, int, int]:
+        if profile == "low":
+            return (
+                max(1, self.fps // 2),
+                max(160, self.width // 2),
+                max(20, self.quality - 20),
+            )
+        if profile == "high":
+            return (
+                min(30, max(self.fps, round(self.fps * 1.5))),
+                min(1920, max(self.width, round(self.width * 1.5))),
+                min(90, self.quality + 20),
+            )
+        return self.fps, self.width, self.quality
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -528,10 +546,44 @@ class VideoServer:
                     pass
                 continue
 
-            client = VideoClient(self, client_sock, addr)
+            # New phones send LGVQ + a profile byte. Older apps send nothing;
+            # after a short timeout they keep receiving the legacy defaults.
+            profile = "balanced"
+            client_sock.settimeout(0.25)
+            hello = bytearray()
+            try:
+                while len(hello) < 5:
+                    chunk = client_sock.recv(5 - len(hello))
+                    if not chunk:
+                        break
+                    hello.extend(chunk)
+            except socket.timeout:
+                pass
+            except OSError:
+                client_sock.close()
+                continue
+
+            if len(hello) == 5 and hello[:4] == b"LGVQ":
+                profile_id = hello[4]
+                profile = self.QUALITY_IDS.get(profile_id, "balanced")
+                try:
+                    # Negative frame length is reserved for the one-time
+                    # quality acknowledgement; ordinary frames are positive.
+                    client_sock.sendall(struct.pack(">iB", -1, profile_id))
+                except OSError:
+                    client_sock.close()
+                    continue
+
+            try:
+                client_sock.settimeout(None)
+            except OSError:
+                client_sock.close()
+                continue
+
+            client = VideoClient(self, client_sock, addr, profile)
             with self._client_lock:
                 self._clients.append(client)
-            print(f"[video] phone viewing the PC screen from {addr[0]}")
+            print(f"[video] phone viewing the PC screen from {addr[0]} ({profile})")
             client.start()
 
     def _capture_loop(self) -> None:
@@ -539,7 +591,8 @@ class VideoServer:
         from PIL import Image
 
         grabber_factory = getattr(mss, "MSS", mss.mss)
-        interval = 1.0 / self.fps
+        resampling = getattr(Image, "Resampling", Image).BILINEAR
+        frame_index = 0
 
         with grabber_factory() as grabber:
             monitor = grabber.monitors[1]
@@ -550,33 +603,53 @@ class VideoServer:
                 if not clients:
                     # Nobody is watching: do not burn CPU capturing.
                     time.sleep(0.2)
+                    frame_index = 0
                     continue
 
+                groups: dict[str, list[VideoClient]] = {}
+                for client in clients:
+                    groups.setdefault(client.quality, []).append(client)
+                options = {profile: self._profile_options(profile) for profile in groups}
+                target_fps = max(item[0] for item in options.values())
+                interval = 1.0 / target_fps
                 started = time.monotonic()
+
                 try:
                     shot = grabber.grab(monitor)
                     img = Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
+                    frame_index += 1
 
-                    if img.width > self.width:
-                        height = max(1, round(img.height * self.width / img.width))
-                        img = img.resize((self.width, height), Image.BILINEAR)
+                    for profile, viewers in groups.items():
+                        profile_fps, width, jpeg_quality = options[profile]
+                        stride = max(1, round(target_fps / profile_fps))
+                        if frame_index % stride != 0:
+                            continue
 
-                    buffer = io.BytesIO()
-                    img.save(buffer, format="JPEG", quality=self.quality, optimize=False)
-                    payload = buffer.getvalue()
-                    frame = struct.pack(">I", len(payload)) + payload
+                        variant = img
+                        if img.width > width:
+                            height = max(1, round(img.height * width / img.width))
+                            variant = img.resize((width, height), resampling)
+
+                        buffer = io.BytesIO()
+                        variant.save(
+                            buffer,
+                            format="JPEG",
+                            quality=jpeg_quality,
+                            subsampling=2,
+                            optimize=False,
+                        )
+                        payload = buffer.getvalue()
+                        packet = struct.pack(">I", len(payload)) + payload
+                        for client in viewers:
+                            client.offer(packet)
                 except Exception as exc:  # pragma: no cover
                     self.error = f"screen capture failed ({exc})"
                     time.sleep(0.5)
                     continue
 
-                for client in clients:
-                    client.offer(frame)
-
                 elapsed = time.monotonic() - started
                 if elapsed < interval:
                     time.sleep(interval - elapsed)
-
 
 def qr_payload(ip: str, port: int, name: str) -> str:
     query = urllib.parse.urlencode({"h": ip, "p": port, "n": name})
