@@ -222,11 +222,31 @@ class ScreenView(context: Context) : View(context) {
                 var fpsWindowStart = SystemClock.elapsedRealtime()
                 var fpsFrames = 0
                 while (running && generation == streamGeneration) {
-                    val len = nextLength ?: input.readInt()
+                    var len = nextLength ?: input.readInt()
                     nextLength = null
-                    if (len <= 0 || len > 4 * 1024 * 1024) break
-                    val bytes = ByteArray(len)
+                    if (len <= 0 || len > MAX_FRAME_BYTES) break
+                    var bytes = ByteArray(len)
                     input.readFully(bytes)
+
+                    // TCP can deliver older images in a burst after a brief stall.
+                    // Drain every complete queued frame and decode only the newest,
+                    // so a slow decoder does not keep showing seconds-old gameplay.
+                    while (input.available() >= Int.SIZE_BYTES) {
+                        val queuedLength = input.readInt()
+                        if (queuedLength <= 0 || queuedLength > MAX_FRAME_BYTES) {
+                            len = queuedLength
+                            nextLength = queuedLength
+                            break
+                        }
+                        if (input.available() < queuedLength) {
+                            nextLength = queuedLength
+                            break
+                        }
+                        len = queuedLength
+                        bytes = ByteArray(len)
+                        input.readFully(bytes)
+                    }
+                    if (len <= 0 || len > MAX_FRAME_BYTES) break
                     val decoded = BitmapFactory.decodeByteArray(bytes, 0, len, opts)
                     if (decoded != null && running && generation == streamGeneration) {
                         frame = decoded
@@ -422,6 +442,7 @@ class ScreenView(context: Context) : View(context) {
 
     companion object {
         private const val QUALITY_ACK = -1
+        private const val MAX_FRAME_BYTES = 4 * 1024 * 1024
         const val SMALL_SCALE = 0.62f
     }
 }
