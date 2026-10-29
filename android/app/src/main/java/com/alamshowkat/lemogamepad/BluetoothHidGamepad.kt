@@ -106,7 +106,7 @@ internal class BluetoothHidGamepad(
                             "Lemo GamePad",
                             "Android phone gamepad",
                             "Lemo GamePad Ultimate",
-                            BluetoothHidDevice.SUBCLASS1_GAMEPAD,
+                            0x04.toByte(),
                             REPORT_DESCRIPTOR,
                         ),
                         null,
