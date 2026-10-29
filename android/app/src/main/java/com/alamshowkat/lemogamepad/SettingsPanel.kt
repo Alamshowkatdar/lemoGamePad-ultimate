@@ -95,6 +95,8 @@ class SettingsPanel(
         fun toast(message: String)
         fun bluetoothPermissionsMissing(): Boolean
         fun requestBluetoothPermissions()
+        fun onStartPhoneGamepad()
+        fun onStopPhoneGamepad()
     }
 
     val view = FrameLayout(activity)
@@ -306,6 +308,7 @@ class SettingsPanel(
         content.addView(statusCard(), cardParams())
         content.addView(connectionCard(), cardParams())
         content.addView(bluetoothCard(), cardParams())
+        content.addView(phoneGamepadCard(), cardParams())
         content.addView(appearanceCard(), cardParams())
         content.addView(controlsCard(), cardParams())
         content.addView(screenCard(), cardParams())
@@ -531,6 +534,30 @@ class SettingsPanel(
             bluetoothStatus.setTextColor(t.textDim)
             panLine.setTextColor(t.muted)
         }
+        return card
+    }
+
+    private fun phoneGamepadCard(): LinearLayout {
+        val card = card()
+        card.addView(sectionTitle("PHONE-TO-PHONE GAMEPAD"))
+        card.addView(
+            tiny(
+                "Bluetooth makes this phone act like a real game controller. Start it here, " +
+                    "then pair “Lemo GamePad” from Bluetooth settings on the phone running your game. " +
+                    "Android 9+ is required; Wi-Fi-to-PC remains available separately.",
+                bottom = px(8),
+            ),
+        )
+        val actions = row()
+        actions.addView(
+            action("START GAMEPAD", primary = true) { callbacks.onStartPhoneGamepad() },
+            weightParams(1f, end = px(5)),
+        )
+        actions.addView(
+            action("STOP", primary = false) { callbacks.onStopPhoneGamepad() },
+            weightParams(1f),
+        )
+        card.addView(actions)
         return card
     }
 
