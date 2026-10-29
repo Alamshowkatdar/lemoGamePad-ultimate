@@ -223,7 +223,7 @@ class SettingsPanel(
 
         val eyebrow = TextView(activity).apply {
             text = "CONTROL CENTRE"
-            textSize = 8.5f
+            textSize = 10f
             letterSpacing = 0.2f
             typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
         }
@@ -237,7 +237,7 @@ class SettingsPanel(
         }
         val author = TextView(activity).apply {
             text = "${Brand.AUTHOR.uppercase()}  ·  v${Brand.VERSION}"
-            textSize = 8.5f
+            textSize = 10f
             letterSpacing = 0.14f
         }
         titles.addView(eyebrow)
@@ -324,7 +324,7 @@ class SettingsPanel(
     private fun card(): LinearLayout {
         val card = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(px(12), px(11), px(12), px(12))
+            setPadding(px(14), px(13), px(14), px(14))
         }
         tinters += {
             val t = pad.selectedTheme
@@ -354,12 +354,12 @@ class SettingsPanel(
         }
         statusTitle = TextView(activity).apply {
             text = "NOT PAIRED"
-            textSize = 10.5f
+            textSize = 12f
             letterSpacing = 0.13f
             typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
         }
         statusSub = TextView(activity).apply {
-            textSize = 9f
+            textSize = 10.5f
             letterSpacing = 0.04f
             gravity = Gravity.END
             maxLines = 2
@@ -371,7 +371,7 @@ class SettingsPanel(
         card.addView(top)
 
         detailLine = TextView(activity).apply {
-            textSize = 9.5f
+            textSize = 11f
             setLineSpacing(px(3).toFloat(), 1f)
             setPadding(px(1), px(6), 0, px(10))
             maxLines = 4
@@ -420,7 +420,7 @@ class SettingsPanel(
         card.addView(chips)
 
         hintLine = TextView(activity).apply {
-            textSize = 9.5f
+            textSize = 11f
             setLineSpacing(px(2).toFloat(), 1f)
             setPadding(px(2), px(9), px(2), px(9))
         }
@@ -454,7 +454,7 @@ class SettingsPanel(
         card.addView(scanRow, topParams(px(8)))
 
         scanLine = TextView(activity).apply {
-            textSize = 8.5f
+            textSize = 10f
             letterSpacing = 0.03f
             setLineSpacing(px(2).toFloat(), 1f)
             setPadding(px(2), px(7), px(2), 0)
@@ -477,7 +477,7 @@ class SettingsPanel(
         card.addView(sectionTitle("BLUETOOTH PAIRING"))
 
         bluetoothStatus = TextView(activity).apply {
-            textSize = 9.5f
+            textSize = 11f
             setLineSpacing(px(3).toFloat(), 1f)
             setPadding(px(2), 0, px(2), px(9))
             maxLines = 3
@@ -511,7 +511,7 @@ class SettingsPanel(
         card.addView(bluetoothGrantBtn, topParams(px(6)))
 
         panLine = TextView(activity).apply {
-            textSize = 9f
+            textSize = 10.5f
             setLineSpacing(px(3).toFloat(), 1f)
             setPadding(px(2), px(9), px(2), px(9))
             maxLines = 4
@@ -593,7 +593,7 @@ class SettingsPanel(
                 }
                 val chip = TextView(activity).apply {
                     text = th.name
-                    textSize = 9.5f
+                    textSize = 11f
                     gravity = Gravity.CENTER
                     setPadding(px(4), px(10), px(4), px(10))
                     isClickable = true
@@ -812,7 +812,7 @@ class SettingsPanel(
     private fun footer(): TextView {
         val text = TextView(activity).apply {
             text = "${Brand.NAME}™\nby ${Brand.AUTHOR}  ·  v${Brand.VERSION}"
-            textSize = 9f
+            textSize = 10.5f
             letterSpacing = 0.06f
             gravity = Gravity.CENTER
             setLineSpacing(px(3).toFloat(), 1f)
@@ -851,7 +851,7 @@ class SettingsPanel(
     private fun sectionTitle(text: String): TextView {
         val label = TextView(activity).apply {
             this.text = text
-            textSize = 8.5f
+            textSize = 10f
             letterSpacing = 0.17f
             typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
             setPadding(px(2), 0, 0, px(9))
@@ -863,7 +863,7 @@ class SettingsPanel(
     private fun tiny(text: String, top: Int = 0, bottom: Int = px(6)): TextView {
         val label = TextView(activity).apply {
             this.text = text
-            textSize = 8.5f
+            textSize = 10f
             letterSpacing = 0.11f
             setPadding(px(2), top, 0, bottom)
         }
@@ -874,11 +874,11 @@ class SettingsPanel(
     private fun action(label: String, primary: Boolean, onClick: () -> Unit): TextView {
         val button = TextView(activity).apply {
             text = label
-            textSize = 9.5f
+            textSize = 11f
             letterSpacing = 0.07f
             gravity = Gravity.CENTER
             setPadding(px(8), px(10), px(8), px(10))
-            minHeight = px(38)
+            minHeight = px(44)
             isSingleLine = true
             ellipsize = TextUtils.TruncateAt.END
             isClickable = true
@@ -903,11 +903,11 @@ class SettingsPanel(
     private fun chip(label: String, onClick: () -> Unit): TextView {
         return TextView(activity).apply {
             text = label
-            textSize = 9f
+            textSize = 10.5f
             letterSpacing = 0.05f
             gravity = Gravity.CENTER
             setPadding(px(4), px(9), px(4), px(9))
-            minHeight = px(34)
+            minHeight = px(40)
             isSingleLine = true
             ellipsize = TextUtils.TruncateAt.END
             isClickable = true
@@ -918,7 +918,7 @@ class SettingsPanel(
 
     private fun choiceChip(label: String, onClick: () -> Unit): TextView =
         chip(label, onClick).apply {
-            textSize = 9.5f
+            textSize = 11f
             setPadding(px(6), px(10), px(6), px(10))
         }
 
@@ -926,7 +926,7 @@ class SettingsPanel(
         val edit = EditText(activity).apply {
             hint = hintText
             inputType = type
-            textSize = 11.5f
+            textSize = 13f
             setSingleLine()
             setPadding(px(10), px(8), px(10), px(8))
             includeFontPadding = false
@@ -964,10 +964,10 @@ class SettingsPanel(
         }
         val text = TextView(activity).apply {
             this.text = label
-            textSize = 11f
+            textSize = 12.5f
         }
         val pill = TextView(activity).apply {
-            textSize = 8.5f
+            textSize = 10f
             letterSpacing = 0.08f
             gravity = Gravity.CENTER
             setPadding(px(12), px(5), px(12), px(5))
@@ -1414,3 +1414,4 @@ class SettingsPanel(
     private fun px(value: Int): Int =
         (value * activity.resources.displayMetrics.density).toInt()
 }
+
