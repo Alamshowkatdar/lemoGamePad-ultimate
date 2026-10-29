@@ -276,7 +276,7 @@ class MainActivity : Activity() {
                 textSize = 11f
                 letterSpacing = 0.06f
                 gravity = Gravity.CENTER
-                setTextColor(if (primary) onColor(t.accent) else t.textDim)
+                setTextColor(if (primary) t.bgBottom else t.textDim)
                 setPadding(px(14), px(11), px(14), px(11))
                 background = GradientDrawable().apply {
                     cornerRadius = px(13).toFloat()
