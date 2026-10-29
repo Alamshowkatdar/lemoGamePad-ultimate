@@ -513,7 +513,7 @@ class GamepadView(context: Context) : View(context) {
         canvas.drawRoundRect(rect, dp(12f), dp(12f), dashPaint)
         dashPaint.pathEffect = null
         drawTracked(
-            canvas, n.label, n.cx, n.cy, min(H * 0.019f, ey * 0.6f),
+            canvas, displayLabel(n), n.cx, n.cy, min(H * 0.019f, ey * 0.6f),
             withAlpha(theme.muted, 220), H * 0.0035f, true,
         )
     }
@@ -759,11 +759,25 @@ class GamepadView(context: Context) : View(context) {
         strokePaint.strokeWidth = if (pressed) dp(2f) else dp(1.2f)
         canvas.drawRoundRect(rect, radius, radius, strokePaint)
 
-        val size = fitTrackedSize(n.label, n.hw * 1.6f, min(n.hh * 1.05f, n.hw * 0.60f))
+        val label = displayLabel(n)
+        val size = fitTrackedSize(label, n.hw * 1.6f, min(n.hh * 1.05f, n.hw * 0.60f))
         drawTracked(
-            canvas, n.label, n.cx, n.cy, size,
+            canvas, label, n.cx, n.cy, size,
             if (pressed) theme.bgBottom else theme.textDim, size * 0.09f, true,
         )
+    }
+
+    private fun displayLabel(n: Node): String {
+        if (faceLabels == FaceLabels.XBOX) {
+            return when (n.key) {
+                "l1" -> "LB"
+                "l2" -> "LT"
+                "r1" -> "RB"
+                "r2" -> "RT"
+                else -> n.label
+            }
+        }
+        return n.label
     }
 
     // ------------------------------------------------------------------- HUD

@@ -1,12 +1,12 @@
 # lemoGamePad ultimate™
 
-**Turn an Android phone into a PS3-style gamepad for Windows.**
+**Turn an Android phone into a gamepad for Windows PCs or Android phone games.**
 
-Wi-Fi · Bluetooth · USB · QR pairing · PC screen preview · up to 4 phones on one PC
+Wi-Fi-to-PC · Bluetooth HID to Android phones · Bluetooth PAN · USB · PC screen preview
 
 by **Alam showkat**
 
-**App source version:** 1.3.4. Download the signed APK and Windows server from the [v1.3.4 release](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/tag/v1.3.4).
+**App source version:** 1.3.5. Download the signed APK and Windows server from the [v1.3.5 release](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/tag/v1.3.5).
 
 [**Download the latest release →**](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest)
 · [Report an issue](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/issues)
@@ -343,6 +343,7 @@ Every change applies immediately.
 - **Transport chips** — AUTO / WI-FI / BT / USB with readiness dots.
 - **PC address / port**, **Scan network**, **Scan QR**, and the diagnostics line.
 - **Bluetooth pairing** — adapter state, bonded PCs, discoverable mode, PAN address.
+- **Phone-to-phone Bluetooth HID** — pair this phone as a standard gamepad with another Android phone (Android 9+). No helper app or Accessibility permission is needed on the game host.
 - **Theme** — six themes with a cross-fade.
 - **Face button labels** — PlayStation symbols or Xbox letters.
 - **Customize layout / Reset layout**.
@@ -365,14 +366,14 @@ Enable **PC screen** in settings and a small live window appears over the pad.
 
 The server captures the primary monitor only while a phone is watching, then
 sends JPEG frames over TCP on **control port + 1** (9877 by default). Quality is
-saved per phone: **LOW** uses less bandwidth (6 fps / 320 px / JPEG 35),
-**BALANCED** is the default (12 fps / 640 px / JPEG 55), and **HIGH** is sharper
-(18 fps / 960 px / JPEG 75). These are the default values; the PC command-line
+saved per phone: **LOW** uses less bandwidth (15 fps / 400 px / JPEG 30),
+**BALANCED** is the default (20 fps / 800 px / JPEG 50), and **HIGH** is sharper
+(25 fps / 1200 px / JPEG 70). These are default values; the PC command-line
 options tune the balanced profile. Updated PC servers honor each phone's choice;
 older servers keep their fixed settings and the phone will show a notice. The
 preview displays its current received FPS and selected quality. Slow phones do
 not block other viewers, and their send buffers are bounded to prevent long
-stale-video queues.
+stale-video queues. The Android viewer also drops complete frames queued behind a slow decode.
 
 ```powershell
 lemoGamePad-server.exe --video-width 480 --video-fps 8 --video-quality 45
@@ -543,6 +544,7 @@ android/
     MainActivity.kt         lifecycle, transports, QR, PiP, edit mode
     SettingsPanel.kt        themed settings sheet + shared preference keys
     BluetoothPairing.kt     adapter state, discoverable mode, PAN address
+    BluetoothHidGamepad.kt   standard Bluetooth gamepad for Android hosts
     GamepadView.kt          themed canvas controller, edit mode, multitouch
     Theme.kt                six palettes, cross-fade, branding
     Link.kt                 UDP sender, ping/rumble, discovery, transports
@@ -639,8 +641,9 @@ pushes to `origin`. Tags and binaries belong on the GitHub Releases page.
   the first controller.
 - Screen preview is one-way video only; it does not let you control the PC with
   the phone's touchscreen.
-- Bluetooth and USB rely on Android tethering (PAN / RNDIS), not on a custom
-  Bluetooth HID or USB gadget driver, so the phone must have tethering enabled.
+- Bluetooth PAN and USB-to-PC rely on Android tethering (PAN / RNDIS). Phone-to-phone
+  Bluetooth HID is a separate mode; it requires Android 9+ on the controller phone
+  and a game that supports external controllers on the host phone.
 - No SIXAXIS motion or pressure-sensitive face buttons (the PS3 hardware features
   that almost no PC game reads anyway).
 - ViGEmBus is an archived third-party driver (its final release is 1.22.0). The
