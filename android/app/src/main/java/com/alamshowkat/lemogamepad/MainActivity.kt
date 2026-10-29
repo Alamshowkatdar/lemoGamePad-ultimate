@@ -45,6 +45,7 @@ class MainActivity : Activity() {
     private var screenQuality = ScreenQuality.BALANCED
     private lateinit var phoneGamepad: BluetoothHidGamepad
     private var phoneGamepadActive = false
+    private var lastPhoneVersion = -1L
 
     private val handler = Handler(Looper.getMainLooper())
     private var batteryReceiver: BroadcastReceiver? = null
@@ -56,8 +57,18 @@ class MainActivity : Activity() {
     private val phoneGamepadTicker = object : Runnable {
         override fun run() {
             if (!phoneGamepadActive) return
-            phoneGamepad.send(view.state)
-            handler.postDelayed(this, 16L)
+            // Only push a report when something moved, and only while a host
+            // is connected. Idle ticks get slower so a paired-but-paused host
+            // does not cost a wakeup every frame.
+            val connected = phoneGamepad.isConnected
+            if (connected) {
+                val version = view.state.version
+                if (version != lastPhoneVersion) {
+                    lastPhoneVersion = version
+                    phoneGamepad.send(view.state)
+                }
+            }
+            handler.postDelayed(this, if (connected) 16L else 250L)
         }
     }
 
@@ -139,6 +150,11 @@ class MainActivity : Activity() {
         registerBattery()
         handler.post(ticker)
         if (screenEnabled) showScreenPreview(true)
+        // The HID ticker is stopped while backgrounded; restart it here.
+        if (phoneGamepadActive) {
+            handler.removeCallbacks(phoneGamepadTicker)
+            handler.post(phoneGamepadTicker)
+        }
     }
 
     override fun onPause() {
@@ -151,6 +167,10 @@ class MainActivity : Activity() {
         vibrator()?.cancel()
         view.resetInputs()
         link.stop()
+        // Release every button on the game host before parking the ticker.
+        handler.removeCallbacks(phoneGamepadTicker)
+        lastPhoneVersion = -1L
+        if (phoneGamepadActive) phoneGamepad.send(view.state)
         // Keep the little window on screen, but drop the TCP link while the
         // app is in the background so it does not burn battery.
         screenView?.stopStreaming()
@@ -654,6 +674,7 @@ class MainActivity : Activity() {
                     }
                     if (!phoneGamepad.start()) return
                     phoneGamepadActive = true
+                    lastPhoneVersion = -1L
                     handler.removeCallbacks(phoneGamepadTicker)
                     handler.post(phoneGamepadTicker)
                     if (BluetoothPairing.requestDiscoverable(this@MainActivity)) {
@@ -669,6 +690,11 @@ class MainActivity : Activity() {
                     phoneGamepad.stop()
                     toast("Phone gamepad stopped")
                 }
+
+                override fun phoneGamepadRunning(): Boolean = phoneGamepadActive
+
+                override fun phoneGamepadConnected(): Boolean =
+                    phoneGamepadActive && phoneGamepad.isConnected
             },
         )
         settingsPanel = panel

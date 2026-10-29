@@ -81,7 +81,9 @@ object Brand {
     const val NAME = "lemoGamePad ultimate"
     const val MARK = "LEMOGAMEPAD ULTIMATE · ALAM SHOWKAT"
     const val AUTHOR = "Alam showkat"
-    const val VERSION = "1.3.4"
+
+    /** Keep in sync with `versionName` in android/app/build.gradle.kts. */
+    const val VERSION = "1.3.6"
 }
 
 object Themes {
@@ -219,7 +221,53 @@ object Themes {
         triangle = 0xFF0E9F63.toInt(),
     )
 
-    val all = listOf(NEON, MIDNIGHT, VIOLET, CRIMSON, RETRO, ARCTIC)
+    /** Warm sunset: copper background glow with amber and coral controls. */
+    val SOLAR = PadTheme(
+        id = "solar",
+        name = "Solar",
+        dark = true,
+        bgTop = 0xFF1C1207.toInt(),
+        bgMid = 0xFF100A04.toInt(),
+        bgBottom = 0xFF070302.toInt(),
+        surface = 0xFF1B1209.toInt(),
+        surfaceAlt = 0xFF2A1C0F.toInt(),
+        text = 0xFFFFF3E4.toInt(),
+        textDim = 0xFFEAD4B8.toInt(),
+        muted = 0xFFA38B70.toInt(),
+        accent = 0xFFFFB43E.toInt(),
+        accent2 = 0xFFFF7A3D.toInt(),
+        ok = 0xFF6FE3B0.toInt(),
+        warn = 0xFFFFD166.toInt(),
+        cross = 0xFFFFC24B.toInt(),
+        circle = 0xFFFF7A55.toInt(),
+        square = 0xFFFFD07A.toInt(),
+        triangle = 0xFF8BE28F.toInt(),
+    )
+
+    /** High-contrast graphite: pure greys with a white key light. */
+    val MONO = PadTheme(
+        id = "mono",
+        name = "Mono",
+        dark = true,
+        bgTop = 0xFF141414.toInt(),
+        bgMid = 0xFF0B0B0B.toInt(),
+        bgBottom = 0xFF030303.toInt(),
+        surface = 0xFF121212.toInt(),
+        surfaceAlt = 0xFF212121.toInt(),
+        text = 0xFFF5F5F5.toInt(),
+        textDim = 0xFFD0D0D0.toInt(),
+        muted = 0xFF8A8A8A.toInt(),
+        accent = 0xFFEDEDED.toInt(),
+        accent2 = 0xFF9E9E9E.toInt(),
+        ok = 0xFF8BE28F.toInt(),
+        warn = 0xFFFFC46B.toInt(),
+        cross = 0xFFEDEDED.toInt(),
+        circle = 0xFFBFBFBF.toInt(),
+        square = 0xFF9E9E9E.toInt(),
+        triangle = 0xFFDCDCDC.toInt(),
+    )
+
+    val all = listOf(NEON, MIDNIGHT, VIOLET, CRIMSON, SOLAR, RETRO, ARCTIC, MONO)
 
     fun byId(id: String?): PadTheme = all.firstOrNull { it.id == id } ?: NEON
 }

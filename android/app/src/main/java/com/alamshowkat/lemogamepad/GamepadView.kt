@@ -134,6 +134,9 @@ class GamepadView(context: Context) : View(context) {
         // 0 = idle, 1 = fully pressed. Drives the springy press animation.
         var pressT = 0f
 
+        /** Velocity of [pressT] so presses spring instead of easing linearly. */
+        var pressVel = 0f
+
         var bw = 0f
         var bh = 0f
 
@@ -451,22 +454,29 @@ class GamepadView(context: Context) : View(context) {
     /** Press springs, theme cross-fade and the one-shot status ripple. */
     private fun stepAnimations(dt: Float) {
         animating = false
-        val k = (dt / 95f).coerceIn(0f, 1f)
+        // Normalise to 60 Hz frames so the spring behaves the same on any
+        // refresh rate. dt is in milliseconds.
+        val step = (dt / 16.667f).coerceIn(0.25f, 3f)
 
         for (n in nodes) {
             val target = if (n.pressed || n.pointer != -1) 1f else 0f
             val delta = target - n.pressT
-            if (abs(delta) > 0.002f) {
-                n.pressT += delta * k
-                animating = true
-            } else {
+            if (abs(delta) < 0.003f && abs(n.pressVel) < 0.003f) {
                 n.pressT = target
+                n.pressVel = 0f
+                continue
             }
+            // Lightly under-damped spring: a quick overshoot that settles in
+            // about 120 ms, so the pad feels physical rather than laggy.
+            n.pressVel += (delta * PRESS_STIFFNESS - n.pressVel * PRESS_DAMPING) * step
+            n.pressT = (n.pressT + n.pressVel * step).coerceIn(-0.02f, 1.15f)
+            animating = true
         }
 
         if (themeT < 1f) {
             themeT = (themeT + dt / 300f).coerceAtMost(1f)
-            val e = 1f - (1f - themeT) * (1f - themeT) * (1f - themeT)
+            // Smootherstep: no visible kick when the fade starts or ends.
+            val e = themeT * themeT * themeT * (themeT * (themeT * 6f - 15f) + 10f)
             themeNow = if (themeT >= 1f) themeTarget else blendThemes(themeFrom, themeTarget, e)
             rebuildShaders()
             animating = true
@@ -934,9 +944,13 @@ class GamepadView(context: Context) : View(context) {
     // ---------------------------------------------------------------- status
     fun setStatus(text: String, kind: Int) {
         if (text == statusText && kind == statusKind) return
+        // The text carries live RTT and battery, so it changes constantly.
+        // Only a state change (idle -> linking -> connected) deserves the
+        // ripple, otherwise the dot would pulse non-stop.
+        val stateChanged = kind != statusKind
         statusText = text
         statusKind = kind
-        statusPulse = 1f
+        if (stateChanged) statusPulse = 1f
         startAnimating()
         if (!editMode) invalidate()
     }
@@ -1064,7 +1078,6 @@ class GamepadView(context: Context) : View(context) {
                     n.left = false
                     n.right = false
                 }
-                K_FACE -> n.pressed = false
                 else -> n.pressed = false
             }
             publish()
@@ -1083,7 +1096,7 @@ class GamepadView(context: Context) : View(context) {
      * press moves to whichever button centre is nearest the finger.
      */
     private fun rollFace(n: Node, id: Int, x: Float, y: Float) {
-        val target = nearestFace(x, y)
+        val target = nearestFace(x, y, except = n)
         if (target === n) {
             if (!n.pressed) {
                 n.pressed = true
@@ -1106,11 +1119,14 @@ class GamepadView(context: Context) : View(context) {
     }
 
     /** Nearest visible face button within reach, or null. */
-    private fun nearestFace(x: Float, y: Float): Node? {
+    private fun nearestFace(x: Float, y: Float, except: Node? = null): Node? {
         var best: Node? = null
         var bestD = Float.MAX_VALUE
         for (n in faceNodes) {
             if (n.hidden) continue
+            // Skip buttons another finger already holds, otherwise a second
+            // thumb landing on the cluster steals the press and gets nothing.
+            if (n.pointer != -1 && n !== except) continue
             val d = hypot(x - n.cx, y - n.cy)
             if (d <= n.r * 1.55f && d < bestD) {
                 bestD = d
@@ -1278,7 +1294,6 @@ class GamepadView(context: Context) : View(context) {
                     if (n.left) b = b or (1 shl Proto.LEFT)
                     if (n.right) b = b or (1 shl Proto.RIGHT)
                 }
-                K_FACE -> if (n.pressed) b = b or (1 shl n.bit)
                 else -> if (n.pressed) b = b or (1 shl n.bit)
             }
         }
@@ -1405,5 +1420,9 @@ class GamepadView(context: Context) : View(context) {
 
         /** Face buttons are laid out ±this many screen-heights from the anchor. */
         private const val FACE_SPREAD = 0.115f
+
+        /** Press spring, tuned per 60 Hz frame (slightly under-damped). */
+        private const val PRESS_STIFFNESS = 0.30f
+        private const val PRESS_DAMPING = 0.70f
     }
 }

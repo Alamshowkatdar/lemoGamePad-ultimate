@@ -14,6 +14,7 @@ import android.os.Looper
 import android.text.InputType
 import android.text.TextUtils
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.animation.AccelerateInterpolator
@@ -97,6 +98,8 @@ class SettingsPanel(
         fun requestBluetoothPermissions()
         fun onStartPhoneGamepad()
         fun onStopPhoneGamepad()
+        fun phoneGamepadRunning(): Boolean
+        fun phoneGamepadConnected(): Boolean
     }
 
     val view = FrameLayout(activity)
@@ -122,6 +125,7 @@ class SettingsPanel(
     private lateinit var scanLine: TextView
     /** Set when a scan only succeeded on a link the user did not pick. */
     private var scanFallback: String? = null
+    private lateinit var phoneGamepadStatus: TextView
     private lateinit var bluetoothStatus: TextView
     private lateinit var panLine: TextView
     private lateinit var bluetoothGrantBtn: TextView
@@ -545,9 +549,17 @@ class SettingsPanel(
                 "Bluetooth makes this phone act like a real game controller. Start it here, " +
                     "then pair “Lemo GamePad” from Bluetooth settings on the phone running your game. " +
                     "Android 9+ is required; Wi-Fi-to-PC remains available separately.",
-                bottom = px(8),
+                bottom = px(6),
             ),
         )
+        phoneGamepadStatus = TextView(activity).apply {
+            textSize = 11f
+            setLineSpacing(px(3).toFloat(), 1f)
+            setPadding(px(2), 0, px(2), px(9))
+            maxLines = 2
+            ellipsize = TextUtils.TruncateAt.END
+        }
+        card.addView(phoneGamepadStatus)
         val actions = row()
         actions.addView(
             action("START GAMEPAD", primary = true) { callbacks.onStartPhoneGamepad() },
@@ -564,50 +576,93 @@ class SettingsPanel(
     private fun appearanceCard(): LinearLayout {
         val card = card()
         card.addView(sectionTitle("APPEARANCE"))
-        card.addView(tiny("THEME"))
+        card.addView(tiny("THEME  ·  TAP A PALETTE TO CROSS-FADE THE PAD", bottom = px(8)))
 
-        val swatches = ArrayList<Pair<PadTheme, TextView>>()
+        val swatches = ArrayList<Triple<PadTheme, LinearLayout, TextView>>()
+
         fun styleSwatches() {
             val selected = pad.selectedTheme
-            for ((th, chipView) in swatches) {
+            for ((th, box, name) in swatches) {
                 val on = th.id == selected.id
-                chipView.setTextColor(if (on) onColor(selected.accent) else selected.textDim)
-                chipView.background = GradientDrawable().apply {
-                    cornerRadius = px(11).toFloat()
-                    setColor(if (on) selected.accent else withAlpha(selected.surfaceAlt, 235))
+                box.background = GradientDrawable().apply {
+                    cornerRadius = px(13).toFloat()
+                    setColor(
+                        if (on) {
+                            withAlpha(selected.accent, if (selected.dark) 46 else 32)
+                        } else {
+                            withAlpha(selected.surfaceAlt, if (selected.dark) 150 else 190)
+                        },
+                    )
                     setStroke(
-                        px(1),
-                        withAlpha(if (on) selected.accent else selected.text, if (on) 255 else 34),
+                        px(if (on) 2 else 1),
+                        if (on) selected.accent else withAlpha(selected.text, 26),
                     )
                 }
+                name.setTextColor(if (on) selected.text else selected.textDim)
             }
         }
 
-        for (rowIndex in 0 until 2) {
-            val rowBox = row()
-            for (col in 0 until 3) {
-                val th = Themes.all.getOrNull(rowIndex * 3 + col)
-                if (th == null) {
-                    rowBox.addView(View(activity), weightParams(1f))
-                    continue
-                }
-                val chip = TextView(activity).apply {
-                    text = th.name
-                    textSize = 11f
-                    gravity = Gravity.CENTER
-                    setPadding(px(4), px(10), px(4), px(10))
-                    isClickable = true
-                    isFocusable = true
-                    setOnClickListener {
-                        pad.theme = th
-                        prefs.edit().putString(PrefsKeys.THEME, th.id).apply()
-                        callbacks.onThemeChanged(th)
-                        refreshTints()
+        fun swatch(th: PadTheme): LinearLayout {
+            val box = LinearLayout(activity).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(px(7), px(7), px(7), px(7))
+                isClickable = true
+                isFocusable = true
+            }
+
+            // Three-colour preview so every palette reads at a glance: the pad
+            // background gradient plus both accent colours.
+            val preview = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
+            val backdrop = View(activity).apply {
+                background = GradientDrawable(
+                    GradientDrawable.Orientation.TOP_BOTTOM,
+                    intArrayOf(th.bgTop, th.bgMid, th.bgBottom),
+                ).apply { cornerRadius = px(7).toFloat() }
+            }
+            preview.addView(backdrop, LinearLayout.LayoutParams(0, px(30), 1f))
+            for (accentColor in intArrayOf(th.accent, th.accent2)) {
+                val bar = View(activity).apply {
+                    background = GradientDrawable().apply {
+                        cornerRadius = px(7).toFloat()
+                        setColor(accentColor)
                     }
                 }
-                swatches += th to chip
-                rowBox.addView(chip, weightParams(1f, end = px(5), bottom = px(5)))
+                preview.addView(
+                    bar,
+                    LinearLayout.LayoutParams(px(9), px(30)).apply { marginStart = px(4) },
+                )
             }
+            box.addView(preview)
+
+            val name = TextView(activity).apply {
+                text = th.name
+                textSize = 10.5f
+                letterSpacing = 0.08f
+                typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                setPadding(px(1), px(6), px(1), 0)
+                isSingleLine = true
+            }
+            box.addView(name)
+
+            box.setOnClickListener {
+                pad.theme = th
+                prefs.edit().putString(PrefsKeys.THEME, th.id).apply()
+                callbacks.onThemeChanged(th)
+                refreshTints()
+            }
+            pressable(box)
+            swatches += Triple(th, box, name)
+            return box
+        }
+
+        // Two columns, any number of themes: the picker never needs editing
+        // again when a palette is added to Themes.all.
+        for (chunk in Themes.all.chunked(2)) {
+            val rowBox = row()
+            for (th in chunk) {
+                rowBox.addView(swatch(th), weightParams(1f, end = px(6), bottom = px(6)))
+            }
+            if (chunk.size == 1) rowBox.addView(View(activity), weightParams(1f))
             card.addView(rowBox)
         }
         tinters += { styleSwatches() }
@@ -884,6 +939,7 @@ class SettingsPanel(
             isClickable = true
             isFocusable = true
             setOnClickListener { onClick() }
+            pressable(this)
         }
         tinters += {
             val t = pad.selectedTheme
@@ -913,6 +969,26 @@ class SettingsPanel(
             isClickable = true
             isFocusable = true
             setOnClickListener { onClick() }
+            pressable(this)
+        }
+    }
+
+    /**
+     * Immediate scale feedback on touch. The listener returns false so the
+     * normal click path still runs; only the visuals are ours.
+     */
+    private fun pressable(view: View, scale: Float = 0.955f) {
+        view.setOnTouchListener { target, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN ->
+                    target.animate().scaleX(scale).scaleY(scale).setDuration(90L).start()
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
+                    target.animate().scaleX(1f).scaleY(1f)
+                        .setDuration(180L)
+                        .setInterpolator(DecelerateInterpolator())
+                        .start()
+            }
+            false
         }
     }
 
@@ -1180,6 +1256,7 @@ class SettingsPanel(
 
         refreshTransportChips(readiness)
         refreshBluetooth()
+        refreshPhoneGamepad()
         tetherBtn.visibility = if (
             selectedTransport != Transport.AUTO && readiness[selectedTransport] != true
         ) {
@@ -1278,8 +1355,20 @@ class SettingsPanel(
         refreshBluetooth(force = true)
     }
 
-    private fun refreshBluetooth(force: Boolean = false) {
-        val now = android.os.SystemClock.uptimeMillis()
+    /** Live state of the HID gamepad, so the card is not just two buttons. */
+    private fun refreshPhoneGamepad() {
+        val t = pad.selectedTheme
+        val connected = callbacks.phoneGamepadConnected()
+        val running = callbacks.phoneGamepadRunning()
+        phoneGamepadStatus.text = when {
+            connected -> "● Connected — the game host is receiving input"
+            running -> "○ Broadcasting as “Lemo GamePad” — waiting for the host to pair"
+            else -> "Not running · START GAMEPAD, then pair from the host phone"
+        }
+        phoneGamepadStatus.setTextColor(if (connected) t.ok else if (running) t.warn else t.muted)
+    }
+
+    private fun refreshBluetooth(force: Boolean = false) {        val now = android.os.SystemClock.uptimeMillis()
         if (!force && now - lastBluetoothRefresh < 1500L) return
         lastBluetoothRefresh = now
 

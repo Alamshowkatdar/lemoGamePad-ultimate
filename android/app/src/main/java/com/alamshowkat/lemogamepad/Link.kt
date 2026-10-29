@@ -51,6 +51,7 @@ class Link(private val state: PadState, context: Context? = null) {
         set(value) {
             if (field == value) return
             field = value
+            invalidateProbes()
             if (running) rebind()
         }
 
@@ -79,6 +80,11 @@ class Link(private val state: PadState, context: Context? = null) {
     @Volatile private var sock: DatagramSocket? = null
     @Volatile private var viaTransport: Transport? = null
     @Volatile private var lastRebindAt = 0L
+
+    // Cached interface list for [readiness] / [localSummary]; see [probesUi].
+    @Volatile private var probeSnapshot: List<Probe> = emptyList()
+    @Volatile private var probeSnapshotAt = 0L
+    @Volatile private var probeRefreshing = false
 
     private var sender: Thread? = null
     private var receiver: Thread? = null
@@ -169,6 +175,7 @@ class Link(private val state: PadState, context: Context? = null) {
     private fun rebind() {
         if (!running) return
         lastRebindAt = SystemClock.uptimeMillis()
+        invalidateProbes()
         val choice = pickProbe(probes(transport), host)
         val fresh = try {
             DatagramSocket()
@@ -425,6 +432,7 @@ class Link(private val state: PadState, context: Context? = null) {
             val started = SystemClock.uptimeMillis()
             val deadline = started + timeoutMs
             val want = transport
+            invalidateProbes()
 
             val wanted = probes(want)
             val everything = if (want == Transport.AUTO) wanted else probes(Transport.AUTO)
@@ -745,6 +753,46 @@ class Link(private val state: PadState, context: Context? = null) {
         return all.filter { it.transport == want }
     }
 
+    /**
+     * Interface list for the UI. Enumerating every NetworkInterface costs a
+     * few milliseconds, and the settings sheet asks for this map twice a
+     * second, so the result is cached and refreshed off the main thread.
+     */
+    private fun probesUi(): List<Probe> {
+        val now = SystemClock.uptimeMillis()
+        if (probeSnapshotAt == 0L) {
+            // First call (sheet opening): compute once so the chips are right
+            // immediately; it is a one-off cost the user never sees.
+            val fresh = try {
+                probes(Transport.AUTO)
+            } catch (_: Exception) {
+                emptyList()
+            }
+            probeSnapshot = fresh
+            probeSnapshotAt = now
+            return fresh
+        }
+        if (now - probeSnapshotAt > PROBE_CACHE_MS && !probeRefreshing) {
+            probeRefreshing = true
+            thread(name = "vpad-probes", isDaemon = true) {
+                val fresh = try {
+                    probes(Transport.AUTO)
+                } catch (_: Exception) {
+                    emptyList()
+                }
+                probeSnapshot = fresh
+                probeSnapshotAt = SystemClock.uptimeMillis()
+                probeRefreshing = false
+            }
+        }
+        return probeSnapshot
+    }
+
+    /** Forget the cached interface list, e.g. after tethering was toggled. */
+    fun invalidateProbes() {
+        probeSnapshotAt = 0L
+    }
+
     /** The link the control socket should leave through, for [host]. */
     private fun pickProbe(list: List<Probe>, target: String?): Probe? {
         if (list.isEmpty()) return null
@@ -764,12 +812,12 @@ class Link(private val state: PadState, context: Context? = null) {
     /** True when the phone currently has an interface for this transport. */
     fun transportReady(t: Transport): Boolean {
         if (t == Transport.AUTO) return true
-        return probes(t).isNotEmpty()
+        return probesUi().any { it.transport == t }
     }
 
     /** Readiness for every transport from a single interface scan. */
     fun readiness(): Map<Transport, Boolean> {
-        val seen = probes(Transport.AUTO).mapNotNull { it.transport }.toSet()
+        val seen = probesUi().mapNotNull { it.transport }.toSet()
         return Transport.values().associateWith { it == Transport.AUTO || it in seen }
     }
 
@@ -809,7 +857,7 @@ class Link(private val state: PadState, context: Context? = null) {
     /** Local addresses per link, shown in settings so manual entry is easy. */
     fun localSummary(): String {
         val out = LinkedHashSet<String>()
-        for (p in probes(Transport.AUTO)) {
+        for (p in probesUi()) {
             val ip = p.local?.hostAddress ?: continue
             val kind = p.transport ?: continue
             out += "${labelOf(kind)} $ip"
@@ -847,6 +895,9 @@ class Link(private val state: PadState, context: Context? = null) {
     private companion object {
         /** Rebuild a dead socket after this long without a pong. */
         const val REBIND_AFTER_MS = 5000L
+
+        /** How long the UI-facing interface list stays warm. */
+        const val PROBE_CACHE_MS = 1200L
 
         /** Which token this install keeps for good; see [token]. */
         fun loadToken(context: Context?): Int {
