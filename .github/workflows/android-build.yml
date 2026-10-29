@@ -30,7 +30,7 @@ jobs:
 
       - name: Build Android app
         working-directory: android
-        run: ./gradlew --no-daemon assembleDebug
+        run: chmod +x ./gradlew && ./gradlew --no-daemon assembleDebug
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
