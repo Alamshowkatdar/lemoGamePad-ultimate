@@ -410,7 +410,7 @@ class VideoClient:
             self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
             # Bound kernel buffering so slow phones don't accumulate seconds of
             # stale video behind the one-frame application queue.
-            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 128 * 1024)
+            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 32 * 1024)
             self.sock.settimeout(0.75)
             while self.alive and self.server.running:
                 try:
@@ -438,9 +438,9 @@ class VideoServer:
     def __init__(
         self,
         port: int,
-        fps: int = 12,
-        width: int = 640,
-        quality: int = 55,
+        fps: int = 20,
+        width: int = 800,
+        quality: int = 50,
         max_viewers: int = 4,
     ):
         self.port = port
@@ -465,13 +465,13 @@ class VideoServer:
     def _profile_options(self, profile: str) -> tuple[int, int, int]:
         if profile == "low":
             return (
-                max(1, self.fps // 2),
+                max(1, round(self.fps * 0.75)),
                 max(160, self.width // 2),
                 max(20, self.quality - 20),
             )
         if profile == "high":
             return (
-                min(30, max(self.fps, round(self.fps * 1.5))),
+                min(30, max(self.fps, round(self.fps * 1.25))),
                 min(1920, max(self.width, round(self.width * 1.5))),
                 min(90, self.quality + 20),
             )
@@ -1685,9 +1685,9 @@ def main(argv=None) -> int:
         default=None,
         help="screen stream TCP port (default: control port + 1)",
     )
-    ap.add_argument("--video-fps", type=int, default=12, help="screen stream frame rate (default 12)")
-    ap.add_argument("--video-width", type=int, default=640, help="stream width in pixels (default 640)")
-    ap.add_argument("--video-quality", type=int, default=55, help="JPEG quality 20-90 (default 55)")
+    ap.add_argument("--video-fps", type=int, default=20, help="screen stream frame rate (default 20)")
+    ap.add_argument("--video-width", type=int, default=800, help="stream width in pixels (default 800)")
+    ap.add_argument("--video-quality", type=int, default=50, help="JPEG quality 20-90 (default 50)")
     ap.add_argument("--no-qr", action="store_true", help="do not print the pairing QR code")
     ap.add_argument(
         "--no-install-deps",
