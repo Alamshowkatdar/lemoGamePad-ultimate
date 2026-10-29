@@ -6,6 +6,7 @@ import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothHidDevice
 import android.bluetooth.BluetoothHidDeviceAppSdpSettings
 import android.bluetooth.BluetoothProfile
+import android.bluetooth.BluetoothManager
 import android.content.Context
 import android.os.Build
 import java.util.concurrent.Executor
@@ -51,7 +52,7 @@ internal class BluetoothHidGamepad(
         private val onStatus: (String) -> Unit,
     ) {
         private val adapter: BluetoothAdapter? = try {
-            context.getSystemService(BluetoothAdapter::class.java)
+            context.getSystemService(BluetoothManager::class.java)?.adapter
         } catch (_: Exception) {
             null
         }
