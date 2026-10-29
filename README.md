@@ -6,7 +6,7 @@ Wi-Fi-to-PC · Bluetooth HID to Android phones · Bluetooth PAN · USB · PC scr
 
 by **Alam showkat**
 
-**App source version:** 1.3.6. Download the signed APK and Windows server from the [v1.3.5 release](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/tag/v1.3.5) — 1.3.6 is a source release that builds on it (same protocol, same server).
+**App source version:** 1.3.6. Download the signed APK and Windows server from the [v1.3.6 release](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/tag/v1.3.6).
 
 [**Download the latest release →**](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest)
 · [Report an issue](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/issues)
