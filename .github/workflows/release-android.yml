@@ -4,12 +4,19 @@ on:
   release:
     types:
       - published
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing release tag to attach the Windows server to
+        required: true
+        type: string
 
 permissions:
   contents: write
 
 jobs:
   release:
+    if: github.event_name == 'release'
     name: Build and publish signed APK
     runs-on: ubuntu-latest
     steps:
@@ -60,6 +67,8 @@ jobs:
     steps:
       - name: Check out tagged source
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -68,6 +77,8 @@ jobs:
 
       - name: Install server build dependencies
         working-directory: pc
+        env:
+          VGAMEPAD_SKIP_VIGEMBUS_INSTALL: "true"
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt pyinstaller
@@ -77,7 +88,8 @@ jobs:
         run: |
           python -m PyInstaller --noconfirm --onefile --console --name lemoGamePad-server --collect-all vgamepad --collect-all mss --collect-all PIL --collect-all qrcode --distpath dist --workpath build vpad_server.py
 
-      - name: Attach Windows server to published release
+      - name: Attach Windows server to release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$env:GITHUB_REF_NAME" pc/dist/lemoGamePad-server.exe --clobber
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.event.release.tag_name }}
+        run: gh release upload "$env:RELEASE_TAG" pc/dist/lemoGamePad-server.exe --clobber
