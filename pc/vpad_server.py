@@ -621,8 +621,9 @@ class VideoServer:
 
                     for profile, viewers in groups.items():
                         profile_fps, width, jpeg_quality = options[profile]
-                        stride = max(1, round(target_fps / profile_fps))
-                        if frame_index % stride != 0:
+                        # Distribute lower-rate profiles evenly across
+                        # capture ticks without rounding 12 fps down to 9.
+                        if (frame_index * profile_fps) // target_fps <= ((frame_index - 1) * profile_fps) // target_fps:
                             continue
 
                         variant = img
