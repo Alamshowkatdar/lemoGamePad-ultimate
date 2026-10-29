@@ -6,7 +6,7 @@ Wi-Fi · Bluetooth · USB · QR pairing · PC screen preview · up to 4 phones o
 
 by **Alam showkat**
 
-**App source version:** 1.3.4. The v1.3.4 release did not produce installable downloads; the latest signed APK remains v1.3.2 until v1.3.4 builds successfully.
+**App source version:** 1.3.4. Download the signed APK and Windows server from the [v1.3.4 release](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/tag/v1.3.4).
 
 [**Download the latest release →**](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest)
 · [Report an issue](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/issues)
