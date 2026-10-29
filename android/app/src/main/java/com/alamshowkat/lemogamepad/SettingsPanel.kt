@@ -44,6 +44,7 @@ internal object PrefsKeys {
     const val TOKEN = "token"
     const val SCREEN = "screen"
     const val SCREEN_SMALL = "screen_small"
+    const val SCREEN_QUALITY = "screen_quality"
     const val SCREEN_X = "screen_x"
     const val SCREEN_Y = "screen_y"
 }
@@ -88,6 +89,7 @@ class SettingsPanel(
         fun onThemeChanged(theme: PadTheme)
         fun onScreenPreview(enabled: Boolean)
         fun onScreenSize(small: Boolean)
+        fun onScreenQuality(quality: ScreenQuality)
         fun attachScreenStream()
         fun onClosed()
         fun toast(message: String)
@@ -687,12 +689,20 @@ class SettingsPanel(
 
         var enabled = prefs.getBoolean(PrefsKeys.SCREEN, false)
         var small = prefs.getBoolean(PrefsKeys.SCREEN_SMALL, true)
+        var quality = ScreenQuality.fromId(
+            prefs.getInt(PrefsKeys.SCREEN_QUALITY, ScreenQuality.BALANCED.wireId),
+        )
 
         val sizeRow = row()
         val smallChip = chip("SMALL") {}
         val largeChip = chip("LARGE") {}
 
-        fun refreshSizeChips() {
+        val qualityRow = row()
+        val lowChip = chip("LOW") {}
+        val balancedChip = chip("BALANCED") {}
+        val highChip = chip("HIGH") {}
+
+        fun refreshChips() {
             val t = pad.selectedTheme
             for ((chipView, on) in listOf(
                 smallChip to (small && enabled),
@@ -706,6 +716,19 @@ class SettingsPanel(
                     setStroke(px(1), withAlpha(if (on) t.accent else t.text, if (on) 255 else 34))
                 }
             }
+            for ((chipView, selected) in listOf(
+                lowChip to (quality == ScreenQuality.LOW),
+                balancedChip to (quality == ScreenQuality.BALANCED),
+                highChip to (quality == ScreenQuality.HIGH),
+            )) {
+                chipView.alpha = if (enabled) 1f else 0.38f
+                chipView.setTextColor(if (selected) onColor(t.accent) else t.textDim)
+                chipView.background = GradientDrawable().apply {
+                    cornerRadius = px(10).toFloat()
+                    setColor(if (selected) t.accent else withAlpha(t.surfaceAlt, 235))
+                    setStroke(px(1), withAlpha(if (selected) t.accent else t.text, if (selected) 255 else 34))
+                }
+            }
         }
 
         smallChip.setOnClickListener {
@@ -713,30 +736,49 @@ class SettingsPanel(
             small = true
             prefs.edit().putBoolean(PrefsKeys.SCREEN_SMALL, true).apply()
             callbacks.onScreenSize(true)
-            refreshSizeChips()
+            refreshChips()
         }
         largeChip.setOnClickListener {
             if (!enabled) return@setOnClickListener
             small = false
             prefs.edit().putBoolean(PrefsKeys.SCREEN_SMALL, false).apply()
             callbacks.onScreenSize(false)
-            refreshSizeChips()
+            refreshChips()
         }
         sizeRow.addView(smallChip, weightParams(1f, end = px(5)))
         sizeRow.addView(largeChip, weightParams(1f))
+
+        fun selectQuality(value: ScreenQuality) {
+            if (!enabled || quality == value) return
+            quality = value
+            prefs.edit().putInt(PrefsKeys.SCREEN_QUALITY, value.wireId).apply()
+            callbacks.onScreenQuality(value)
+            refreshChips()
+        }
+        lowChip.setOnClickListener { selectQuality(ScreenQuality.LOW) }
+        balancedChip.setOnClickListener { selectQuality(ScreenQuality.BALANCED) }
+        highChip.setOnClickListener { selectQuality(ScreenQuality.HIGH) }
+        qualityRow.addView(lowChip, weightParams(1f, end = px(4)))
+        qualityRow.addView(balancedChip, weightParams(1f, end = px(4)))
+        qualityRow.addView(highChip, weightParams(1f))
 
         val previewToggle = toggle("Screen preview window", enabled) { on ->
             enabled = on
             prefs.edit().putBoolean(PrefsKeys.SCREEN, on).apply()
             callbacks.onScreenPreview(on)
-            refreshSizeChips()
+            refreshChips()
         }
 
         card.addView(previewToggle)
         card.addView(tiny("PREVIEW SIZE", top = px(10), bottom = px(5)))
         card.addView(sizeRow)
-        tinters += { refreshSizeChips() }
-        refreshSizeChips()
+        card.addView(tiny("STREAM QUALITY", top = px(10), bottom = px(5)))
+        card.addView(qualityRow)
+        card.addView(
+            tiny("LOW sends less data · HIGH is sharper · live FPS appears on the preview", top = px(5)),
+        )
+        tinters += { refreshChips() }
+        refreshChips()
         return card
     }
 

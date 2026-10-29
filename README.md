@@ -6,7 +6,7 @@ Wi-Fi · Bluetooth · USB · QR pairing · PC screen preview · up to 4 phones o
 
 by **Alam showkat**
 
-**App version:** 1.3.2. The signed APK is available in the latest release.
+**App source version:** 1.3.3. The latest signed APK remains v1.3.2 until v1.3.3 is published.
 
 [**Download the latest release →**](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest)
 · [Report an issue](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/issues)
@@ -348,7 +348,7 @@ Every change applies immediately.
 - **Customize layout / Reset layout**.
 - **Stick deadzone** — 0–40 %, default 12 %.
 - **Vibration feedback** — touch clicks plus game rumble.
-- **PC screen** — on/off toggle plus **SMALL / LARGE** preview size.
+- **PC screen** — on/off toggle, **SMALL / LARGE** size, and per-phone **LOW / BALANCED / HIGH** stream quality.
 
 The sheet opens without popping the keyboard, keeps every button on one line, and
 closes on the scrim, the ✕ button, or Back. The footer shows the app name,
@@ -363,11 +363,16 @@ Enable **PC screen** in settings and a small live window appears over the pad.
 - **✕** closes it (re-enable in settings).
 - It shows `CONNECTING`, `LIVE` or `RECONNECTING`.
 
-The server captures the primary monitor with `mss`, downscales it and sends JPEG
-frames over TCP on **control port + 1** (9877 by default). It is a preview, not
-remote control, and it pauses when the app is in the background. As many phones
-as controller slots can watch at the same time; extra viewers are refused instead
-of stealing the stream.
+The server captures the primary monitor only while a phone is watching, then
+sends JPEG frames over TCP on **control port + 1** (9877 by default). Quality is
+saved per phone: **LOW** uses less bandwidth (6 fps / 320 px / JPEG 35),
+**BALANCED** is the default (12 fps / 640 px / JPEG 55), and **HIGH** is sharper
+(18 fps / 960 px / JPEG 75). These are the default values; the PC command-line
+options tune the balanced profile. Updated PC servers honor each phone's choice;
+older servers keep their fixed settings and the phone will show a notice. The
+preview displays its current received FPS and selected quality. Slow phones do
+not block other viewers, and their send buffers are bounded to prevent long
+stale-video queues.
 
 ```powershell
 lemoGamePad-server.exe --video-width 480 --video-fps 8 --video-quality 45
@@ -375,7 +380,9 @@ lemoGamePad-server.exe --no-video
 lemoGamePad-server.exe --video-port 9990
 ```
 
-Lower width/fps/quality if the picture stutters on a crowded network.
+The PC command-line options set the **BALANCED** profile. The phone's **LOW**
+choice halves the frame rate and width and lowers JPEG quality; **HIGH** raises
+them for a sharper image. Select LOW for Bluetooth PAN or a crowded Wi-Fi link.
 
 ### Customizing the pad
 
@@ -409,7 +416,7 @@ The app keeps the screen on, hides the system bars and locks to landscape.
 | `WI-FI found no PC — linked over USB instead` | Wi-Fi answered with nothing while the tether did answer. Use the link that works. |
 | Bluetooth card says "access is off" | Tap **ALLOW NEARBY DEVICES** and accept the Android 12+ prompt. |
 | Windows sees the phone but PAN won't join | Keep the phone discoverable while pairing and keep Bluetooth tethering on. Windows initiates the PAN join. |
-| Bluetooth preview stutters / `LINKING…` | The PAN is ~3 Mbps. Turn **Screen preview** off or to **SMALL**. |
+| Bluetooth preview stutters / `LINKING…` | The PAN is ~3 Mbps. Turn **Screen preview** to **LOW** or **SMALL**, or switch preview off. |
 | USB shows "no interface yet" | Enable **USB tethering** (use **OPEN TETHERING SETTINGS**) and use a data cable. |
 | Windows marks the tether network "Public" | The server's rules cover every profile; if you added them manually, run `pc\allow_firewall.ps1` again. |
 | Fifth phone connects but does nothing | The server is at its slot limit; raise it with `--max-phones 4`. |
@@ -641,4 +648,4 @@ pushes to `origin`. Tags and binaries belong on the GitHub Releases page.
 
 ---
 
-**lemoGamePad ultimate™ © Alam showkat** · v1.3.2
+**lemoGamePad ultimate™ © Alam showkat** · v1.3.3

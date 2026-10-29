@@ -29,11 +29,22 @@ import kotlin.math.min
  * The PC streams length-prefixed JPEG frames over TCP (video port = UDP port + 1).
  * Tap toggles small/large, dragging moves it, and the corner button closes it.
  */
+internal enum class ScreenQuality(val wireId: Int, val label: String, val shortLabel: String) {
+    LOW(0, "LOW", "LOW"),
+    BALANCED(1, "BALANCED", "BAL"),
+    HIGH(2, "HIGH", "HIGH");
+
+    companion object {
+        fun fromId(id: Int): ScreenQuality = values().firstOrNull { it.wireId == id } ?: BALANCED
+    }
+}
+
 class ScreenView(context: Context) : View(context) {
 
     var onClose: (() -> Unit)? = null
     var onToggleSize: (() -> Unit)? = null
     var onMoved: ((Float, Float) -> Unit)? = null
+    var onQualityUnsupported: (() -> Unit)? = null
 
     /** Supplies the tether/Wi-Fi network the TCP stream must leave through. */
     var networkProvider: (() -> Network?)? = null
@@ -50,9 +61,14 @@ class ScreenView(context: Context) : View(context) {
     @Volatile private var connected = false
     @Volatile private var frame: Bitmap? = null
     @Volatile private var hint: String = "PC SCREEN"
+    @Volatile private var quality: ScreenQuality = ScreenQuality.BALANCED
+    @Volatile private var streamFps = 0
+    @Volatile private var activeSocket: Socket? = null
+    @Volatile private var streamGeneration = 0
 
     private var worker: Thread? = null
     private var small = true
+    private var warnedQualityUnsupported = false
 
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
     private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
@@ -91,19 +107,39 @@ class ScreenView(context: Context) : View(context) {
         val host = streamHost ?: return
         if (running) return
         running = true
+        val generation = ++streamGeneration
         hint = "CONNECTING"
         postInvalidate()
-        worker = thread(name = "vpad-screen", isDaemon = true) { loop(host, streamPort) }
+        worker = thread(name = "vpad-screen", isDaemon = true) { loop(host, streamPort, generation) }
     }
 
     fun stopStreaming() {
         running = false
+        streamGeneration++
+        val socket = activeSocket
+        activeSocket = null
+        try {
+            socket?.close()
+        } catch (_: Exception) {
+        }
         worker?.interrupt()
         worker = null
         connected = false
         frame = null
+        streamFps = 0
         hint = "PC SCREEN"
         postInvalidate()
+    }
+
+    fun setQuality(value: ScreenQuality) {
+        if (quality == value) return
+        quality = value
+        postInvalidate()
+        val host = streamHost
+        if (host != null && running) {
+            stopStreaming()
+            startStreaming()
+        }
     }
 
     fun setSmall(value: Boolean, animate: Boolean) {
@@ -122,15 +158,16 @@ class ScreenView(context: Context) : View(context) {
         }
     }
 
-    private fun loop(host: String, port: Int) {
+    private fun loop(host: String, port: Int, generation: Int) {
         var backoff = 700L
         val opts = BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.RGB_565 }
 
-        while (running) {
+        while (running && generation == streamGeneration) {
             var sock: Socket? = null
             try {
                 val s = Socket()
                 sock = s
+                activeSocket = s
                 // Android 10+ keeps ordinary sockets on the default network;
                 // pin the PiP stream to the same link as the pad.
                 var pinned = false
@@ -154,36 +191,72 @@ class ScreenView(context: Context) : View(context) {
                 s.connect(InetSocketAddress(host, port), 2500)
                 s.tcpNoDelay = true
                 s.soTimeout = 5000
+
+                // Older PC servers ignore this hint and keep their default
+                // stream. New servers acknowledge it before sending frames.
+                val requestedQuality = quality
+                s.getOutputStream().apply {
+                    write(byteArrayOf(0x4c, 0x47, 0x56, 0x51, requestedQuality.wireId.toByte()))
+                    flush()
+                }
+
                 val input = DataInputStream(BufferedInputStream(s.getInputStream()))
+                var nextLength: Int? = input.readInt()
+                val qualitySupported = nextLength == QUALITY_ACK
+                if (qualitySupported) {
+                    val accepted = input.readUnsignedByte()
+                    nextLength = null
+                    if (accepted != requestedQuality.wireId) {
+                        throw IllegalStateException("PC declined stream quality")
+                    }
+                } else if (!warnedQualityUnsupported) {
+                    warnedQualityUnsupported = true
+                    post { onQualityUnsupported?.invoke() }
+                }
+
                 connected = true
                 hint = "LIVE"
                 backoff = 700L
                 postInvalidate()
 
-                while (running) {
-                    val len = input.readInt()
+                var fpsWindowStart = SystemClock.elapsedRealtime()
+                var fpsFrames = 0
+                while (running && generation == streamGeneration) {
+                    val len = nextLength ?: input.readInt()
+                    nextLength = null
                     if (len <= 0 || len > 4 * 1024 * 1024) break
                     val bytes = ByteArray(len)
                     input.readFully(bytes)
                     val decoded = BitmapFactory.decodeByteArray(bytes, 0, len, opts)
-                    if (decoded != null && running) {
+                    if (decoded != null && running && generation == streamGeneration) {
                         frame = decoded
+                        fpsFrames++
+                        val now = SystemClock.elapsedRealtime()
+                        val windowMs = now - fpsWindowStart
+                        if (windowMs >= 1000L) {
+                            streamFps = (fpsFrames * 1000L / windowMs).toInt()
+                            fpsFrames = 0
+                            fpsWindowStart = now
+                        }
                         postInvalidateOnAnimation()
                     }
                 }
             } catch (_: Exception) {
                 // PC not streaming yet, or the link dropped: retry with backoff.
             } finally {
-                connected = false
-                hint = if (running) "RECONNECTING" else "PC SCREEN"
+                if (activeSocket === sock) {
+                    activeSocket = null
+                    connected = false
+                    hint = if (running) "RECONNECTING" else "PC SCREEN"
+                    postInvalidate()
+                }
                 try {
                     sock?.close()
                 } catch (_: Exception) {
                 }
-                postInvalidate()
             }
 
-            if (running) SystemClock.sleep(backoff)
+            if (running && generation == streamGeneration) SystemClock.sleep(backoff)
             if (backoff < 4000L) backoff *= 2
         }
     }
@@ -231,6 +304,7 @@ class ScreenView(context: Context) : View(context) {
             text.textAlign = Paint.Align.LEFT
         }
         canvas.restore()
+        if (bmp != null) drawQualityBadge(canvas, w, h)
 
         stroke.color = withAlpha(accent, if (connected) 210 else 80)
         stroke.strokeWidth = dp(1.4f)
@@ -268,6 +342,20 @@ class ScreenView(context: Context) : View(context) {
     }
 
     private fun closeInset(): Float = height * 0.085f + dp(8f)
+
+    private fun drawQualityBadge(canvas: Canvas, w: Float, h: Float) {
+        val label = if (streamFps > 0) "${quality.shortLabel} ${streamFps} FPS" else quality.shortLabel
+        text.textSize = max(dp(8f), h * 0.075f)
+        text.textAlign = Paint.Align.LEFT
+        val badgeH = max(dp(15f), h * 0.13f)
+        val badgeW = text.measureText(label) + dp(10f)
+        val left = dp(5f)
+        val top = h - badgeH - dp(5f)
+        fill.color = Color.argb(175, 0, 0, 0)
+        canvas.drawRoundRect(left, top, left + badgeW, top + badgeH, badgeH / 2f, badgeH / 2f, fill)
+        text.color = Color.WHITE
+        canvas.drawText(label, left + dp(5f), top + badgeH * 0.68f, text)
+    }
 
     // ------------------------------------------------------------------ touch
     override fun onTouchEvent(event: MotionEvent): Boolean {

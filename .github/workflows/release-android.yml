@@ -53,3 +53,31 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "$GITHUB_REF_NAME" android/app/build/outputs/apk/release/app-release.apk --clobber
+
+  windows-server:
+    name: Build and publish Windows server
+    runs-on: windows-latest
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install server build dependencies
+        working-directory: pc
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pyinstaller
+
+      - name: Build standalone server
+        working-directory: pc
+        run: |
+          python -m PyInstaller --noconfirm --onefile --console --name lemoGamePad-server --collect-all vgamepad --collect-all mss --collect-all PIL --collect-all qrcode --distpath dist --workpath build vpad_server.py
+
+      - name: Attach Windows server to published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$env:GITHUB_REF_NAME" pc/dist/lemoGamePad-server.exe --clobber
