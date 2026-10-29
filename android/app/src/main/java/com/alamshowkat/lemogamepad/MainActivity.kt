@@ -42,6 +42,7 @@ class MainActivity : Activity() {
     private var screenView: ScreenView? = null
     private var screenEnabled = false
     private var screenSmall = true
+    private var screenQuality = ScreenQuality.BALANCED
 
     private val handler = Handler(Looper.getMainLooper())
     private var batteryReceiver: BroadcastReceiver? = null
@@ -108,6 +109,9 @@ class MainActivity : Activity() {
 
         screenEnabled = prefs.getBoolean(PrefsKeys.SCREEN, false)
         screenSmall = prefs.getBoolean(PrefsKeys.SCREEN_SMALL, true)
+        screenQuality = ScreenQuality.fromId(
+            prefs.getInt(PrefsKeys.SCREEN_QUALITY, ScreenQuality.BALANCED.wireId),
+        )
 
         if (!prefs.getBoolean(PrefsKeys.WIFI_GUIDE_SEEN, false)) {
             showWifiGuide()
@@ -360,6 +364,10 @@ class MainActivity : Activity() {
 
     private fun createScreenView(): ScreenView {
         val sv = ScreenView(this)
+        sv.setQuality(screenQuality)
+        sv.onQualityUnsupported = {
+            if (screenEnabled) toast("Update the PC server to use stream quality controls")
+        }
         sv.onClose = {
             prefs.edit().putBoolean(PrefsKeys.SCREEN, false).apply()
             screenEnabled = false
@@ -583,6 +591,12 @@ class MainActivity : Activity() {
                         sv.setSmall(small, animate = true)
                         handler.postDelayed({ placeScreenView(sv, animate = true) }, 280L)
                     }
+                }
+
+                override fun onScreenQuality(quality: ScreenQuality) {
+                    screenQuality = quality
+                    prefs.edit().putInt(PrefsKeys.SCREEN_QUALITY, quality.wireId).apply()
+                    screenView?.setQuality(quality)
                 }
 
                 override fun attachScreenStream() {
