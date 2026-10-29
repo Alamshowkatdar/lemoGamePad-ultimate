@@ -81,7 +81,7 @@ object Brand {
     const val NAME = "lemoGamePad ultimate"
     const val MARK = "LEMOGAMEPAD ULTIMATE · ALAM SHOWKAT"
     const val AUTHOR = "Alam showkat"
-    const val VERSION = "1.3.2"
+    const val VERSION = "1.3.3"
 }
 
 object Themes {
