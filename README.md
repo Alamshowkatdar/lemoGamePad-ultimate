@@ -6,6 +6,8 @@ Wi-Fi · Bluetooth · USB · QR pairing · PC screen preview · up to 4 phones o
 
 by **Alam showkat**
 
+**App source version:** 1.3.2. The latest downloadable APK remains v1.3.1 until a signed 1.3.2 APK is published.
+
 [**Download the latest release →**](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest)
 · [Report an issue](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/issues)
 
@@ -46,7 +48,7 @@ and download both files:
 | File | Size | What it is |
 |---|---|---|
 | `lemoGamePad-server.exe` | ~29 MB | Windows receiver. Just run it — it installs its own driver and firewall rules. |
-| `lemoGamePad-ultimate-1.3.1.apk` | ~0.9 MB | Android app (Android 7.0 / API 24 and newer). |
+| APK attached to the latest release | ~0.9 MB | Android app (Android 7.0 / API 24 and newer). |
 
 The binaries are attached to the release, not stored in the git history.
 `release/` is a local build folder and is ignored by git.
@@ -129,7 +131,7 @@ EXE path — rerun that script after moving if you used it.)
 
 ## 3. Install the Android app
 
-1. Copy `lemoGamePad-ultimate-1.3.1.apk` to the phone (USB, cloud drive, email —
+1. Download the APK attached to the [latest release](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) and copy it to the phone (USB, cloud drive, email —
    anything).
 2. Tap it. Android will warn about installing from an unknown source; allow it
    for the app you used to open the file (Files, Chrome, …).
@@ -637,4 +639,4 @@ pushes to `origin`. Tags and binaries belong on the GitHub Releases page.
 
 ---
 
-**lemoGamePad ultimate™ © Alam showkat** · v1.3.1
+**lemoGamePad ultimate™ © Alam showkat** · v1.3.2
