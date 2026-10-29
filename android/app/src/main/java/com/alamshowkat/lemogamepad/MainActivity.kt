@@ -3,6 +3,7 @@ package com.alamshowkat.lemogamepad
 import android.app.Activity
 import android.content.BroadcastReceiver
 import android.content.Context
+import android.graphics.Color
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.SharedPreferences
@@ -35,6 +36,7 @@ class MainActivity : Activity() {
     private lateinit var root: FrameLayout
     private var editBar: LinearLayout? = null
     private var settingsPanel: SettingsPanel? = null
+    private var wifiGuide: View? = null
 
     /** Small draggable window that mirrors the PC screen. */
     private var screenView: ScreenView? = null
@@ -107,9 +109,8 @@ class MainActivity : Activity() {
         screenEnabled = prefs.getBoolean(PrefsKeys.SCREEN, false)
         screenSmall = prefs.getBoolean(PrefsKeys.SCREEN_SMALL, true)
 
-        if (!prefs.getBoolean(PrefsKeys.ONBOARDED, false)) {
-            prefs.edit().putBoolean(PrefsKeys.ONBOARDED, true).apply()
-            toast("Tap the pill at the top to pair, pick a theme or customize controls")
+        if (!prefs.getBoolean(PrefsKeys.WIFI_GUIDE_SEEN, false)) {
+            showWifiGuide()
         }
     }
 
@@ -146,6 +147,12 @@ class MainActivity : Activity() {
 
     @Suppress("DEPRECATION")
     override fun onBackPressed() {
+        wifiGuide?.let {
+            root.removeView(it)
+            wifiGuide = null
+            prefs.edit().putBoolean(PrefsKeys.WIFI_GUIDE_SEEN, true).apply()
+            return
+        }
         val panel = settingsPanel
         if (panel != null && panel.isShowing) {
             panel.dismiss()
@@ -205,6 +212,115 @@ class MainActivity : Activity() {
             }
         }
         screenView?.accent = view.theme.accent
+    }
+
+    private fun showWifiGuide() {
+        if (wifiGuide != null) return
+        val t = view.theme
+        val scrim = FrameLayout(this).apply {
+            setBackgroundColor(Color.argb(218, 0, 0, 0))
+            isClickable = true
+            isFocusable = true
+        }
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(px(22), px(18), px(22), px(18))
+            background = GradientDrawable().apply {
+                cornerRadius = px(22).toFloat()
+                setColor(t.surface)
+                setStroke(px(1), withAlpha(t.accent, 120))
+            }
+            elevation = px(16).toFloat()
+        }
+
+        fun addCopy(text: String, size: Float, color: Int, bold: Boolean = false, top: Int = 0) {
+            val label = TextView(this).apply {
+                this.text = text
+                textSize = size
+                setTextColor(color)
+                if (bold) typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
+                setLineSpacing(px(3).toFloat(), 1f)
+                if (top > 0) setPadding(0, px(top), 0, 0)
+            }
+            card.addView(label, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ))
+        }
+
+        addCopy("QUICK START  ·  WI-FI", 10f, t.accent, bold = true)
+        addCopy("Use your phone as a gamepad", 21f, t.text, bold = true, top = 5)
+        addCopy(
+            "1. Connect your phone and PC to the same Wi-Fi network.\n" +
+                "2. Start lemoGamePad-server.exe on the PC and leave it running.\n" +
+                "3. Scan the network, then connect to your PC.",
+            13f,
+            t.textDim,
+            top = 10,
+        )
+        addCopy(
+            "Guest Wi-Fi can block devices from seeing each other. If the PC is not found, check the Windows Firewall line in the server window.",
+            11f,
+            t.muted,
+            top = 8,
+        )
+
+        val actions = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.END or Gravity.CENTER_VERTICAL
+            setPadding(0, px(14), 0, 0)
+        }
+        fun addButton(title: String, primary: Boolean, onClick: () -> Unit) {
+            val button = TextView(this).apply {
+                text = title
+                textSize = 11f
+                letterSpacing = 0.06f
+                gravity = Gravity.CENTER
+                setTextColor(if (primary) t.bgBottom else t.textDim)
+                setPadding(px(14), px(11), px(14), px(11))
+                background = GradientDrawable().apply {
+                    cornerRadius = px(13).toFloat()
+                    setColor(if (primary) t.accent else withAlpha(t.text, 18))
+                    if (!primary) setStroke(px(1), withAlpha(t.text, 38))
+                }
+                isClickable = true
+                isFocusable = true
+                setOnClickListener { onClick() }
+            }
+            actions.addView(button, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply { marginStart = px(8) })
+        }
+
+        fun dismissGuide() {
+            root.removeView(scrim)
+            wifiGuide = null
+            prefs.edit().putBoolean(PrefsKeys.WIFI_GUIDE_SEEN, true).apply()
+        }
+        addButton("GOT IT", primary = false) { dismissGuide() }
+        addButton("OPEN WI-FI SETUP", primary = true) {
+            link.transport = Transport.WIFI
+            prefs.edit().putString(PrefsKeys.TRANSPORT, "wifi").apply()
+            dismissGuide()
+            showSettings()
+        }
+        card.addView(actions)
+        scrim.addView(
+            card,
+            FrameLayout.LayoutParams(
+                minOf(px(520), (resources.displayMetrics.widthPixels * 0.92f).toInt()),
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.CENTER,
+            ),
+        )
+        wifiGuide = scrim
+        root.addView(scrim, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT,
+        ))
+        scrim.alpha = 0f
+        scrim.animate().alpha(1f).setDuration(220L).start()
     }
 
     // ------------------------------------------------------------------ screen
