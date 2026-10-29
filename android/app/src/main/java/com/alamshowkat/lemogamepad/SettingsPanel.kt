@@ -36,6 +36,7 @@ internal object PrefsKeys {
     const val DEADZONE = "deadzone"
     const val HAPTICS = "haptics"
     const val ONBOARDED = "onboarded"
+    const val WIFI_GUIDE_SEEN = "wifi_guide_seen"
     const val THEME = "theme"
     const val FACES = "faces"
     const val LAYOUT = "layout"
