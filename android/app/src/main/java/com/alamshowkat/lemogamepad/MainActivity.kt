@@ -43,6 +43,8 @@ class MainActivity : Activity() {
     private var screenEnabled = false
     private var screenSmall = true
     private var screenQuality = ScreenQuality.BALANCED
+    private lateinit var phoneGamepad: BluetoothHidGamepad
+    private var phoneGamepadActive = false
 
     private val handler = Handler(Looper.getMainLooper())
     private var batteryReceiver: BroadcastReceiver? = null
@@ -50,6 +52,14 @@ class MainActivity : Activity() {
 
     @Volatile private var rumbleAmp = 0
     @Volatile private var lastRumbleAt = 0L
+
+    private val phoneGamepadTicker = object : Runnable {
+        override fun run() {
+            if (!phoneGamepadActive) return
+            phoneGamepad.send(view.state)
+            handler.postDelayed(this, 16L)
+        }
+    }
 
     private val ticker = object : Runnable {
         override fun run() {
@@ -76,6 +86,9 @@ class MainActivity : Activity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
         prefs = getSharedPreferences(PrefsKeys.FILE, MODE_PRIVATE)
+        phoneGamepad = BluetoothHidGamepad(applicationContext) { message ->
+            handler.post { if (!isFinishing) toast(message) }
+        }
 
         view = GamepadView(this)
         view.theme = Themes.byId(prefs.getString(PrefsKeys.THEME, null))
@@ -142,6 +155,13 @@ class MainActivity : Activity() {
         // app is in the background so it does not burn battery.
         screenView?.stopStreaming()
         unregisterBattery()
+    }
+
+    override fun onDestroy() {
+        phoneGamepadActive = false
+        handler.removeCallbacks(phoneGamepadTicker)
+        if (::phoneGamepad.isInitialized) phoneGamepad.stop()
+        super.onDestroy()
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -616,6 +636,38 @@ class MainActivity : Activity() {
 
                 override fun requestBluetoothPermissions() {
                     BluetoothPairing.requestPermissions(this@MainActivity, REQ_BT)
+                }
+
+                override fun onStartPhoneGamepad() {
+                    if (phoneGamepadActive) {
+                        toast("Phone gamepad is already running")
+                        return
+                    }
+                    if (BluetoothPairing.permissionsMissing(this@MainActivity)) {
+                        BluetoothPairing.requestPermissions(this@MainActivity, REQ_BT)
+                        toast("Allow Nearby devices, then tap START GAMEPAD again")
+                        return
+                    }
+                    if (!BluetoothPairing.status(this@MainActivity).enabled) {
+                        toast("Turn on Bluetooth, then start the phone gamepad")
+                        return
+                    }
+                    if (!phoneGamepad.start()) return
+                    phoneGamepadActive = true
+                    handler.removeCallbacks(phoneGamepadTicker)
+                    handler.post(phoneGamepadTicker)
+                    if (BluetoothPairing.requestDiscoverable(this@MainActivity)) {
+                        toast("Accept the Bluetooth prompt, then pair Lemo GamePad from the game phone")
+                    } else {
+                        toast("Open Bluetooth settings on the game phone and pair Lemo GamePad")
+                    }
+                }
+
+                override fun onStopPhoneGamepad() {
+                    phoneGamepadActive = false
+                    handler.removeCallbacks(phoneGamepadTicker)
+                    phoneGamepad.stop()
+                    toast("Phone gamepad stopped")
                 }
             },
         )
