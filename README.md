@@ -6,7 +6,7 @@ Wi-Fi-to-PC · Bluetooth HID to Android phones · Bluetooth PAN · USB · PC scr
 
 by **Alam showkat**
 
-**App source version:** 1.3.5. Download the signed APK and Windows server from the [v1.3.5 release](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/tag/v1.3.5).
+**App source version:** 1.3.6. Download the signed APK and Windows server from the [v1.3.5 release](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/tag/v1.3.5) — 1.3.6 is a source release that builds on it (same protocol, same server).
 
 [**Download the latest release →**](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest)
 · [Report an issue](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/issues)
@@ -37,6 +37,23 @@ the PC** — the server is a single `.exe`.
 
 > **lemoGamePad ultimate™** — trademark of **Alam showkat**.
 > App package: `com.alamshowkat.lemogamepad`.
+
+### What's new in 1.3.6
+
+- **Two new themes** — **Solar** (warm copper and amber) and **Mono**
+  (high-contrast graphite) — in a redesigned two-column picker where every tile
+  previews its own colours.
+- **Smoother pad** — springy button presses, a smootherstep theme cross-fade,
+  and frame-rate-independent animation.
+- **Better phone-to-phone gamepad** — standard HID button mapping, an honest
+  start (it tells you when Bluetooth is off instead of silently doing nothing),
+  a live *broadcasting / connected* line, and reports only sent when something
+  changes.
+- **Fixes** — the status dot no longer pulses forever, the settings sheet no
+  longer rescans every network interface twice a second, and a second thumb can
+  no longer steal a held face button.
+
+The full list, with reasoning, is in [`docs/REVIEW.md`](docs/REVIEW.md).
 
 ---
 
@@ -314,22 +331,71 @@ releases.
 
 Xbox letter order is preserved: △ = Y, ○ = B, ✕ = A, □ = X.
 
+### Phone-to-phone (Bluetooth HID)
+
+You do not need a PC for this mode. One phone acts as the **controller**, the
+other is the **game host**. The controller phone advertises itself as a standard
+Bluetooth HID gamepad, so the host sees a real controller and no helper app or
+Accessibility service is involved.
+
+1. **Controller phone** (Android 9+): open the app → status pill →
+   **PHONE-TO-PHONE GAMEPAD** → **START GAMEPAD**. Accept the *Nearby devices*
+   prompt if Android asks.
+2. **Host phone**: **Settings → Bluetooth**, pair with **Lemo GamePad**.
+3. The card on the controller phone switches from
+   `○ Broadcasting as “Lemo GamePad”` to `● Connected`.
+4. Start the game on the host and play.
+
+The app only sends a report when a control actually changes, and it parks the
+gamepad when you leave the app (sending one neutral report first), so a stuck
+button cannot survive backgrounding. Keep the controller app in the foreground
+while you play.
+
+The HID report carries 16 buttons, four signed 8-bit stick axes, and analog L2/R2:
+
+| On screen | HID button | Typical Android mapping |
+|---|---|---|
+| ✕ | 1 | A |
+| ○ | 2 | B |
+| □ | 3 | X |
+| △ | 4 | Y |
+| L1 / R1 | 5 / 6 | LB / RB |
+| L2 / R2 | 7 / 8 | LT / RT (also analog axis) |
+| SELECT / START | 9 / 10 | Back / Start |
+| L3 / R3 | 11 / 12 | Stick click |
+| D-pad | 13–16 | Up / Down / Left / Right |
+
+Sticks go to X/Y (left) and Rx/Ry (right); L2 and R2 also map to the Z and Rz
+axes (0–255). The **PS** button is intentionally not exposed over HID, because
+host phones treat that button as *Home* and would leave your game. This mode is
+independent of the PC link: you can have both configured, and starting one does
+not stop the other.
+
 ### Themes and animation
 
-Tap the status pill → **THEME**:
+Tap the status pill → **APPEARANCE**. The picker is a two-column grid of
+palettes, and every tile shows the theme itself: its background gradient plus
+both accent colours, so you can see the look before you pick it.
 
-- **Neon** — default, near-black glass with a neon-green glow.
-- **Midnight** — blue / violet night palette.
-- **Violet** — deep purple with pink accents.
-- **Crimson** — red and amber.
-- **Retro** — soft graphite and ice blue.
-- **Arctic** — light theme for daylight.
+| Theme | Look |
+|---|---|
+| **Neon** | Default, near-black glass with a neon-green glow. |
+| **Midnight** | Blue / violet night palette. |
+| **Violet** | Deep purple with pink accents. |
+| **Crimson** | Red and amber. |
+| **Solar** | Warm sunset: copper background with amber and coral controls. |
+| **Retro** | Soft graphite and ice blue. |
+| **Arctic** | Light theme for daylight. |
+| **Mono** | High-contrast graphite: pure greys with a white key light. |
 
-Switching a theme cross-fades every colour over 300 ms instead of snapping.
-Buttons spring when pressed, the status dot pulses a ripple when the link
-changes, the PiP window scales in, and the edit toolbar slides down from the top.
-All animations use the current theme's colours. Themes, face labels, layout and
-connection settings are remembered independently.
+Switching a theme cross-fades every colour over 300 ms with a smootherstep
+curve, so there is no visible kick when the fade starts or ends. Buttons spring
+under your thumb (a light, slightly under-damped spring that settles in about
+120 ms), the status dot ripples only when the connection state actually changes,
+the PiP window scales in, and the edit toolbar slides down from the top.
+Animations are frame-rate independent: they look the same on a 60 Hz and a
+120 Hz screen. All animations use the current theme's colours. Themes, face
+labels, layout and connection settings are remembered independently.
 
 ### Settings (tap the status pill)
 
@@ -343,8 +409,8 @@ Every change applies immediately.
 - **Transport chips** — AUTO / WI-FI / BT / USB with readiness dots.
 - **PC address / port**, **Scan network**, **Scan QR**, and the diagnostics line.
 - **Bluetooth pairing** — adapter state, bonded PCs, discoverable mode, PAN address.
-- **Phone-to-phone Bluetooth HID** — pair this phone as a standard gamepad with another Android phone (Android 9+). No helper app or Accessibility permission is needed on the game host.
-- **Theme** — six themes with a cross-fade.
+- **Phone-to-phone Bluetooth HID** — pair this phone as a standard gamepad with another Android phone (Android 9+), with a live *broadcasting / connected* line. No helper app or Accessibility permission is needed on the game host.
+- **Appearance** — eight palettes in a two-column picker with colour previews and a cross-fade.
 - **Face button labels** — PlayStation symbols or Xbox letters.
 - **Customize layout / Reset layout**.
 - **Stick deadzone** — 0–40 %, default 12 %.
@@ -546,12 +612,14 @@ android/
     BluetoothPairing.kt     adapter state, discoverable mode, PAN address
     BluetoothHidGamepad.kt   standard Bluetooth gamepad for Android hosts
     GamepadView.kt          themed canvas controller, edit mode, multitouch
-    Theme.kt                six palettes, cross-fade, branding
+    Theme.kt                eight palettes, cross-fade, branding
     Link.kt                 UDP sender, ping/rumble, discovery, transports
     ScreenView.kt           draggable PC-screen PiP client
     ScanActivity.kt         Camera1 + ZXing QR scanner
     Protocol.kt             wire format constants + shared state
   keystore/                 your local signing key (git-ignored, never pushed)
+docs/
+  REVIEW.md                 what changed in 1.3.6 and why (bug list + notes)
 publish.ps1                 commit + push every change to this repository
 release/                    local build output (git-ignored; use GitHub Releases)
 ```
@@ -651,4 +719,4 @@ pushes to `origin`. Tags and binaries belong on the GitHub Releases page.
 
 ---
 
-**lemoGamePad ultimate™ © Alam showkat** · v1.3.3
+**lemoGamePad ultimate™ © Alam showkat** · v1.3.6
