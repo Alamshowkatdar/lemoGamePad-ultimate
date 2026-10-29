@@ -6,7 +6,7 @@ Wi-Fi · Bluetooth · USB · QR pairing · PC screen preview · up to 4 phones o
 
 by **Alam showkat**
 
-**App source version:** 1.3.2. The latest downloadable APK remains v1.3.1 until a signed 1.3.2 APK is published.
+**App version:** 1.3.2. The signed APK is available in the latest release.
 
 [**Download the latest release →**](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest)
 · [Report an issue](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/issues)
@@ -137,8 +137,10 @@ EXE path — rerun that script after moving if you used it.)
    for the app you used to open the file (Files, Chrome, …).
 3. Open **lemoGamePad ultimate** and turn the phone **landscape**.
 
-The app is self-signed and distributed outside the Play Store. Updates must be
-signed with the same key; see [Signing the APK yourself](#signing-the-apk-yourself).
+The app is distributed outside the Play Store. Official releases use the same
+signing key going forward. Version 1.3.2 uses a new key, so uninstall 1.3.1
+before installing it. Locally built APKs use your own key; see
+[Signing the APK yourself](#signing-the-apk-yourself).
 
 ---
 
@@ -579,8 +581,8 @@ pure-Java ZXing jar; there is no AndroidX or Play Services dependency.
 
 ### Signing the APK yourself
 
-This repository does **not** contain a signing key, and it never will. Create your
-own once:
+The official GitHub release key is kept out of git and available only to the
+release workflow. For local builds, create your own separate key:
 
 ```powershell
 cd android
