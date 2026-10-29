@@ -7,6 +7,7 @@ $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 # PyInstaller logs to stderr, which PowerShell treats as an error under "Stop".
 $ErrorActionPreference = "Continue"
 
+$env:VGAMEPAD_SKIP_VIGEMBUS_INSTALL = "true"
 python -m pip install --quiet --upgrade pyinstaller vgamepad mss pillow qrcode
 if ($LASTEXITCODE -ne 0) { throw "pip install failed" }
 
