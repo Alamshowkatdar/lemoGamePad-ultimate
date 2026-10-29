@@ -35,7 +35,7 @@ internal enum class ScreenQuality(val wireId: Int, val label: String, val shortL
     HIGH(2, "HIGH", "HIGH");
 
     companion object {
-        fun fromId(id: Int): ScreenQuality = entries.firstOrNull { it.wireId == id } ?: BALANCED
+        fun fromId(id: Int): ScreenQuality = values().firstOrNull { it.wireId == id } ?: BALANCED
     }
 }
 
@@ -64,6 +64,7 @@ class ScreenView(context: Context) : View(context) {
     @Volatile private var quality: ScreenQuality = ScreenQuality.BALANCED
     @Volatile private var streamFps = 0
     @Volatile private var activeSocket: Socket? = null
+    @Volatile private var streamGeneration = 0
 
     private var worker: Thread? = null
     private var small = true
@@ -106,13 +107,15 @@ class ScreenView(context: Context) : View(context) {
         val host = streamHost ?: return
         if (running) return
         running = true
+        val generation = ++streamGeneration
         hint = "CONNECTING"
         postInvalidate()
-        worker = thread(name = "vpad-screen", isDaemon = true) { loop(host, streamPort) }
+        worker = thread(name = "vpad-screen", isDaemon = true) { loop(host, streamPort, generation) }
     }
 
     fun stopStreaming() {
         running = false
+        streamGeneration++
         val socket = activeSocket
         activeSocket = null
         try {
@@ -155,11 +158,11 @@ class ScreenView(context: Context) : View(context) {
         }
     }
 
-    private fun loop(host: String, port: Int) {
+    private fun loop(host: String, port: Int, generation: Int) {
         var backoff = 700L
         val opts = BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.RGB_565 }
 
-        while (running) {
+        while (running && generation == streamGeneration) {
             var sock: Socket? = null
             try {
                 val s = Socket()
@@ -218,14 +221,14 @@ class ScreenView(context: Context) : View(context) {
 
                 var fpsWindowStart = SystemClock.elapsedRealtime()
                 var fpsFrames = 0
-                while (running) {
+                while (running && generation == streamGeneration) {
                     val len = nextLength ?: input.readInt()
                     nextLength = null
                     if (len <= 0 || len > 4 * 1024 * 1024) break
                     val bytes = ByteArray(len)
                     input.readFully(bytes)
                     val decoded = BitmapFactory.decodeByteArray(bytes, 0, len, opts)
-                    if (decoded != null && running) {
+                    if (decoded != null && running && generation == streamGeneration) {
                         frame = decoded
                         fpsFrames++
                         val now = SystemClock.elapsedRealtime()
@@ -253,7 +256,7 @@ class ScreenView(context: Context) : View(context) {
                 }
             }
 
-            if (running) SystemClock.sleep(backoff)
+            if (running && generation == streamGeneration) SystemClock.sleep(backoff)
             if (backoff < 4000L) backoff *= 2
         }
     }
