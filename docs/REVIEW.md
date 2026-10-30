@@ -1,7 +1,9 @@
-# Review notes — 1.3.6
+# Review notes — 1.3.6 / 1.3.7
 
 A pass over the whole app (Kotlin sources, manifest, Gradle files, CI) focused on
 bugs, UI smoothness, and making the phone-to-phone Bluetooth gamepad honest.
+1.3.6 covers that review; 1.3.7 adds the Linux receiver, whose notes start at
+[Linux receiver (1.3.7)](#linux-receiver-137).
 This file records what was found and what changed, so the reasoning does not get
 lost between releases.
 
@@ -145,7 +147,7 @@ ambiguous (`K_FACE` has no special case).
 
 ---
 
-## Linux receiver (unreleased)
+## Linux receiver (1.3.7)
 
 The PC server was Windows-only because ViGEmBus is a Windows kernel driver.
 Linux has the same facility in the kernel itself: `uinput` lets an ordinary

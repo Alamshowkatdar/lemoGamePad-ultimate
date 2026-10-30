@@ -6,7 +6,7 @@ Wi-Fi-to-PC · Bluetooth HID to Android phones · Bluetooth PAN · USB · PC scr
 
 by **Alam showkat**
 
-**App source version:** 1.3.6. Download the signed APK and Windows server from the [v1.3.6 release](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/tag/v1.3.6).
+**App source version:** 1.3.7. Download the signed APK and the Windows/Linux server from the [v1.3.7 release](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/tag/v1.3.7).
 
 [**Download the latest release →**](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest)
 · [Report an issue](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/issues)
@@ -40,6 +40,16 @@ the PC** — the server is a single `.exe`. On Linux the receiver runs from sour
 > **lemoGamePad ultimate™** — trademark of **Alam showkat**.
 > App package: `com.alamshowkat.lemogamepad`.
 
+### What's new in 1.3.7
+
+- **Linux receiver** — the PC server now runs on Linux, creating a real
+  Xbox 360 (or DualShock 4) evdev gamepad through the kernel's `/dev/uinput`,
+  the Linux counterpart of ViGEmBus. Force-feedback rumble works through the
+  standard evdev API, and Windows is unchanged.
+- **Release binaries** — the release now also ships `lemoGamePad-server` for
+  Linux, next to the Windows `.exe` and the signed APK. The Linux binary needs
+  the one-time `pc/linux/install-uinput.sh` setup from the source repository.
+
 ### What's new in 1.3.6
 
 - **Two new themes** — **Solar** (warm copper and amber) and **Mono**
@@ -62,17 +72,18 @@ The full list, with reasoning, is in [`docs/REVIEW.md`](docs/REVIEW.md).
 ## 1. Download
 
 Open the [latest release](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest)
-and download both files:
+and download the file for your platform:
 
 | File | Size | What it is |
 |---|---|---|
 | `lemoGamePad-server.exe` | ~29 MB | Windows receiver. Just run it — it installs its own driver and firewall rules. |
+| `lemoGamePad-server` | ~30 MB | Linux receiver (x86-64). Needs the one-time `pc/linux/install-uinput.sh` setup from the source repo. |
 | APK attached to the latest release | ~0.9 MB | Android app (Android 7.0 / API 24 and newer). |
 
 The binaries are attached to the release, not stored in the git history.
 `release/` is a local build folder and is ignored by git.
 The `pc\...` scripts mentioned below (firewall repair, ghost-pad cleanup, tests)
-ship with the **source repository**, not with the two release files.
+ship with the **source repository**, not with the release binaries.
 
 > **Windows SmartScreen:** the EXE is not code-signed (a certificate costs money),
 > so Windows may show *"Windows protected your PC"*. Click **More info → Run
@@ -669,7 +680,7 @@ android/
     Protocol.kt             wire format constants + shared state
   keystore/                 your local signing key (git-ignored, never pushed)
 docs/
-  REVIEW.md                 what changed in 1.3.6 and why (bug list + notes)
+  REVIEW.md                 what changed in 1.3.6 and 1.3.7 and why (bug list + notes)
 publish.ps1                 commit + push every change to this repository
 release/                    local build output (git-ignored; use GitHub Releases)
 ```
@@ -795,4 +806,4 @@ pushes to `origin`. Tags and binaries belong on the GitHub Releases page.
 
 ---
 
-**lemoGamePad ultimate™ © Alam showkat** · v1.3.6
+**lemoGamePad ultimate™ © Alam showkat** · v1.3.7
