@@ -42,8 +42,13 @@ jobs:
       - name: Virtual pad and force feedback
         working-directory: pc
         run: |
-          python test_linux_pad.py
+          # The event node created through /dev/uinput is root-owned. A desktop
+          # user reaches it through the "input" group; on a bare runner we run
+          # this one test as root so it can read back its own device.
+          set +e
+          sudo "$(command -v python)" test_linux_pad.py
           code=$?
+          set -e
           if [ "$code" -eq 2 ]; then
             echo "::warning::/dev/uinput is unavailable; skipped the virtual pad test"
           elif [ "$code" -ne 0 ]; then
