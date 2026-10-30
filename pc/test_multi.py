@@ -56,7 +56,9 @@ class Phone:
         self.token = token
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.bind(("127.0.0.1", 0))
-        self.sock.settimeout(2.0)
+        # Pad creation can take a couple of seconds on a busy CI runner, so
+        # allow the offer more than the old 2 s before giving up.
+        self.sock.settimeout(5.0)
         self.addr = ("127.0.0.1", self.port)
         self.local = self.sock.getsockname()
         self.seq = 0
@@ -134,6 +136,43 @@ def pad_of(server, peer):
     return slot.pad
 
 
+class Keepalive:
+    """
+    Send periodic input for fake phones while a test does slow setup.
+
+    The suite uses a deliberately short ``PEER_TIMEOUT`` (4 s here, 8 s in
+    production) to test timeouts. Creating a virtual pad can take longer than
+    that on a loaded runner, and a real phone keeps sending at ~140 Hz the
+    whole time, so the fake phones must too. Without this, an earlier phone
+    expires while the next one is being registered.
+    """
+
+    def __init__(self, phones, interval: float = 0.2):
+        self.phones = phones
+        self.interval = interval
+        self._stop = threading.Event()
+        self._thread = threading.Thread(
+            target=self._run, name="fake-phone-keepalive", daemon=True
+        )
+
+    def _run(self) -> None:
+        while not self._stop.wait(self.interval):
+            for phone in list(self.phones):
+                try:
+                    phone.input()
+                except OSError:
+                    pass
+
+    def __enter__(self):
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc):
+        self._stop.set()
+        self._thread.join(timeout=2.0)
+        return False
+
+
 def test_discovery(server, port):
     phone = Phone(port)
     try:
@@ -166,7 +205,8 @@ def test_two_pads(server, port):
 
         first.input(buttons=1 << CROSS, lx=16000)
         second.input(buttons=1 << CIRCLE, ly=-16000)
-        wait_for(lambda: len(server.peers) == 2, message="both phones should register")
+        wait_for(lambda: len(server.peers) == 2, timeout=10.0,
+                 message="both phones should register")
 
         first_peer = server.peers[first.token]
         second_peer = server.peers[second.token]
@@ -194,36 +234,42 @@ def test_two_pads(server, port):
 
 def test_slot_limit(server, port, existing):
     phones = list(existing)
+    extra = None
     try:
-        while len(server.peers) < server.max_phones:
-            phone = Phone(port)
-            phone.token = phone.discover(0)[0]
-            phone.input(buttons=1 << L1)
-            phones.append(phone)
-            wait_for(
-                lambda: len(server.peers) == len(phones),
-                message="phone did not take a slot",
-            )
-            time.sleep(0.05)
+        # Keep the phones that already hold a slot alive while the next pads
+        # are created, otherwise the short test timeout drops them first.
+        with Keepalive(phones):
+            while len(server.peers) < server.max_phones:
+                phone = Phone(port)
+                phone.token = phone.discover(0)[0]
+                phone.input(buttons=1 << L1)
+                phones.append(phone)
+                wait_for(
+                    lambda: len(server.peers) == len(phones),
+                    timeout=10.0,
+                    message="phone did not take a slot",
+                )
+                time.sleep(0.05)
 
-        extra = Phone(port)
-        phones.append(extra)
-        extra.token = extra.discover(0)[0]
-        for _ in range(5):
-            extra.input(buttons=1 << CROSS)
-            time.sleep(0.03)
-        time.sleep(0.3)
-        assert extra.token not in server.peers, "over-limit phone must be rejected"
-        assert len(server.peers) == server.max_phones
-        used = sorted(server.peers[phone.token].slot for phone in phones if phone.token in server.peers)
-        assert used == list(range(server.max_phones)), used
-        print(f"  slot limit ok: {server.max_phones} pads, extra phone ignored")
-        extra.close()
-        return [phone for phone in phones if phone.token in server.peers]
+            extra = Phone(port)
+            extra.token = extra.discover(0)[0]
+            for _ in range(5):
+                extra.input(buttons=1 << CROSS)
+                time.sleep(0.03)
+            time.sleep(0.3)
+            assert extra.token not in server.peers, "over-limit phone must be rejected"
+            assert len(server.peers) == server.max_phones
+            used = sorted(server.peers[phone.token].slot for phone in phones)
+            assert used == list(range(server.max_phones)), used
+            print(f"  slot limit ok: {server.max_phones} pads, extra phone ignored")
+        return phones
     except Exception:
         for phone in phones:
             phone.close()
         raise
+    finally:
+        if extra is not None:
+            extra.close()
 
 
 def test_rumble(server, phones):
@@ -231,6 +277,7 @@ def test_rumble(server, phones):
         phone.input(buttons=0)
     wait_for(
         lambda: len(server.peers) == len(phones),
+        timeout=10.0,
         message="phones dropped before the rumble test",
     )
     first, second = phones[0], phones[1]
@@ -323,7 +370,10 @@ def main() -> int:
         qr_enabled=False,
         max_phones=3,
     )
-    server.PEER_TIMEOUT = 1.5
+    # Short enough to exercise dropping, long enough for a slow CI runner to
+    # finish creating a virtual pad before the phones that are already
+    # connected expire. The production value is 8 s.
+    server.PEER_TIMEOUT = 4.0
     server._print_banner = lambda: None
     # Server.run prints no status line when stdout is not a tty, but make sure
     # the periodic line stays out of the test log.
