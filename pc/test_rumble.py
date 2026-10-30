@@ -9,9 +9,13 @@ with non-zero motors, the whole chain works.
 
 Close lemoGamePad-server.exe first (a second virtual pad + port 9876 would clash).
 Runs for a few seconds; any real controller on the PC may buzz briefly.
+
+This test is Windows-only (it uses XInput). On Linux run test_linux_pad.py,
+which exercises the same rumble path through /dev/uinput.
 """
 import argparse
 import ctypes
+import os
 import socket
 import struct
 import sys
@@ -43,11 +47,16 @@ def main():
     ap.add_argument("--seconds", type=float, default=4.0)
     args = ap.parse_args()
 
+    if os.name != "nt":
+        print("This test drives the pad through Windows XInput.")
+        print("On Linux use: python3 test_linux_pad.py")
+        return 0
+
     if args.pad != "x360":
         print("This test drives the pad through XInput, so use --pad x360.")
         return 2
 
-    server = vs.Server(args.port, "x360")
+    server = vs.Server(args.port, "x360", video_enabled=False, qr_enabled=False)
     pad = server.slots[0].pad
     if not pad.ok:
         print("FAIL: virtual pad unavailable -", pad.error)
@@ -65,22 +74,31 @@ def main():
 
     # Pretend to be the app so the server has a peer to send rumble to.
     seq = 0
+    stop = threading.Event()
 
     def send_input():
         nonlocal seq
-        while seq < 10 ** 9:
+        while not stop.is_set():
             phone.sendto(INPUT.pack(MAGIC, 1, 1, seq & 0xFFFF, TOKEN, 0, 0, 0, 0, 0, 0, 0, 80, 0),
                          ("127.0.0.1", args.port))
             seq += 1
             time.sleep(0.01)
 
     threading.Thread(target=send_input, daemon=True).start()
-    time.sleep(0.4)
+    deadline = time.time() + 2.0
+    while TOKEN not in server.peers and time.time() < deadline:
+        time.sleep(0.02)
+    if TOKEN not in server.peers:
+        stop.set()
+        print("FAIL: the fake phone never registered")
+        return 1
 
     print("virtual pad is XInput index %d (after other pads)" % pad.pad.get_index())
     hit = set_vibration(40000, 20000)
     print("XInputSetState accepted on index(es):", hit or "none - no controller?")
     if not hit:
+        stop.set()
+        server.shutdown()
         return 1
 
     seen = []
@@ -96,6 +114,8 @@ def main():
                 seen.append((pkt[HEADER.size], pkt[HEADER.size + 1]))
 
     set_vibration(0, 0)
+    stop.set()
+    server.shutdown()
     print("rumble packets:", seen if seen else "none")
     ok = any(small or large for small, large in seen)
     print("RESULT:", "PASS - rumble reaches the phone layer" if ok else "FAIL - no non-zero rumble")

@@ -22,6 +22,8 @@ try {
         --collect-all mss `
         --collect-all PIL `
         --collect-all qrcode `
+        --exclude-module linux_pad `
+        --exclude-module evdev `
         --distpath dist `
         --workpath build `
         vpad_server.py

@@ -1,6 +1,6 @@
 # lemoGamePad ultimate™
 
-**Turn an Android phone into a gamepad for Windows PCs or Android phone games.**
+**Turn an Android phone into a gamepad for Windows or Linux PCs, or Android phone games.**
 
 Wi-Fi-to-PC · Bluetooth HID to Android phones · Bluetooth PAN · USB · PC screen preview
 
@@ -21,15 +21,17 @@ by **Alam showkat**
 |---|---|---|
 | **lemoGamePad ultimate** (APK) | Android 7.0+ | Draws the pad, sends your inputs, shows the PC screen in a small window. |
 | **lemoGamePad-server.exe** | Windows 10 / 11 | Receives the inputs and creates a **real virtual gamepad** that games see as an Xbox 360 controller (or a DualShock 4 with `--pad ds4`). |
+| **`pc/vpad_server.py`** | Linux (from source) | Same receiver, using the kernel's `uinput` interface instead of ViGEmBus. |
 
 Windows sees genuine controllers with analog sticks and pressure-sensitive
 triggers. No root, no dongle, no proprietary receiver, and **no Python install on
-the PC** — the server is a single `.exe`.
+the PC** — the server is a single `.exe`. On Linux the receiver runs from source
+(one `pip install`) and needs no root either, only access to `/dev/uinput`.
 
 ```
 ┌─────────────────┐   Wi-Fi / Bluetooth PAN / USB   ┌────────────────────────┐   ┌──────────────┐
-│  Android phone  │ ──────────────────────────────▶ │  lemoGamePad-server    │──▶│  ViGEmBus    │
-│  gamepad + PiP  │ ◀────────────────────────────── │  (Windows .exe)        │   │  1-4 pads    │
+│  Android phone  │ ──────────────────────────────▶ │  lemoGamePad-server    │──▶│ virtual pads │
+│  gamepad + PiP  │ ◀────────────────────────────── │  (Windows .exe/Linux)  │   │  1-4 pads    │
 └─────────────────┘      PC screen JPEG stream      └────────────────────────┘   └──────────────┘
          ▲                                                            ▲
          └──────────────── up to 4 phones ────────────────────────────┘
@@ -143,6 +145,44 @@ powershell -ExecutionPolicy Bypass -File .\pc\allow_firewall.ps1
 The rules the server adds are tied to the port, not to a folder, so moving the
 EXE keeps working. (Rules added by `pc\allow_firewall.ps1` are tied to the old
 EXE path — rerun that script after moving if you used it.)
+
+### Linux (from source)
+
+The receiver runs on Linux too and creates a real evdev gamepad through the
+kernel's `/dev/uinput` interface — the Linux equivalent of ViGEmBus. Steam,
+Proton, SDL2, RetroArch and native games see an Xbox 360 pad (or a DualShock 4
+with `--pad ds4`), including force-feedback rumble.
+
+One-time setup (Arch, Debian/Ubuntu, Fedora, …):
+
+```bash
+sudo sh pc/linux/install-uinput.sh
+# then log out and back in so the new "input" group applies
+```
+
+The script loads the `uinput` module, installs a udev rule and adds your user to
+the `input` group. It does **not** install Python packages. Then:
+
+```bash
+cd pc
+python3 -m venv .venv && . .venv/bin/activate
+pip install -r requirements.txt
+python3 vpad_server.py
+```
+
+The banner shows `uinput : OK (virtual gamepad via /dev/uinput)` when the pad is
+ready. The server never runs `sudo` or pip-installs behind your back on Linux;
+if something is missing it prints the exact command. `./pc/build_linux.sh`
+builds a single-file `dist/lemoGamePad-server` with PyInstaller.
+
+Linux notes:
+
+- Screen preview needs a working X11/XWayland session. On a headless machine the
+  server still works as a gamepad and prints why capture is unavailable.
+- The firewall is not modified on Linux. If phones cannot reach the PC, allow
+  UDP `9876` and TCP `9877` in `ufw`/`firewalld`.
+- Rumble uses the standard evdev force-feedback API, so games that rumble
+  through SDL work without per-game configuration.
 
 ---
 
@@ -512,11 +552,14 @@ lemoGamePad-server.exe --no-video          # disable the PC screen stream
 lemoGamePad-server.exe --no-qr             # do not print the pairing QR code
 lemoGamePad-server.exe --no-install-deps   # no auto-install of ViGEmBus / packages / firewall
 lemoGamePad-server.exe --video-port 9990   # override the TCP stream port
-lemoGamePad-server.exe --video-fps 8       # stream frame rate (default 12)
-lemoGamePad-server.exe --video-width 480   # stream width (default 640)
-lemoGamePad-server.exe --video-quality 45  # JPEG quality 20-90 (default 55)
+lemoGamePad-server.exe --video-fps 8       # stream frame rate (default 20)
+lemoGamePad-server.exe --video-width 480   # stream width (default 800)
+lemoGamePad-server.exe --video-quality 45  # JPEG quality 20-90 (default 50)
 lemoGamePad-server.exe --list-ip           # print this PC's LAN IPs and exit
 ```
+
+On Linux use `python3 vpad_server.py` with the same options (or the built
+`dist/lemoGamePad-server`).
 
 The console shows the PC IPs, the pairing QR, one line per connected phone
 (slot, address, packets/second, battery), the idle state and the slot limit.
@@ -549,8 +592,9 @@ PlayStation button prompts.
 
 - The app samples the touch state and sends a **28-byte UDP datagram** on every
   change, at up to ~140 Hz, plus a keepalive and a ping twice a second.
-- The PC applies the newest packet to a ViGEmBus virtual pad. Out-of-order or lost
-  packets are overwritten by the next one, so latency never accumulates.
+- The PC applies the newest packet to a virtual pad: ViGEmBus on Windows,
+  `/dev/uinput` on Linux. Out-of-order or lost packets are overwritten by the
+  next one, so latency never accumulates.
 - Discovery runs in three passes: broadcast on the selected link, broadcast on
   every other link, then a unicast sweep of each `/24`. The server answers with
   its hostname, pad type, a 32-bit session token and its **IPv4 address list**;
@@ -560,10 +604,10 @@ PlayStation button prompts.
 - Each phone is keyed by its token. Up to four `PadSlot`s exist; a slot's virtual
   pad is created on first input and reused afterwards, keeping controller order
   stable for games.
-- Rumble: ViGEmBus reports the pad's motor speeds about once a second (and on
-  every change). The server forwards them as type-7 packets **to that slot's
-  phone only**, dropping repeats, and the phone keeps pulsing its vibration motor
-  while they stay above zero.
+- Rumble: the virtual pad reports its motor speeds (ViGEmBus about once a second
+  and on every change; evdev on each force-feedback event). The server forwards
+  them as type-7 packets **to that slot's phone only**, dropping repeats, and the
+  phone keeps pulsing its vibration motor while they stay above zero.
 - Screen preview: a TCP server on control port + 1 sends
   `u32 big-endian length + JPEG bytes` frames; the phone decodes them into the PiP
   view.
@@ -593,13 +637,19 @@ L2 8, R2 9, L1 10, R1 11, Triangle 12, Circle 13, Cross 14, Square 15, PS 16.
 
 ```
 pc/
-  vpad_server.py            server + ViGEm glue + dependency setup + stream + QR
+  vpad_server.py            server + virtual-pad factory + dependency setup + stream + QR
+  linux_pad.py              Linux backend: creates a standard evdev pad via /dev/uinput
   simulate_client.py        fake controller for testing without a phone
   test_multi.py             multi-phone suite: discovery, slots, rumble, reconnect
+  test_linux_pad.py         Linux pad + force-feedback test (no phone/game needed)
   test_video.py             screen stream (incl. multi-viewer) + QR smoke test
-  test_rumble.py            end-to-end rumble check, no phone needed
+  test_rumble.py            end-to-end rumble check through Windows XInput
   test_frozen.py            same checks against a running .exe
   build_exe.ps1             rebuilds release/lemoGamePad-server.exe
+  build_linux.sh            rebuilds dist/lemoGamePad-server (PyInstaller)
+  linux/
+    install-uinput.sh       one-time Linux setup (uinput module + udev + input group)
+    99-lemogamepad.rules    udev rule for /dev/uinput permissions
   allow_firewall.ps1        manual inbound UDP + TCP rules (all profiles)
   clean_pads.ps1            removes ghost virtual controllers (Administrator)
   requirements.txt          PC Python packages for source runs
@@ -640,6 +690,19 @@ The script installs PyInstaller and builds a single-file EXE into
 `release\lemoGamePad-server.exe`. Running `python pc\vpad_server.py` also works
 and will pip-install missing packages, install ViGEmBus and open the firewall on
 first use (unless you pass `--no-install-deps`).
+
+On Linux:
+
+```bash
+cd pc
+python3 -m venv .venv && . .venv/bin/activate
+pip install -r requirements.txt pyinstaller
+./build_linux.sh
+```
+
+`build_linux.sh` produces `dist/lemoGamePad-server`. It needs the one-time
+`pc/linux/install-uinput.sh` setup at runtime, and never installs packages for
+you.
 
 ### Android app (needs JDK 17–21 + Android SDK platform 34 / build-tools 34)
 
@@ -684,8 +747,17 @@ For a public release, sign with your own key and keep it on a machine you contro
 ```powershell
 python pc\test_multi.py     # multi-phone: discovery, slots, rumble routing, reconnect
 python pc\test_video.py     # streamed frames (two viewers), QR PNG
-python pc\test_rumble.py    # virtual pad + rumble (close the server first)
+python pc\test_rumble.py    # virtual pad + rumble through Windows XInput
 python pc\test_frozen.py    # same slot/viewer checks against a running .exe
+```
+
+On Linux:
+
+```bash
+cd pc
+python3 test_multi.py       # works with or without /dev/uinput
+python3 test_linux_pad.py   # real uinput pad, buttons/axes, force feedback
+python3 test_video.py       # needs a desktop session for screen capture
 ```
 
 ### Publish a change
@@ -716,6 +788,10 @@ pushes to `origin`. Tags and binaries belong on the GitHub Releases page.
   that almost no PC game reads anyway).
 - ViGEmBus is an archived third-party driver (its final release is 1.22.0). The
   server pins and checksums that exact official build.
+- On Linux the pad is a plain evdev device: games that only understand XInput
+  (some Windows games under very old Wine/Proton builds) rely on SDL's automatic
+  mapping. The Xbox 360 USB ids make that mapping work in practice, but a
+  kernel-level XInput shim is not provided.
 
 ---
 

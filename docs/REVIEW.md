@@ -142,3 +142,70 @@ ambiguous (`K_FACE` has no special case).
   vendor ROMs report *gamepad mode* but never expose the device to other phones.
   The status line now distinguishes "broadcasting" from "connected", so that
   failure is visible instead of silent.
+
+---
+
+## Linux receiver (unreleased)
+
+The PC server was Windows-only because ViGEmBus is a Windows kernel driver.
+Linux has the same facility in the kernel itself: `uinput` lets an ordinary
+program create an input device. The receiver now uses that when it runs on
+Linux, and the wire protocol, Android app, and Windows path are untouched.
+
+### Added
+
+- **`pc/linux_pad.py`** — a `LinuxVirtualPad` with the same surface as the
+  Windows pad (`ok`, `error`, `rumble_error`, `apply()`, `close()`).
+  - Creates a real evdev device through `/dev/uinput`, borrowing the USB ids of
+    an **Xbox 360 pad** (`045e:028e`) or a **DualShock 4** (`054c:09cc`, with
+    `--pad ds4`) so SDL's controller database, Steam, Proton and RetroArch map
+    it automatically.
+  - Exposes the xpad layout: face/shoulder/select/start/mode/stick buttons,
+    `ABS_X/Y/RX/RY` (−32768…32767), `ABS_Z/RZ` (0…255) and a hat.
+  - Writes only changed controls plus one `SYN_REPORT`, so a 140 Hz stream does
+    not flood the kernel with redundant events.
+  - **Rumble** through `EV_FF`/`FF_RUMBLE`/`FF_GAIN`: effect uploads, play/stop,
+    gain scaling, per-effect duration expiry and erase are all handled, then
+    converted from Linux's 0…65535 magnitudes to the phone's 0…255.
+- **`pc/linux/install-uinput.sh`** + **`99-lemogamepad.rules`** — one-time setup:
+  load `uinput`, install a udev rule for `/dev/uinput`, add the desktop user to
+  the `input` group.
+- **`pc/build_linux.sh`** — single-file PyInstaller build (`dist/lemoGamePad-server`).
+- **`pc/test_linux_pad.py`** — verifies the created device, capabilities, button
+  and axis events, and the full rumble path (uploaded and played from a child
+  process, like a real game).
+- `requirements.txt` now selects `evdev` on Linux and `vgamepad` on Windows.
+
+### Fixed while adding it
+
+- **Force-feedback requests are not where they look.** Recent kernels queue
+  `EV_UINPUT` upload/erase requests on the **uinput fd**, while `EV_FF`
+  play/stop and `FF_GAIN` arrive on the created event node. The backend watches
+  both and parses raw `input_event` records from the uinput fd.
+- **python-evdev 2.0.0's `begin_upload()`/`begin_erase()` are broken**: they
+  assign a stray `effect_id` attribute instead of `request_id`, so every ioctl
+  targets request 0 and only the first effect works. The backend performs the
+  ioctl itself with the correct request id.
+- **Token 0 is no longer accepted for input** (it means "assign me", so several
+  phones could otherwise collide on one peer), and discovery never hands out 0
+  or an already-connected token.
+- **Ports are validated** (`1…65535`), including the derived `port + 1` video
+  port, so the banner and QR can no longer advertise port 0 or 65536.
+- **Capture failures are reported instead of dying silently** — headless,
+  Wayland-without-XWayland and RDP sessions now print why the screen preview is
+  unavailable, and repeated failures are logged once.
+- **Slow video viewers survive a hiccup**: a send timeout drops one frame
+  instead of disconnecting the phone (the timeout also rose from 0.75 s to 5 s).
+- **Quality acknowledgement echoes the profile actually used**, not an unknown
+  request byte.
+- **Server defaults now match the CLI** (20 fps / 800 px / quality 50), so
+  direct construction and `--video-*` agree.
+
+### Linux notes
+
+- No root at runtime; `/dev/uinput` write access is the only requirement.
+- The server never runs `sudo`, pip-installs, or edits firewall rules on Linux;
+  it prints the exact commands instead (PEP 668 makes silent installs unsafe).
+- `test_rumble.py` is Windows/XInput-only and now exits cleanly elsewhere; use
+  `test_linux_pad.py` on Linux.
+

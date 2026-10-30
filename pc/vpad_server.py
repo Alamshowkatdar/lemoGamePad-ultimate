@@ -4,8 +4,9 @@ lemoGamePad ultimate (by Alam showkat) - turns your Android phone into a
 PS3-style gamepad.
 
 The phone sends compact UDP packets (see protocol below); this program feeds
-them into a virtual gamepad created by ViGEmBus, so Windows games see a real
-controller with analog sticks and pressure-sensitive triggers.
+them into a real virtual gamepad: ViGEmBus on Windows, or the kernel's
+uinput/evdev interface on Linux. Games see a normal controller with analog
+sticks, pressure-sensitive triggers and rumble.
 
 Protocol (little endian)
 ------------------------
@@ -128,8 +129,8 @@ class Peer:
         return f"{self.name} @ {self.addr[0]}"
 
 
-class VirtualPad:
-    """Thin wrapper so the program still runs (for debugging) without ViGEm."""
+class WindowsVirtualPad:
+    """Virtual pad backed by ViGEmBus, the Windows kernel driver."""
 
     def __init__(self, kind: str, on_rumble=None):
         self.kind = kind
@@ -328,6 +329,50 @@ def _axis(value: int) -> float:
     return max(value / 32768.0, -1.0)
 
 
+class _MissingPad:
+    """Stands in when a platform backend cannot even be imported."""
+
+    def __init__(self, kind: str, on_rumble=None, error: str = ""):
+        self.kind = kind
+        self.ok = False
+        self.pad = None
+        self.on_rumble = on_rumble
+        self.rumble_error = ""
+        self.error = error or "virtual gamepad backend unavailable"
+        self._last = InputState()
+
+    def apply(self, state: InputState) -> None:
+        self._last = state
+
+    def close(self) -> None:
+        pass
+
+
+def create_virtual_pad(kind: str, on_rumble=None):
+    """
+    Return this platform's virtual gamepad implementation.
+
+    Windows keeps using ViGEmBus through ``vgamepad``. Linux creates a standard
+    evdev device through ``/dev/uinput`` (see ``linux_pad.py``), which needs no
+    kernel module of its own. The import is lazy so neither platform pulls in
+    the other's dependencies.
+    """
+    if sys.platform.startswith("linux"):
+        try:
+            from linux_pad import LinuxVirtualPad
+        except Exception as exc:  # pragma: no cover - broken installation
+            return _MissingPad(
+                kind,
+                on_rumble,
+                error=(
+                    f"could not load the Linux virtual pad ({exc}). "
+                    "Run: python3 -m pip install -r pc/requirements.txt"
+                ),
+            )
+        return LinuxVirtualPad(kind, on_rumble=on_rumble)
+    return WindowsVirtualPad(kind, on_rumble=on_rumble)
+
+
 class PadSlot:
     """
     One virtual controller slot. Up to four phones can share a PC; each gets
@@ -340,14 +385,14 @@ class PadSlot:
         self.kind = kind
         self.on_rumble = on_rumble
         self.peer: Optional["Peer"] = None
-        self.pad: Optional[VirtualPad] = None
-        # vgamepad re-reports the current motor speeds periodically, so keep
-        # the last value to avoid a stream of duplicate packets to the phone.
+        self.pad = None  # WindowsVirtualPad or LinuxVirtualPad
+        # The pad backend re-reports the current motor speeds periodically, so
+        # keep the last value to avoid duplicate packets to the phone.
         self.rumble_state = (0, 0)
 
-    def ensure_pad(self) -> VirtualPad:
+    def ensure_pad(self):
         if self.pad is None:
-            self.pad = VirtualPad(self.kind, on_rumble=self._rumble)
+            self.pad = create_virtual_pad(self.kind, on_rumble=self._rumble)
         return self.pad
 
     def _rumble(self, small: int, large: int) -> None:
@@ -411,7 +456,9 @@ class VideoClient:
             # Bound kernel buffering so slow phones don't accumulate seconds of
             # stale video behind the one-frame application queue.
             self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 32 * 1024)
-            self.sock.settimeout(0.75)
+            # Long enough for a weak Wi-Fi / Bluetooth link to drain one frame.
+            # A timeout only drops the frame; it does not tear down the viewer.
+            self.sock.settimeout(5.0)
             while self.alive and self.server.running:
                 try:
                     frame = self.queue.get(timeout=1.0)
@@ -419,6 +466,8 @@ class VideoClient:
                     continue
                 try:
                     self.sock.sendall(frame)
+                except socket.timeout:
+                    continue
                 except OSError:
                     break
         finally:
@@ -566,10 +615,15 @@ class VideoServer:
             if len(hello) == 5 and hello[:4] == b"LGVQ":
                 profile_id = hello[4]
                 profile = self.QUALITY_IDS.get(profile_id, "balanced")
+                resolved_id = next(
+                    (key for key, name in self.QUALITY_IDS.items() if name == profile),
+                    1,
+                )
                 try:
                     # Negative frame length is reserved for the one-time
                     # quality acknowledgement; ordinary frames are positive.
-                    client_sock.sendall(struct.pack(">iB", -1, profile_id))
+                    # Echo the profile actually used, not an unknown request.
+                    client_sock.sendall(struct.pack(">iB", -1, resolved_id))
                 except OSError:
                     client_sock.close()
                     continue
@@ -587,16 +641,30 @@ class VideoServer:
             client.start()
 
     def _capture_loop(self) -> None:
-        import mss
-        from PIL import Image
+        try:
+            import mss
+            from PIL import Image
+        except Exception as exc:  # pragma: no cover
+            self.error = f"screen capture needs mss + pillow ({exc})"
+            print(f"  !! {self.error}")
+            return
 
         grabber_factory = getattr(mss, "MSS", mss.mss)
         resampling = getattr(Image, "Resampling", Image).BILINEAR
         frame_index = 0
 
-        with grabber_factory() as grabber:
+        try:
+            grabber = grabber_factory()
+            # monitors[0] is the union of every screen, [1] is the primary.
+            if len(grabber.monitors) < 2:
+                raise RuntimeError("no monitor found (headless or Wayland session?)")
             monitor = grabber.monitors[1]
+        except Exception as exc:  # pragma: no cover - headless/RDP/Wayland
+            self.error = f"screen capture unavailable ({exc})"
+            print(f"  !! {self.error}")
+            return
 
+        try:
             while self.running:
                 with self._client_lock:
                     clients = list(self._clients)
@@ -644,13 +712,21 @@ class VideoServer:
                         for client in viewers:
                             client.offer(packet)
                 except Exception as exc:  # pragma: no cover
-                    self.error = f"screen capture failed ({exc})"
+                    message = f"screen capture failed ({exc})"
+                    if message != self.error:
+                        self.error = message
+                        print(f"  !! {message}")
                     time.sleep(0.5)
                     continue
 
                 elapsed = time.monotonic() - started
                 if elapsed < interval:
                     time.sleep(interval - elapsed)
+        finally:
+            try:
+                grabber.close()
+            except Exception:
+                pass
 
 def qr_payload(ip: str, port: int, name: str) -> str:
     query = urllib.parse.urlencode({"h": ip, "p": port, "n": name})
@@ -714,9 +790,9 @@ class Server:
         pad_kind: str,
         release_after: float = 1.5,
         video_port: Optional[int] = None,
-        video_fps: int = 12,
-        video_width: int = 640,
-        video_quality: int = 55,
+        video_fps: int = 20,
+        video_width: int = 800,
+        video_quality: int = 50,
         video_enabled: bool = True,
         qr_enabled: bool = True,
         max_phones: int = 4,
@@ -781,7 +857,11 @@ class Server:
         # re-pairs (or switches Wi-Fi -> USB) must keep its slot instead of
         # being handed a second controller.
         if token == 0:
-            token = secrets.randbits(32)
+            # Never hand out 0 (reserved for "assign me") and never collide
+            # with a phone that is already connected.
+            with self.lock:
+                while token == 0 or token in self.peers:
+                    token = secrets.randbits(32)
         else:
             with self.lock:
                 peer = self.peers.get(token)
@@ -902,6 +982,10 @@ class Server:
         (_, _, _, seq, token, buttons, lx, ly, rx, ry, l2, r2, batt, _pad) = (
             INPUT.unpack_from(data)
         )
+        if token == 0:
+            # 0 means "assign me": a phone must run discovery before sending
+            # input. Accepting it would let several phones share one peer.
+            return
         if _pad not in (0, 1):
             _pad = 0
 
@@ -1101,6 +1185,10 @@ class Server:
             if not _vigem_installed():
                 driver = "MISSING - install it once (see messages above)"
             lines.append(f"  ViGEmBus     : {driver}")
+        elif sys.platform.startswith("linux"):
+            ready, reason = _uinput_status()
+            status = "OK (virtual gamepad via /dev/uinput)" if ready else f"MISSING - {reason}"
+            lines.append(f"  uinput       : {status}")
         for ip in ips:
             lines.append(f"  PC IP        : {ip}")
         checks = [("UDP", self.port)]
@@ -1538,8 +1626,12 @@ def _python_packages_missing() -> list:
     """Packages needed when running from source (the EXE bundles them)."""
     import importlib.util
 
-    wanted = [
-        ("vgamepad", "vgamepad>=0.2.0"),
+    wanted = []
+    if os.name == "nt":
+        wanted.append(("vgamepad", "vgamepad>=0.2.0"))
+    else:
+        wanted.append(("evdev", "evdev>=1.6.1"))
+    wanted += [
         ("mss", "mss>=10.0.0"),
         ("PIL", "pillow>=10.0.0"),
         ("qrcode", "qrcode>=7.4"),
@@ -1557,13 +1649,20 @@ def _python_packages_missing() -> list:
 
 def _ensure_python_packages(install: bool) -> None:
     """Source runs install their own requirements; frozen runs skip this."""
-    if getattr(sys, "frozen", False) or os.name != "nt":
+    if getattr(sys, "frozen", False):
         return
     missing = _python_packages_missing()
     if not missing:
         return
     names = ", ".join(package.split(">")[0] for package in missing)
     print(f"  Python deps  : missing {names}")
+    if os.name != "nt":
+        # Never pip-install behind the user's back on Linux: distributions
+        # since PEP 668 refuse it in the system interpreter, and the fix is
+        # usually a distro package or a virtualenv.
+        print("     Install with: python3 -m pip install -r pc/requirements.txt")
+        print("     (or use your distribution's python-evdev / python-pillow packages)")
+        return
     if not install:
         print("     Install with: python -m pip install -r pc\\requirements.txt")
         return
@@ -1589,10 +1688,32 @@ def _ensure_python_packages(install: bool) -> None:
     print("  Python deps  : installed")
 
 
+def _uinput_status() -> tuple[bool, str]:
+    """(ready, reason) for the Linux virtual-pad backend."""
+    try:
+        from linux_pad import uinput_status
+    except Exception as exc:  # pragma: no cover - broken installation
+        return False, f"the Linux backend could not be loaded ({exc})"
+    return uinput_status()
+
+
+def _ensure_uinput() -> None:
+    """Explain the one-time Linux setup needed to create a virtual pad."""
+    ready, reason = _uinput_status()
+    if ready:
+        return
+    print(f"  uinput       : {reason}")
+    print("     One-time setup: sudo sh pc/linux/install-uinput.sh")
+    print("     Then log out and back in so the 'input' group applies.")
+
+
 def _ensure_dependencies(port: int, video_port, install: bool) -> None:
-    """Bring a fresh Windows PC up to the point where a phone can connect."""
+    """Bring a fresh PC up to the point where a phone can connect."""
     _ensure_python_packages(install)
-    _ensure_vigem(install)
+    if os.name == "nt":
+        _ensure_vigem(install)
+    elif sys.platform.startswith("linux"):
+        _ensure_uinput()
     checks = [("UDP", port)]
     if video_port:
         checks.append(("TCP", video_port))
@@ -1692,7 +1813,7 @@ def main(argv=None) -> int:
     ap.add_argument(
         "--no-install-deps",
         action="store_true",
-        help="do not auto-install ViGEmBus / Python packages or open the firewall",
+        help="do not auto-install Python packages / ViGEmBus or open the firewall (Windows)",
     )
     ap.add_argument("--list-ip", action="store_true", help="print local IPs and exit")
     args = ap.parse_args(argv)
@@ -1702,16 +1823,28 @@ def main(argv=None) -> int:
             print(ip)
         return 0
 
+    if not 1 <= args.port <= 65535:
+        ap.error("--port must be between 1 and 65535")
+    if args.video_port is not None and not 1 <= args.video_port <= 65535:
+        ap.error("--video-port must be between 1 and 65535")
+    video_port = None if args.no_video else (args.video_port or args.port + 1)
+    if video_port is not None and video_port > 65535:
+        ap.error(
+            "the default video port would be 65536; "
+            "use a lower --port or pass --video-port"
+        )
+
     if not sys.stdout.isatty():
         try:
             sys.stdout.reconfigure(line_buffering=True)
         except Exception:
             pass
 
-    # One-time setup: Python packages (source only), ViGEmBus driver, firewall.
+    # One-time setup: Python packages (source only), the platform's virtual
+    # pad driver (ViGEmBus on Windows, uinput on Linux) and the firewall.
     _ensure_dependencies(
         args.port,
-        None if args.no_video else (args.video_port or args.port + 1),
+        video_port,
         install=not args.no_install_deps,
     )
 
@@ -1751,8 +1884,8 @@ def main(argv=None) -> int:
     except KeyboardInterrupt:
         print("\nbye")
     finally:
-        # Release the ViGEm targets so Windows drops the virtual pads instead
-        # of leaving "Unknown" ghost controllers behind.
+        # Unplug the virtual pads so the OS drops the device nodes instead of
+        # leaving "Unknown" ghost controllers behind.
         server.shutdown()
     return 0
 

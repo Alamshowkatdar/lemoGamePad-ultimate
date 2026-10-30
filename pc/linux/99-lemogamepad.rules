@@ -1,0 +1,4 @@
+# lemoGamePad ultimate: let the active desktop user create virtual gamepads.
+# Installed by install-uinput.sh; reload with:
+#   sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=uinput
+KERNEL=="uinput", SUBSYSTEM=="misc", GROUP="input", MODE="0660", TAG+="uaccess", OPTIONS+="static_node=uinput"

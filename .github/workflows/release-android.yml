@@ -86,10 +86,41 @@ jobs:
       - name: Build standalone server
         working-directory: pc
         run: |
-          python -m PyInstaller --noconfirm --onefile --console --name lemoGamePad-server --collect-all vgamepad --collect-all mss --collect-all PIL --collect-all qrcode --distpath dist --workpath build vpad_server.py
+          python -m PyInstaller --noconfirm --onefile --console --name lemoGamePad-server --collect-all vgamepad --collect-all mss --collect-all PIL --collect-all qrcode --exclude-module linux_pad --exclude-module evdev --distpath dist --workpath build vpad_server.py
 
       - name: Attach Windows server to release
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.event.release.tag_name }}
         run: gh release upload "$env:RELEASE_TAG" pc/dist/lemoGamePad-server.exe --clobber
+
+  linux-server:
+    name: Build and publish Linux server
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install server build dependencies
+        working-directory: pc
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pyinstaller
+
+      - name: Build standalone server
+        working-directory: pc
+        run: |
+          python -m PyInstaller --noconfirm --onefile --console --name lemoGamePad-server --hidden-import linux_pad --collect-submodules evdev --collect-all mss --collect-all PIL --collect-all qrcode --distpath dist --workpath build vpad_server.py
+
+      - name: Attach Linux server to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.event.release.tag_name }}
+        run: gh release upload "$RELEASE_TAG" pc/dist/lemoGamePad-server --clobber
