@@ -76,7 +76,7 @@ and download the file for your platform:
 
 | File | Size | What it is |
 |---|---|---|
-| `lemoGamePad-server.exe` | ~29 MB | Windows receiver. Just run it — it installs its own driver and firewall rules. |
+| `lemoGamePad-server.exe` | ~19 MB | Windows receiver. Just run it — it installs its own driver and firewall rules. |
 | `lemoGamePad-server` | ~30 MB | Linux receiver (x86-64). Needs the one-time `pc/linux/install-uinput.sh` setup from the source repo. |
 | APK attached to the latest release | ~0.9 MB | Android app (Android 7.0 / API 24 and newer). |
 
