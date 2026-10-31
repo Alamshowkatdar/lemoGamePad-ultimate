@@ -109,6 +109,13 @@ def main() -> int:
         assert e.FF_RUMBLE in caps[e.EV_FF], "rumble is not advertised"
         print("  capabilities ok: 11 buttons, 8 axes, FF_RUMBLE")
 
+        # Regression: evdev has BTN_X == BTN_NORTH (0x133) and BTN_Y == BTN_WEST
+        # (0x134). Xbox X (left, PS square) is BTN_X and Y (top, PS triangle) is BTN_Y.
+        assert pad._buttons["square"] == e.BTN_X, "square must send BTN_X"
+        assert pad._buttons["triangle"] == e.BTN_Y, "triangle must send BTN_Y"
+        assert e.BTN_X in buttons and e.BTN_Y in buttons
+        print("  face buttons ok: square=BTN_X, triangle=BTN_Y")
+
         reader = InputDevice(device.path)
         try:
             state = InputState(

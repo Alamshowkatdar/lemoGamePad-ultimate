@@ -39,6 +39,10 @@ jobs:
         working-directory: pc
         run: python test_multi.py
 
+      - name: Screen capture backends (fake Wayland tools)
+        working-directory: pc
+        run: python test_capture.py
+
       - name: Virtual pad and force feedback
         working-directory: pc
         run: |

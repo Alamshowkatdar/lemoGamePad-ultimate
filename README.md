@@ -188,8 +188,15 @@ builds a single-file `dist/lemoGamePad-server` with PyInstaller.
 
 Linux notes:
 
-- Screen preview needs a working X11/XWayland session. On a headless machine the
-  server still works as a gamepad and prints why capture is unavailable.
+- Screen preview works on X11 (via `mss`) and on Wayland. A native Wayland session
+  does not let programs read the screen directly, so the server asks a screenshot
+  tool for each frame and uses the first one that works: `grim` (Sway, Hyprland,
+  wlroots, COSMIC), `spectacle` (KDE Plasma) or `gnome-screenshot` (GNOME, best
+  effort). Install one, e.g. `sudo apt install grim`. `spectacle` and
+  `gnome-screenshot` start a process per frame, so expect a lower frame rate than
+  `grim` or X11. Set `LEMO_CAPTURE=mss|grim|spectacle|gnome-screenshot` to force a
+  backend. On a headless machine the server still works as a gamepad and prints
+  why capture is unavailable.
 - The firewall is not modified on Linux. If phones cannot reach the PC, allow
   UDP `9876` and TCP `9877` in `ufw`/`firewalld`.
 - Rumble uses the standard evdev force-feedback API, so games that rumble
@@ -543,6 +550,7 @@ The app keeps the screen on, hides the system bars and locks to landscape.
 | Buttons stuck down | The server releases everything after 1.5 s without packets, and on exit. |
 | Laggy / stuttery | Use 5 GHz Wi-Fi, stay in the same room, disable battery saver for the app. Typical LAN latency is 3–15 ms. |
 | Screen preview stays black | Allow the TCP firewall prompt, or run `pc\allow_firewall.ps1`. The TCP port is control port + 1. |
+| Screen preview is black or says capture is unavailable on Linux | Native Wayland blocks `mss`. Install `grim`, `spectacle` or `gnome-screenshot` (see Linux notes), or log in with an X11 session. |
 | Game doesn't see a controller | It probably wants XInput; the virtual pad *is* XInput. For DirectInput-only games, use Steam Input. |
 | Device Manager lists greyed "Xbox 360 Controller for Windows" | Ghosts from a server that was killed instead of closed. Run `pc\clean_pads.ps1` as Administrator. |
 | Rumble not working | Some games only rumble on the pad they detect at launch — connect before starting the game. Run `python pc\test_rumble.py` (server closed) to prove the PC side works. |
@@ -654,6 +662,7 @@ pc/
   test_multi.py             multi-phone suite: discovery, slots, rumble, reconnect
   test_linux_pad.py         Linux pad + force-feedback test (no phone/game needed)
   test_video.py             screen stream (incl. multi-viewer) + QR smoke test
+  test_capture.py           screen-capture backend selection (fake Wayland tools)
   test_rumble.py            end-to-end rumble check through Windows XInput
   test_frozen.py            same checks against a running .exe
   build_exe.ps1             rebuilds release/lemoGamePad-server.exe
@@ -769,6 +778,7 @@ cd pc
 python3 test_multi.py       # works with or without /dev/uinput
 python3 test_linux_pad.py   # real uinput pad, buttons/axes, force feedback
 python3 test_video.py       # needs a desktop session for screen capture
+python3 test_capture.py     # Wayland/X11 capture backend selection, no desktop needed
 ```
 
 ### Publish a change
