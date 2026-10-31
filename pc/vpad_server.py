@@ -32,6 +32,7 @@ import io
 import os
 import queue
 import secrets
+import shutil
 import signal
 import socket
 import struct
@@ -412,6 +413,147 @@ class PadSlot:
         self.rumble_state = (0, 0)
 
 
+# ---------------------------------------------------------------- screen capture
+#
+# Windows and X11 grab the screen with mss. A native Wayland session does not
+# let ordinary programs read the screen (mss only sees XWayland windows, often
+# as black), so on Wayland the server asks a screenshot tool for each frame.
+# Set LEMO_CAPTURE=mss|grim|spectacle|gnome-screenshot to force one backend.
+
+_WAYLAND_TOOLS = (
+    # name, argv ("{file}" is replaced by a temp path), writes image to stdout?
+    ("grim", ["grim", "-t", "ppm", "-"], True),  # Sway, Hyprland, wlroots, COSMIC
+    ("spectacle", ["spectacle", "-b", "-n", "-f", "-o", "{file}"], False),  # KDE Plasma
+    ("gnome-screenshot", ["gnome-screenshot", "-f", "{file}"], False),  # GNOME (best effort)
+)
+
+_WAYLAND_HELP = (
+    "install grim (Sway/Hyprland/wlroots), spectacle (KDE) or gnome-screenshot (GNOME), "
+    "or log in with an X11 session"
+)
+
+
+def linux_session_type() -> str:
+    """'wayland', 'x11' or '' (unknown / headless)."""
+    kind = os.environ.get("XDG_SESSION_TYPE", "").strip().lower()
+    if kind in ("wayland", "x11"):
+        return kind
+    if os.environ.get("WAYLAND_DISPLAY"):
+        return "wayland"
+    if os.environ.get("DISPLAY"):
+        return "x11"
+    return ""
+
+
+class _MssCapture:
+    """Windows and X11: grab the primary monitor with mss."""
+
+    name = "mss"
+
+    def __init__(self) -> None:
+        import mss
+        from PIL import Image
+
+        self._image = Image
+        self._grabber = getattr(mss, "MSS", mss.mss)()
+        # monitors[0] is the union of every screen, [1] is the primary.
+        if len(self._grabber.monitors) < 2:
+            self._grabber.close()
+            raise RuntimeError("no monitor found (headless session?)")
+        self._monitor = self._grabber.monitors[1]
+
+    def grab(self):
+        shot = self._grabber.grab(self._monitor)
+        return self._image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
+
+    def close(self) -> None:
+        try:
+            self._grabber.close()
+        except Exception:
+            pass
+
+
+class _CommandCapture:
+    """Wayland: run a screenshot command for every frame."""
+
+    def __init__(self, name: str, argv: list, to_stdout: bool) -> None:
+        self.name = name
+        self._argv = argv
+        self._to_stdout = to_stdout
+        self._tmp = ""
+        if not to_stdout:
+            fd, self._tmp = tempfile.mkstemp(prefix="lemo-shot-", suffix=".png")
+            os.close(fd)
+
+    def grab(self):
+        from PIL import Image
+
+        argv = [arg.replace("{file}", self._tmp) for arg in self._argv]
+        proc = subprocess.run(
+            argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=8, check=False
+        )
+        if proc.returncode != 0:
+            tail = proc.stderr.decode("utf-8", "replace").strip().splitlines()
+            raise RuntimeError(f"{self.name} exited with {proc.returncode}" + (f": {tail[-1]}" if tail else ""))
+        if self._to_stdout:
+            data = proc.stdout
+        else:
+            with open(self._tmp, "rb") as handle:
+                data = handle.read()
+        if not data:
+            raise RuntimeError(f"{self.name} returned no image")
+        img = Image.open(io.BytesIO(data))
+        img.load()
+        return img.convert("RGB")
+
+    def close(self) -> None:
+        if self._tmp:
+            try:
+                os.remove(self._tmp)
+            except OSError:
+                pass
+
+
+def open_screen_capture():
+    """Return (capture, notes) for the first backend that really produces a frame."""
+    forced = os.environ.get("LEMO_CAPTURE", "").strip().lower()
+    session = linux_session_type() if sys.platform.startswith("linux") else ""
+    tools = {name: (argv, to_stdout) for name, argv, to_stdout in _WAYLAND_TOOLS}
+
+    if forced:
+        order = [forced]
+    elif session == "wayland":
+        order = [name for name, argv, _ in _WAYLAND_TOOLS if shutil.which(argv[0])] + ["mss"]
+    else:
+        order = ["mss"]
+
+    problems = []
+    for name in order:
+        capture = None
+        try:
+            if name == "mss":
+                capture = _MssCapture()
+            elif name in tools:
+                argv, to_stdout = tools[name]
+                if not shutil.which(argv[0]):
+                    raise RuntimeError("not installed")
+                capture = _CommandCapture(name, argv, to_stdout)
+            else:
+                raise RuntimeError("unknown backend")
+            capture.grab()  # probe now, so a broken tool is skipped before any phone connects
+            notes = list(problems)
+            if name == "mss" and session == "wayland":
+                notes.append("Wayland session: mss only sees XWayland windows (" + _WAYLAND_HELP + ")")
+            return capture, notes
+        except Exception as exc:
+            problems.append(f"{name}: {exc}")
+            if capture is not None:
+                capture.close()
+
+    hint = f" - {_WAYLAND_HELP}" if session == "wayland" else ""
+    raise RuntimeError("; ".join(problems) + hint)
+
+
 class VideoClient:
     """One PiP viewer with a latest-frame queue and a negotiated quality profile."""
 
@@ -499,6 +641,7 @@ class VideoServer:
         self.max_viewers = max(1, max_viewers)
         self.enabled = False
         self.error = ""
+        self.capture_backend = ""
         self.running = False
         self._thread: Optional[threading.Thread] = None
         self._capture: Optional[threading.Thread] = None
@@ -557,10 +700,9 @@ class VideoServer:
     # ------------------------------------------------------------------ socket
     def _serve(self) -> None:
         try:
-            import mss  # noqa: F401
             from PIL import Image  # noqa: F401
         except Exception as exc:  # pragma: no cover
-            self.error = f"screen capture needs mss + pillow ({exc})"
+            self.error = f"screen capture needs pillow ({exc})"
             return
 
         try:
@@ -642,27 +784,24 @@ class VideoServer:
 
     def _capture_loop(self) -> None:
         try:
-            import mss
             from PIL import Image
         except Exception as exc:  # pragma: no cover
-            self.error = f"screen capture needs mss + pillow ({exc})"
+            self.error = f"screen capture needs pillow ({exc})"
             print(f"  !! {self.error}")
             return
 
-        grabber_factory = getattr(mss, "MSS", mss.mss)
         resampling = getattr(Image, "Resampling", Image).BILINEAR
         frame_index = 0
 
         try:
-            grabber = grabber_factory()
-            # monitors[0] is the union of every screen, [1] is the primary.
-            if len(grabber.monitors) < 2:
-                raise RuntimeError("no monitor found (headless or Wayland session?)")
-            monitor = grabber.monitors[1]
+            capture, notes = open_screen_capture()
         except Exception as exc:  # pragma: no cover - headless/RDP/Wayland
             self.error = f"screen capture unavailable ({exc})"
             print(f"  !! {self.error}")
             return
+        self.capture_backend = capture.name
+        for note in notes:
+            print(f"  !! screen capture: {note}")
 
         try:
             while self.running:
@@ -683,8 +822,7 @@ class VideoServer:
                 started = time.monotonic()
 
                 try:
-                    shot = grabber.grab(monitor)
-                    img = Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
+                    img = capture.grab()
                     frame_index += 1
 
                     for profile, viewers in groups.items():
@@ -723,10 +861,7 @@ class VideoServer:
                 if elapsed < interval:
                     time.sleep(interval - elapsed)
         finally:
-            try:
-                grabber.close()
-            except Exception:
-                pass
+            capture.close()
 
 def qr_payload(ip: str, port: int, name: str) -> str:
     query = urllib.parse.urlencode({"h": ip, "p": port, "n": name})

@@ -91,8 +91,11 @@ def _button_map() -> dict[str, int]:
     wanted = {
         "cross": ("BTN_SOUTH", "BTN_A"),
         "circle": ("BTN_EAST", "BTN_B"),
-        "square": ("BTN_WEST", "BTN_X"),
-        "triangle": ("BTN_NORTH", "BTN_Y"),
+        # evdev naming trap: BTN_X == BTN_NORTH (0x133) and BTN_Y == BTN_WEST
+        # (0x134). xpad reports the Xbox X button (left, = PS square) as BTN_X
+        # and Y (top, = PS triangle) as BTN_Y, so use the X/Y names explicitly.
+        "square": ("BTN_X", "BTN_NORTH"),
+        "triangle": ("BTN_Y", "BTN_WEST"),
         "l1": ("BTN_TL",),
         "r1": ("BTN_TR",),
         "select": ("BTN_SELECT",),
