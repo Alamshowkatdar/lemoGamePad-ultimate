@@ -6,7 +6,7 @@ Wi-Fi-to-PC · Bluetooth HID to Android phones · Bluetooth PAN · USB · PC scr
 
 by **Alam showkat**
 
-**App source version:** 1.3.7. Download the signed APK and the Windows/Linux server from the [v1.3.7 release](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/tag/v1.3.7).
+**App source version:** 1.3.7. Download the signed APK and the Windows/Linux server from the [latest release](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) — use **1.3.7.2 or newer** on Linux, which fixes the swapped X/Y face buttons.
 
 [**Download the latest release →**](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest)
 · [Report an issue](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/issues)
@@ -39,6 +39,13 @@ the PC** — the server is a single `.exe`. On Linux the receiver runs from sour
 
 > **lemoGamePad ultimate™** — trademark of **Alam showkat**.
 > App package: `com.alamshowkat.lemogamepad`.
+
+### What's new in 1.3.7.2
+
+- **Linux face buttons fixed** — square/triangle (X/Y) are no longer swapped.
+  The Linux pad now uses the right evdev codes for the Xbox 360 identity and,
+  with `--pad ds4`, the DualShock 4 identity too. Download this release if you
+  installed the original 1.3.7 Linux server.
 
 ### What's new in 1.3.7
 
@@ -816,4 +823,4 @@ pushes to `origin`. Tags and binaries belong on the GitHub Releases page.
 
 ---
 
-**lemoGamePad ultimate™ © Alam showkat** · v1.3.7
+**lemoGamePad ultimate™ © Alam showkat** · v1.3.7.2

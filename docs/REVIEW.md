@@ -3,7 +3,8 @@
 A pass over the whole app (Kotlin sources, manifest, Gradle files, CI) focused on
 bugs, UI smoothness, and making the phone-to-phone Bluetooth gamepad honest.
 1.3.6 covers that review; 1.3.7 adds the Linux receiver, whose notes start at
-[Linux receiver (1.3.7)](#linux-receiver-137).
+[Linux receiver (1.3.7)](#linux-receiver-137); 1.3.7.2 fixes its face-button
+mapping (see [Linux face buttons (1.3.7.2)](#linux-face-buttons-1372)).
 This file records what was found and what changed, so the reasoning does not get
 lost between releases.
 
@@ -211,3 +212,16 @@ Linux, and the wire protocol, Android app, and Windows path are untouched.
 - `test_rumble.py` is Windows/XInput-only and now exits cleanly elsewhere; use
   `test_linux_pad.py` on Linux.
 
+
+## Linux face buttons (1.3.7.2)
+
+The 1.3.7 Linux receiver swapped square/triangle (SDL X/Y) for every pad
+identity. The face-button map now depends on the identity being emulated:
+
+- **Xbox 360 (`x360`, default)** — square is `BTN_X`, triangle is `BTN_Y`.
+- **DualShock 4 (`--pad ds4`)** — square is `BTN_WEST`, triangle is `BTN_NORTH`.
+
+The reason is that `BTN_X`/`BTN_Y` are aliases of `BTN_NORTH`/`BTN_WEST`, and
+SDL/Steam pick their mapping from the virtual pad's USB vendor and product IDs.
+Matching the codes to the identity keeps X on the left and Y on top in both
+cases. `pc/test_linux_pad.py` exercises both identities.
