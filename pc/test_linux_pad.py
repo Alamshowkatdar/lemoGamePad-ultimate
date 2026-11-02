@@ -22,6 +22,7 @@ if not sys.platform.startswith("linux"):
 import evdev
 from evdev import InputDevice, ecodes as e
 
+import linux_pad
 import vpad_server as srv
 from linux_pad import LinuxVirtualPad, uinput_status
 from vpad_server import InputState
@@ -110,16 +111,30 @@ def main() -> int:
         print("  capabilities ok: 11 buttons, 8 axes, FF_RUMBLE")
 
         # Regression: evdev has BTN_X == BTN_NORTH (0x133) and BTN_Y == BTN_WEST
-        # (0x134). Xbox X (left, PS square) is BTN_X and Y (top, PS triangle) is BTN_Y.
-        assert pad._buttons["square"] == e.BTN_X, "square must send BTN_X"
-        assert pad._buttons["triangle"] == e.BTN_Y, "triangle must send BTN_Y"
+        # (0x134). xpad (Microsoft ids) sends the left face button as BTN_X and
+        # the top one as BTN_Y; hid-playstation (Sony ids) sends West and North.
+        # SDL picks its mapping from the USB vendor id, so both must match.
+        assert pad._buttons["square"] == e.BTN_X, "x360 square must send BTN_X"
+        assert pad._buttons["triangle"] == e.BTN_Y, "x360 triangle must send BTN_Y"
         assert e.BTN_X in buttons and e.BTN_Y in buttons
-        print("  face buttons ok: square=BTN_X, triangle=BTN_Y")
+
+        ds4 = linux_pad._button_map("ds4")
+        assert ds4["square"] == e.BTN_WEST, "ds4 square must send BTN_WEST"
+        assert ds4["triangle"] == e.BTN_NORTH, "ds4 triangle must send BTN_NORTH"
+        ds4_caps = LinuxVirtualPad._capabilities("ds4")
+        assert e.BTN_WEST in ds4_caps[e.EV_KEY] and e.BTN_NORTH in ds4_caps[e.EV_KEY]
+        print("  face buttons ok: x360 square=BTN_X/triangle=BTN_Y, "
+              "ds4 square=BTN_WEST/triangle=BTN_NORTH")
 
         reader = InputDevice(device.path)
         try:
             state = InputState(
-                buttons=(1 << srv.BUTTON_BITS["cross"]) | (1 << srv.BUTTON_BITS["r1"]),
+                buttons=(
+                    (1 << srv.BUTTON_BITS["cross"])
+                    | (1 << srv.BUTTON_BITS["r1"])
+                    | (1 << srv.BUTTON_BITS["square"])
+                    | (1 << srv.BUTTON_BITS["triangle"])
+                ),
                 lx=12345,
                 ly=-23456,
                 rx=-32768,
@@ -130,6 +145,9 @@ def main() -> int:
             report = read_report(reader)
             assert (e.EV_KEY, e.BTN_SOUTH, 1) in report
             assert (e.EV_KEY, e.BTN_TR, 1) in report
+            # Square and triangle must not be swapped on the wire either.
+            assert (e.EV_KEY, e.BTN_X, 1) in report
+            assert (e.EV_KEY, e.BTN_Y, 1) in report
             assert (e.EV_ABS, e.ABS_X, 12345) in report
             # App: positive ly = up. evdev ABS_Y: positive = down, hence the flip.
             assert (e.EV_ABS, e.ABS_Y, 23456) in report

@@ -86,16 +86,37 @@ def uinput_status() -> tuple[bool, str]:
     return True, "OK (virtual gamepad via /dev/uinput)"
 
 
-def _button_map() -> dict[str, int]:
-    """PS3 button name -> Linux BTN_* code, matching the xpad layout."""
+def _button_map(kind: str = "x360") -> dict[str, int]:
+    """
+    PS3 button name -> Linux BTN_* code for the pad identity we advertise.
+
+    evdev has two different conventions for the two upper face buttons, and
+    the symbolic names are a trap: BTN_X == BTN_NORTH (0x133) and
+    BTN_Y == BTN_WEST (0x134). The kernel's xpad driver reports the Xbox X
+    button (left, = PS square) as BTN_X and Xbox Y (top, = PS triangle) as
+    BTN_Y. The Sony hid-playstation driver reports the same positions as
+    BTN_WEST and BTN_NORTH instead. SDL (and Steam Input) pick their mapping
+    from the USB vendor id, so the codes must match the identity passed to
+    UInput: Microsoft ids need the xpad layout, Sony ids need the PS layout.
+    """
+    if kind == "ds4":
+        # Sony vendor: square is the West button, triangle is North.
+        face = {
+            "square": ("BTN_WEST", "BTN_Y"),
+            "triangle": ("BTN_NORTH", "BTN_X"),
+        }
+    else:
+        # Microsoft vendor: xpad names the physical X (left) BTN_X and the
+        # physical Y (top) BTN_Y, even though those values are North/West.
+        face = {
+            "square": ("BTN_X", "BTN_NORTH"),
+            "triangle": ("BTN_Y", "BTN_WEST"),
+        }
+
     wanted = {
         "cross": ("BTN_SOUTH", "BTN_A"),
         "circle": ("BTN_EAST", "BTN_B"),
-        # evdev naming trap: BTN_X == BTN_NORTH (0x133) and BTN_Y == BTN_WEST
-        # (0x134). xpad reports the Xbox X button (left, = PS square) as BTN_X
-        # and Y (top, = PS triangle) as BTN_Y, so use the X/Y names explicitly.
-        "square": ("BTN_X", "BTN_NORTH"),
-        "triangle": ("BTN_Y", "BTN_WEST"),
+        **face,
         "l1": ("BTN_TL",),
         "r1": ("BTN_TR",),
         "select": ("BTN_SELECT",),
@@ -134,7 +155,7 @@ class LinuxVirtualPad:
         # (event type, code) -> last written value, so each report only carries
         # the controls that actually moved.
         self._written: dict[tuple[int, int], int] = {}
-        self._buttons = _button_map()
+        self._buttons = _button_map(kind)
 
         # Force feedback bookkeeping. effect id -> (weak, strong, playing, ends_at)
         self._effects: dict[int, tuple[int, int, bool, Optional[float]]] = {}
@@ -158,7 +179,7 @@ class LinuxVirtualPad:
         identity = _DS4 if kind == "ds4" else _X360
         try:
             self.ui = UInput(
-                self._capabilities(),
+                self._capabilities(kind),
                 phys="lemogamepad/uinput",
                 max_effects=16,
                 **identity,
@@ -188,8 +209,8 @@ class LinuxVirtualPad:
 
     # ------------------------------------------------------------- capabilities
     @staticmethod
-    def _capabilities() -> dict:
-        buttons = sorted(set(_button_map().values()))
+    def _capabilities(kind: str = "x360") -> dict:
+        buttons = sorted(set(_button_map(kind).values()))
         axes = [
             (e.ABS_X, AbsInfo(0, -32768, 32767, 16, 128, 0)),
             (e.ABS_Y, AbsInfo(0, -32768, 32767, 16, 128, 0)),
