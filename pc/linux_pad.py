@@ -15,7 +15,7 @@ module of our own, no root daemon, and no code running in the game.
 
 Access to ``/dev/uinput`` is required. On most distributions that means
 loading the ``uinput`` module and adding your user to the ``input`` group;
-see ``pc/linux/install-uinput.sh``.
+see ``pc/linux/install-linux.sh``.
 """
 
 from __future__ import annotations
@@ -165,14 +165,14 @@ class LinuxVirtualPad:
         if evdev is None:
             self.error = (
                 "python-evdev is not installed. "
-                "Run: python3 -m pip install -r pc/requirements.txt"
+                "Run: sudo sh pc/linux/install-linux.sh"
             )
             return
 
         ready, reason = uinput_status()
         if not ready:
             self.error = (
-                f"{reason}. See pc/linux/install-uinput.sh for the one-time setup."
+                f"{reason}. See pc/linux/install-linux.sh for the one-time setup."
             )
             return
 

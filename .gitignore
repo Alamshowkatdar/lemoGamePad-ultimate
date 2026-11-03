@@ -12,6 +12,7 @@ android/local.properties
 .idea/
 
 # --- PC build output -------------------------------------------------------
+pc/.venv/
 pc/build/
 pc/dist/
 pc/*.spec

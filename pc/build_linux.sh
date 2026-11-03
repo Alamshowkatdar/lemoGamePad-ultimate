@@ -4,7 +4,7 @@
 #   ./pc/build_linux.sh
 #
 # The result is dist/lemoGamePad-server. It still needs the one-time uinput
-# setup (pc/linux/install-uinput.sh) at runtime.
+# setup (pc/linux/install-linux.sh) at runtime.
 set -eu
 cd "$(dirname "$0")"
 

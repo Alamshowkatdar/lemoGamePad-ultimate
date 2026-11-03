@@ -367,7 +367,7 @@ def create_virtual_pad(kind: str, on_rumble=None):
                 on_rumble,
                 error=(
                     f"could not load the Linux virtual pad ({exc}). "
-                    "Run: python3 -m pip install -r pc/requirements.txt"
+                    "Run: sudo sh pc/linux/install-linux.sh"
                 ),
             )
         return LinuxVirtualPad(kind, on_rumble=on_rumble)
@@ -1795,7 +1795,8 @@ def _ensure_python_packages(install: bool) -> None:
         # Never pip-install behind the user's back on Linux: distributions
         # since PEP 668 refuse it in the system interpreter, and the fix is
         # usually a distro package or a virtualenv.
-        print("     Install with: python3 -m pip install -r pc/requirements.txt")
+        print("     Install with: sudo sh pc/linux/install-linux.sh")
+        print("     Then start it with: pc/linux/run.sh")
         print("     (or use your distribution's python-evdev / python-pillow packages)")
         return
     if not install:
@@ -1838,8 +1839,9 @@ def _ensure_uinput() -> None:
     if ready:
         return
     print(f"  uinput       : {reason}")
-    print("     One-time setup: sudo sh pc/linux/install-uinput.sh")
-    print("     Then log out and back in so the 'input' group applies.")
+    print("     One-time setup: sudo sh pc/linux/install-linux.sh")
+    print("     Then run: pc/linux/run.sh")
+    print("     Log out and back in if the new 'input' group is not active yet.")
 
 
 def _ensure_dependencies(port: int, video_port, install: bool) -> None:

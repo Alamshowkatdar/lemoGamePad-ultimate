@@ -170,9 +170,11 @@ Linux, and the wire protocol, Android app, and Windows path are untouched.
   - **Rumble** through `EV_FF`/`FF_RUMBLE`/`FF_GAIN`: effect uploads, play/stop,
     gain scaling, per-effect duration expiry and erase are all handled, then
     converted from Linux's 0…65535 magnitudes to the phone's 0…255.
-- **`pc/linux/install-uinput.sh`** + **`99-lemogamepad.rules`** — one-time setup:
-  load `uinput`, install a udev rule for `/dev/uinput`, add the desktop user to
-  the `input` group.
+- **`pc/linux/install-linux.sh`** (and the `install-uinput.sh` alias) +
+  **`70-lemogamepad.rules`** — one-shot setup: install the distribution
+  packages, load `uinput`, install a udev rule for `/dev/uinput`, add the
+  desktop user to the `input` group, create `pc/.venv`, open the firewall and
+  add a launcher.
 - **`pc/build_linux.sh`** — single-file PyInstaller build (`dist/lemoGamePad-server`).
 - **`pc/test_linux_pad.py`** — verifies the created device, capabilities, button
   and axis events, and the full rumble path (uploaded and played from a child

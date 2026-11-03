@@ -123,4 +123,4 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.event.release.tag_name }}
-        run: gh release upload "$RELEASE_TAG" pc/dist/lemoGamePad-server --clobber
+        run: gh release upload "$RELEASE_TAG" pc/dist/lemoGamePad-server pc/linux/install-linux.sh --clobber
