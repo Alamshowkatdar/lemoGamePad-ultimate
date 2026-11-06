@@ -73,7 +73,16 @@ class PadState {
     /** Incremented on every change so the sender can skip untouched frames. */
     @Volatile var version: Long = 1
 
+    /**
+     * Woken directly when the pad changes. Without this the sender had to poll
+     * every few milliseconds, so a busy UI thread could delay a stick sample
+     * by a whole frame or more. Unparking is cheap enough to do on the UI
+     * thread; the actual network write stays on the sender thread.
+     */
+    @Volatile var onChange: (() -> Unit)? = null
+
     fun bump() {
         version++
+        onChange?.invoke()
     }
 }

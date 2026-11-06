@@ -52,6 +52,12 @@ class GamepadView(context: Context) : View(context) {
             field = value.coerceIn(0f, 0.4f)
         }
 
+    /** 0 = linear stick response, 1 = strongest precision (soft-centre) curve. */
+    var stickCurve: Float = 0f
+        set(value) {
+            field = value.coerceIn(0f, 1f)
+        }
+
     @Volatile
     var hapticsEnabled = true
 
@@ -1319,8 +1325,12 @@ class GamepadView(context: Context) : View(context) {
         val mag = hypot(n.kx, n.ky)
         if (mag <= deadzone) return 0 to 0
         val scaled = ((mag - deadzone) / (1f - deadzone)).coerceAtMost(1f)
-        val ux = n.kx / mag * scaled
-        val uy = n.ky / mag * scaled
+        // A precision curve keeps small corrections small: 0 is linear, 1 pulls
+        // the response towards the centre without changing full deflection.
+        val curve = stickCurve.coerceIn(0f, 1f)
+        val shaped = if (curve <= 0.001f) scaled else scaled * (1f - curve + curve * scaled * scaled)
+        val ux = n.kx / mag * shaped
+        val uy = n.ky / mag * shaped
         return (ux * 32767f).toInt() to (-uy * 32767f).toInt()
     }
 

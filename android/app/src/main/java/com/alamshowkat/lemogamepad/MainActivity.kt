@@ -53,6 +53,7 @@ class MainActivity : Activity() {
 
     @Volatile private var rumbleAmp = 0
     @Volatile private var lastRumbleAt = 0L
+    @Volatile private var hapticStrength = 1f
 
     private val phoneGamepadTicker = object : Runnable {
         override fun run() {
@@ -110,6 +111,7 @@ class MainActivity : Activity() {
         }
         view.applyLayout(prefs.getString(PrefsKeys.LAYOUT, null))
         view.deadzone = prefs.getInt(PrefsKeys.DEADZONE, 12) / 100f
+        view.stickCurve = prefs.getInt(PrefsKeys.STICK_CURVE, 0) / 100f
         view.hapticsEnabled = prefs.getBoolean(PrefsKeys.HAPTICS, true)
         view.onOpenSettings = { showSettings() }
         view.onHaptic = { ms -> tapFeedback(ms) }
@@ -129,10 +131,12 @@ class MainActivity : Activity() {
         link = Link(view.state, applicationContext)
         link.port = prefs.getInt(PrefsKeys.PORT, Proto.PORT)
         link.transport = transportById(prefs.getString(PrefsKeys.TRANSPORT, null))
+        link.inputRate = InputRate.fromId(prefs.getString(PrefsKeys.INPUT_RATE, null))
         link.onRumble = { small, large -> handleRumble(small, large) }
 
         screenEnabled = prefs.getBoolean(PrefsKeys.SCREEN, false)
         screenSmall = prefs.getBoolean(PrefsKeys.SCREEN_SMALL, true)
+        hapticStrength = prefs.getInt(PrefsKeys.HAPTIC_STRENGTH, 100) / 100f
         screenQuality = ScreenQuality.fromId(
             prefs.getInt(PrefsKeys.SCREEN_QUALITY, ScreenQuality.BALANCED.wireId),
         )
@@ -245,9 +249,15 @@ class MainActivity : Activity() {
                 val name = link.serverName.ifBlank { host }
                 val linkName = link.transportName()
                 val rtt = if (link.rttMs >= 0) "  ·  ${link.rttMs} ms" else ""
+                val jitter = if (link.jitterMs > 0) " ±${link.jitterMs}" else ""
+                val loss = if (link.lossPermille >= 5) {
+                    "  ·  ${(link.lossPermille + 5) / 10}% loss"
+                } else {
+                    ""
+                }
                 val batt = if (batteryLevel in 0..100) "  ·  $batteryLevel%" else ""
                 val via = if (linkName.isBlank()) "" else "  ·  $linkName"
-                view.setStatus("$name$via$rtt$batt", GamepadView.STATUS_OK)
+                view.setStatus("$name$via$rtt$jitter$loss$batt", GamepadView.STATUS_OK)
             }
             else -> {
                 val kind = link.transport
@@ -639,6 +649,10 @@ class MainActivity : Activity() {
                     screenView?.setQuality(quality)
                 }
 
+                override fun onHapticsChanged(strength: Float) {
+                    hapticStrength = strength.coerceIn(0f, 1f)
+                }
+
                 override fun attachScreenStream() {
                     this@MainActivity.attachScreenStream()
                 }
@@ -774,8 +788,10 @@ class MainActivity : Activity() {
 
     private fun pulse(amp: Int) {
         val v = vibrator() ?: return
+        val strength = (amp * hapticStrength).toInt().coerceIn(0, 255)
+        if (strength == 0) return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            v.vibrate(VibrationEffect.createOneShot(RUMBLE_PULSE_MS, amp))
+            v.vibrate(VibrationEffect.createOneShot(RUMBLE_PULSE_MS, strength))
         } else {
             @Suppress("DEPRECATION")
             v.vibrate(RUMBLE_PULSE_MS)

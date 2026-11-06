@@ -6,7 +6,7 @@ Wi-Fi-to-PC · Bluetooth HID to Android phones · Bluetooth PAN · USB · PC scr
 
 by **Alam showkat**
 
-**App source version:** 1.3.7. Download the signed APK and the Windows/Linux server from the [latest release](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) — use **1.3.7.2 or newer** on Linux, which fixes the swapped X/Y face buttons.
+**App source version:** 1.4.0. Download the signed APK and the Windows/Linux server from the [latest release](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) — use **1.3.7.2 or newer** on Linux, which fixes the swapped X/Y face buttons.
 
 [**Download the latest release →**](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest)
 · [Report an issue](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/issues)
@@ -39,6 +39,24 @@ the PC** — the server is a single `.exe`. On Linux the receiver runs from sour
 
 > **lemoGamePad ultimate™** — trademark of **Alam showkat**.
 > App package: `com.alamshowkat.lemogamepad`.
+
+### What's new in 1.4.0
+
+- **Steadier latency** — the PC now collapses a burst of queued packets into one
+  update at the newest position instead of replaying every old one, discards
+  out-of-order packets, and never lets the console window stall the input path.
+  The phone sends the moment the pad changes instead of polling every 7 ms,
+  holds a low-latency Wi-Fi lock while connected, and marks its packets
+  low-delay.
+- **See the link, not just guess at it** — settings show round-trip average,
+  min, max, jitter and uplink loss, plus a sparkline of the last ~30 seconds.
+  The status pill also shows loss and jitter.
+- **Input rate modes** — **ECO**, **STANDARD** (default, wake on change) and
+  **TURBO** (continuous 250 Hz) in settings.
+- **Stick precision curve** — calm small corrections without reducing full
+  deflection.
+- **Vibration strength** — scale game rumble from 0 to 100 %.
+- Wire-compatible with 1.3 apps and servers.
 
 ### What's new in 1.3.7.2
 
@@ -508,7 +526,9 @@ The sheet slides in from the right and keeps showing live state while it is open
 Every change applies immediately.
 
 - **Status card** — connection dot, transport actually in use, round-trip time,
-  PC name/address, and the phone's interface list. Refreshes twice a second.
+  PC name/address, and the phone's interface list. Once connected it also draws
+  a latency sparkline with average / min / max / jitter and uplink loss.
+  Refreshes twice a second.
 - **CONNECT / RECONNECT / DISCONNECT** — connect, rebuild the current link, or
   stop and clear the address.
 - **Transport chips** — AUTO / WI-FI / BT / USB with readiness dots.
@@ -519,7 +539,12 @@ Every change applies immediately.
 - **Face button labels** — PlayStation symbols or Xbox letters.
 - **Customize layout / Reset layout**.
 - **Stick deadzone** — 0–40 %, default 12 %.
-- **Vibration feedback** — touch clicks plus game rumble.
+- **Stick curve** — 0–100 %, linear at 0; higher values keep small corrections
+  near the centre.
+- **Vibration feedback** — touch clicks plus game rumble, with a 0–100 %
+  strength slider.
+- **Input rate** — ECO (battery), STANDARD (default, send on change) or TURBO
+  (continuous 250 Hz).
 - **PC screen** — on/off toggle, **SMALL / LARGE** size, and per-phone **LOW / BALANCED / HIGH** stream quality.
 
 The sheet opens without popping the keyboard, keeps every button on one line, and
@@ -595,7 +620,7 @@ The app keeps the screen on, hides the system bars and locks to landscape.
 | Two phones rumble each other | Fixed: rumble is routed per slot and duplicate reports are filtered. |
 | "Another copy of lemoGamePad-server may already be running" | Only one instance can own UDP 9876. Close the old one (Task Manager). |
 | Buttons stuck down | The server releases everything after 1.5 s without packets, and on exit. |
-| Laggy / stuttery | Use 5 GHz Wi-Fi, stay in the same room, disable battery saver for the app. Typical LAN latency is 3–15 ms. |
+| Laggy / stuttery | Use 5 GHz Wi-Fi, stay in the same room, disable battery saver for the app, and keep the phone's Wi-Fi awake. Open settings: the sparkline shows whether latency is flat or spiking, and `% uplink loss` means packets are being dropped before the PC. Typical LAN latency is 3–15 ms. Try **Input rate → TURBO** only if the game samples the pad on its own clock; otherwise **STANDARD** is better for battery. |
 | Screen preview stays black | Allow the TCP firewall prompt, or run `pc\allow_firewall.ps1`. The TCP port is control port + 1. |
 | Screen preview is black or says capture is unavailable on Linux | Native Wayland blocks `mss`. Install `grim`, `spectacle` or `gnome-screenshot` (see Linux notes), or log in with an X11 session. |
 | Game doesn't see a controller | It probably wants XInput; the virtual pad *is* XInput. For DirectInput-only games, use Steam Input. |
@@ -739,7 +764,7 @@ android/
     Protocol.kt             wire format constants + shared state
   keystore/                 your local signing key (git-ignored, never pushed)
 docs/
-  REVIEW.md                 what changed in 1.3.6 and 1.3.7 and why (bug list + notes)
+  REVIEW.md                 what changed in 1.3.6, 1.3.7 and 1.4.0 and why (bug list + notes)
 publish.ps1                 commit + push every change to this repository
 release/                    local build output (git-ignored; use GitHub Releases)
 ```
@@ -816,6 +841,7 @@ For a public release, sign with your own key and keep it on a machine you contro
 
 ```powershell
 python pc\test_multi.py     # multi-phone: discovery, slots, rumble routing, reconnect
+python pc\test_latency.py   # burst coalescing, ordering, PONG loss stats
 python pc\test_video.py     # streamed frames (two viewers), QR PNG
 python pc\test_rumble.py    # virtual pad + rumble through Windows XInput
 python pc\test_frozen.py    # same slot/viewer checks against a running .exe
@@ -826,6 +852,7 @@ On Linux:
 ```bash
 cd pc
 python3 test_multi.py       # works with or without /dev/uinput
+python3 test_latency.py     # receive path, no driver or display needed
 python3 test_linux_pad.py   # real uinput pad, buttons/axes, force feedback
 python3 test_video.py       # needs a desktop session for screen capture
 python3 test_capture.py     # Wayland/X11 capture backend selection, no desktop needed
@@ -866,4 +893,4 @@ pushes to `origin`. Tags and binaries belong on the GitHub Releases page.
 
 ---
 
-**lemoGamePad ultimate™ © Alam showkat** · v1.3.7.2
+**lemoGamePad ultimate™ © Alam showkat** · v1.4.0

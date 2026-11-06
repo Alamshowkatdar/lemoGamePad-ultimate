@@ -1,10 +1,12 @@
-# Review notes — 1.3.6 / 1.3.7
+# Review notes — 1.3.6 / 1.3.7 / 1.4.0
 
 A pass over the whole app (Kotlin sources, manifest, Gradle files, CI) focused on
 bugs, UI smoothness, and making the phone-to-phone Bluetooth gamepad honest.
 1.3.6 covers that review; 1.3.7 adds the Linux receiver, whose notes start at
 [Linux receiver (1.3.7)](#linux-receiver-137); 1.3.7.2 fixes its face-button
-mapping (see [Linux face buttons (1.3.7.2)](#linux-face-buttons-1372)).
+mapping (see [Linux face buttons (1.3.7.2)](#linux-face-buttons-1372)); 1.4.0
+takes a latency pass over both halves (see
+[Latency pass (1.4.0)](#latency-pass-140)).
 This file records what was found and what changed, so the reasoning does not get
 lost between releases.
 
@@ -227,3 +229,104 @@ The reason is that `BTN_X`/`BTN_Y` are aliases of `BTN_NORTH`/`BTN_WEST`, and
 SDL/Steam pick their mapping from the virtual pad's USB vendor and product IDs.
 Matching the codes to the identity keeps X on the left and Y on top in both
 cases. `pc/test_linux_pad.py` exercises both identities.
+
+
+## Latency pass (1.4.0)
+
+The complaint was not "latency is high" but "latency is fine and then it spikes".
+That shape has a specific set of causes, and most of them were on the receiving
+side rather than the network itself. This pass removes the avoidable queues and
+makes the remaining variation visible.
+
+### What was actually causing the spikes
+
+1. **The PC applied every queued datagram, one at a time.** `recvfrom` was
+   followed by a full pad update for each packet. When the phone sent a burst
+   (a stick flick, or a wake-up after the radio dozed), the kernel queue was
+   drained oldest-first, so the virtual pad replayed several *old* positions
+   before reaching the current one. Games sampled those intermediate frames and
+   showed the stick dragging behind the thumb.
+2. **A late datagram could rewind the pad.** UDP does not preserve order. One
+   packet overtaking another snapped the sticks back for a frame — visually a
+   twitch, and exactly the "it stutters sometimes" report.
+3. **The receive thread also rendered the console status line.** On Windows,
+   selecting text in the console (QuickEdit) blocks `WriteConsole` until the
+   user presses a key. The whole input path froze for as long as the selection
+   was held. This one produced multi-second stalls that looked like network
+   failure.
+4. **The phone polled its own state every 7 ms.** Input latency depended on the
+   poll timer plus whatever the scheduler did with the sender thread, not on the
+   network. A busy UI thread could delay a sample by a frame or more.
+5. **Wi-Fi power save.** Between packets Android parks the radio. On an idle
+   link that is invisible; during play the first packet after a quiet moment
+   pays 50-300 ms. This is the single most common cause of "sometimes it lags"
+   on an otherwise healthy Wi-Fi link.
+6. **Small socket buffers.** A short scheduling stall on either side dropped
+   datagrams that a larger buffer would have absorbed.
+
+### Fixed
+
+- **Bursts collapse to the newest state.** The receiver now drains the socket
+  with `select` + non-blocking `recvfrom` (up to `MAX_DRAIN` packets per pass),
+  keeps only the newest state per phone, and applies it once. Ten queued stick
+  samples become one update at the current position. `pc/test_latency.py` sends
+  30 packets and asserts exactly one pad update.
+- **Out-of-order packets are discarded.** Each peer tracks the last applied
+  16-bit sequence number; `_seq_newer()` handles wrap-around. A packet older
+  than the last applied one is dropped instead of rewinding the sticks. The
+  counter is reset when the phone changes address (a new socket starts its
+  sequence at 1) or after a 2 s gap, so a reconnect is never mistaken for a
+  stale packet.
+- **The console can no longer stall input.** Status printing moved to its own
+  thread which reads a snapshot; the receive loop never calls `print`. The
+  status line gained a `N lost` counter.
+- **Larger UDP buffers.** `SO_RCVBUF`/`SO_SNDBUF` are raised to 512 KB on the
+  PC (best effort — the OS may clamp it).
+- **Higher thread priority on both ends.** The PC receive thread asks for
+  elevated priority (and a 1 ms timer resolution on Windows); the phone's sender
+  and receiver run at `THREAD_PRIORITY_DISPLAY`.
+- **Event-driven phone sender.** `PadState.bump()` now invokes an `onChange`
+  callback, which `LockSupport.unpark()`s the sender. Standard mode sends the
+  frame immediately on change instead of waiting for the next 7 ms tick;
+  keepalives still run twice a second so the PC never releases a held button.
+- **Wi-Fi low-latency lock.** While connected over Wi-Fi the app holds a
+  `WIFI_MODE_FULL_LOW_LATENCY` lock (falling back to the high-performance lock
+  below API 29) and releases it on stop/disconnect. Requires the new
+  `WAKE_LOCK` permission; it is not held on USB/Bluetooth tethering.
+- **Low-delay marking.** Sockets set `IPTOS_LOWDELAY` and 64 KB buffers. Every
+  hint is wrapped so a ROM that rejects one cannot kill the link.
+
+### Added
+
+- **RTT history with average, min, max and jitter.** Each PONG updates the
+  numbers now shown next to the connection status, and the last 60 samples
+  (~30 s) are stored for the settings sparkline.
+- **Latency sparkline in settings.** A small graph under the status card plots
+  the history and labels the peak. A flat line at 12 ms and a sawtooth to 250 ms
+  look completely different, which is the point.
+- **Uplink loss figure.** The PC counts sequence gaps per phone and appends the
+  loss (permille) to the PONG trailer. Old apps ignore the extra bytes; the new
+  app shows `% loss` in the status pill and settings stats. `-1` means "no data".
+- **Input rate modes.** `ECO` (only on change, 900 ms keepalive), `STANDARD`
+  (event-driven, recommended) and `TURBO` (250 Hz continuous) in settings.
+- **Stick precision curve.** A 0-100% shaping slider: 0 is linear, higher values
+  keep small corrections near the centre while preserving full deflection.
+  Applied in `GamepadView.axes()`.
+- **Vibration strength.** A 0-100% multiplier on incoming rumble, so a phone
+  with an aggressive motor can be tamed without disabling haptics.
+
+### Protocol compatibility
+
+The wire format is unchanged. PONG still carries the 4-byte clock echo; 1.4
+servers add an optional 2-byte loss field in the trailer, and 1.4 apps treat
+its absence as "unknown". Input packets, headers, PS3 bit order and discovery
+are byte-for-byte identical, so a 1.4 phone works with a 1.3 server and vice
+versa.
+
+### Tests
+
+- `pc/test_latency.py` — burst coalescing, out-of-order discard, 16-bit
+  wrap-around, new-socket sequence restart, PONG loss trailer, clean shutdown.
+- `pc/test_multi.py` — unchanged, still passes (slot limit, routing, idle
+  release, reconnect).
+- Compile check: `python3 -m py_compile pc/*.py`.
