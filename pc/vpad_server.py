@@ -32,6 +32,7 @@ import io
 import os
 import queue
 import secrets
+import select
 import shutil
 import signal
 import socket
@@ -125,6 +126,11 @@ class Peer:
     released: bool = False
     rate_mark: int = 0
     rate_mark_time: float = 0.0
+    # Last input sequence actually pushed into the virtual pad. UDP can deliver
+    # packets late or twice; applying an older state after a newer one is what
+    # players feel as a one-frame "snap back".
+    applied_seq: Optional[int] = None
+    last_apply: float = 0.0
 
     def describe(self) -> str:
         return f"{self.name} @ {self.addr[0]}"
@@ -328,6 +334,64 @@ def _axis(value: int) -> float:
     if value >= 0:
         return min(value / 32767.0, 1.0)
     return max(value / 32768.0, -1.0)
+
+
+def _seq_newer(seq: int, previous: Optional[int]) -> bool:
+    """
+    True when a 16 bit sequence number is newer than the last one applied.
+
+    The compare wraps at 65536, so a phone can run for hours without its
+    sequence counter confusing the receiver. Anything more than half the
+    range away is treated as a restart instead of a forward step.
+    """
+    if previous is None:
+        return True
+    delta = (int(seq) - int(previous)) & 0xFFFF
+    return 0 < delta < 0x8000
+
+
+def _raise_thread_priority() -> None:
+    """
+    Ask the OS to schedule the UDP loop ahead of background work.
+
+    Screen capture and JPEG encoding are the heaviest things this process does
+    and they run on other threads. Without this, a busy PC can delay the input
+    thread by several milliseconds, which is exactly the jitter this pass is
+    meant to remove. Both calls are best effort: a restricted shell or a
+    locked-down Windows session may refuse them.
+    """
+    if os.name == "nt":
+        try:
+            import ctypes
+
+            k32 = ctypes.windll.kernel32
+            # THREAD_PRIORITY_HIGHEST == 2 (the normal priority is 0).
+            k32.SetThreadPriority(k32.GetCurrentThread(), 2)
+        except Exception:
+            pass
+        return
+    try:
+        os.nice(-5)
+    except Exception:
+        pass
+
+
+def _begin_high_res_timer() -> None:
+    """
+    Windows rounds sleeps and timeouts up to ~15.6 ms by default. The screen
+    stream paces itself with ``time.sleep``, so on a machine without a game
+    running that granularity turns 20 fps into 12 fps and adds jitter to the
+    receive timeout. Requesting 1 ms resolution is what most game servers do.
+    """
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+
+        ctypes.windll.winmm.timeBeginPeriod(1)
+    except Exception:
+        pass
+
 
 
 class _MissingPad:
@@ -918,6 +982,11 @@ class Server:
     PEER_TIMEOUT = 8.0
     STATUS_INTERVAL = 0.5
     HOUSEKEEPING_INTERVAL = 0.2
+    # How long select() waits with no traffic before housekeeping runs again.
+    SOCKET_TIMEOUT = 0.25
+    # Upper bound on datagrams handled in one wakeup. A bounded drain keeps a
+    # flood (or a bad Wi-Fi link replaying packets) from starving housekeeping.
+    MAX_DRAIN = 512
 
     def __init__(
         self,
@@ -967,9 +1036,24 @@ class Server:
             self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         except OSError:
             pass
+        # The default receive buffer is 64 KB. A 250 Hz phone stream is tiny,
+        # but a Wi-Fi retransmit can deliver a burst at once and a full buffer
+        # silently drops the newest input. Ask for room to absorb it.
+        for option in (socket.SO_RCVBUF, socket.SO_SNDBUF):
+            try:
+                self.sock.setsockopt(socket.SOL_SOCKET, option, 512 * 1024)
+            except OSError:
+                pass
         self.sock.bind(("0.0.0.0", port))
-        self.sock.settimeout(0.25)
+        # Non-blocking + select(): one wakeup can drain everything the kernel
+        # has queued, instead of applying one packet per 250 ms timeout.
+        self.sock.setblocking(False)
         self.running = True
+        # token -> (peer, newest InputState) waiting for the pad to be updated.
+        # Collapsing a burst to its newest state is the single biggest win for
+        # "latency spikes": the game never replays input from 150 ms ago.
+        self._pending: dict[int, tuple[Peer, InputState]] = {}
+        self._status_thread: Optional[threading.Thread] = None
         self.hostname = socket.gethostname()[:32]
         self.started = time.time()
         self.rumble_enabled = True
@@ -1056,7 +1140,11 @@ class Server:
             if peer is not None:
                 if peer.addr != addr:
                     # Same phone, new source port or a different interface.
+                    # The new socket starts its sequence counter fresh, so the
+                    # old position must not mark its first packets as "late".
                     peer.addr = addr
+                    peer.applied_seq = None
+                    self._pending.pop(token, None)
                 peer.last_seen = now
                 return peer, False
 
@@ -1134,6 +1222,7 @@ class Server:
             return
 
         with self.lock:
+            gap = now - peer.last_packet if peer.last_packet else 0.0
             peer.last_packet = now
             peer.last_seen = now
             peer.packet_count += 1
@@ -1142,6 +1231,11 @@ class Server:
             peer.seq = seq
             if peer.released:
                 peer.released = False
+            # A phone that restarts (or reconnects after a pause) begins again
+            # at sequence 0. Forget the old position so its first packet is not
+            # mistaken for an out-of-order duplicate.
+            if gap > 2.0:
+                peer.applied_seq = None
             # Only count small forward gaps; a wrap-around or a restarted phone
             # would otherwise report a huge loss.
             if prev and 0 < seq - prev < 300:
@@ -1153,14 +1247,44 @@ class Server:
                 f"(pad {peer.slot + 1}/{self.max_phones})"
             )
 
-        slot = self._slot_of(peer)
-        if slot is None or slot.pad is None:
-            return
         state = InputState(
             buttons=buttons, lx=lx, ly=ly, rx=rx, ry=ry,
             l2=l2, r2=r2, battery=batt, seq=seq,
         )
-        slot.pad.apply(state)
+        # Keep only the newest state for this phone until the next flush. A
+        # burst of queued datagrams then costs one pad update, not one per
+        # packet, and the game always sees the freshest input.
+        queued = self._pending.get(token)
+        if queued is None or _seq_newer(seq, queued[1].seq):
+            self._pending[token] = (peer, state)
+
+    def _flush_inputs(self, now: float) -> None:
+        """
+        Push one pad update per phone for everything received since the last
+        call. This is what turns a stalled link into a single catch-up frame
+        instead of a visible replay of the last few hundred milliseconds.
+        """
+        if not self._pending:
+            return
+        pending, self._pending = self._pending, {}
+        for peer, state in pending.values():
+            slot = self._slot_of(peer)
+            if slot is None or slot.pad is None or slot.peer is not peer:
+                continue
+            if not _seq_newer(state.seq, peer.applied_seq):
+                # Late duplicate from before the last update; dropping it is
+                # better than snapping the sticks backwards. If nothing has
+                # been applied for half a second, treat it as a phone whose
+                # sequence restarted on the same address and resync instead.
+                if now - peer.last_apply < 0.5:
+                    continue
+            try:
+                slot.pad.apply(state)
+            except Exception as exc:  # pragma: no cover - backend failure
+                print(f"\n[!] pad update failed: {exc}")
+                continue
+            peer.applied_seq = state.seq
+            peer.last_apply = now
 
     # -------------------------------------------------------------- housekeeping
     def _housekeeping(self, now: float) -> None:
@@ -1201,60 +1325,95 @@ class Server:
 
     # --------------------------------------------------------------------- main
     def run(self) -> None:
+        _begin_high_res_timer()
+        _raise_thread_priority()
         if self.video is not None:
             self.video.start()
         self._print_banner()
-        last_status = 0.0
+        self._status_thread = threading.Thread(
+            target=self._status_loop, name="lemo-status", daemon=True
+        )
+        self._status_thread.start()
 
         while self.running:
             try:
-                data, addr = self.sock.recvfrom(2048)
-            except socket.timeout:
-                data = None
-                addr = None
-            except OSError:
+                ready, _, _ = select.select([self.sock], [], [], self.SOCKET_TIMEOUT)
+            except (OSError, ValueError):
                 break
 
             now = time.time()
-
-            if data:
-                if len(data) < HEADER.size:
-                    continue
-                magic, ver, mtype, seq, token = HEADER.unpack_from(data)
-
-                if magic != MAGIC:
-                    continue
-
-                if mtype == MSG_DISCOVER:
-                    self._handle_discover(data, addr)
-                    continue
-
-                if mtype == MSG_PING:
-                    with self.lock:
-                        peer = self.peers.get(token)
-                        if peer is not None:
-                            peer.last_seen = now
-                            peer.addr = addr
-                    pong = HEADER.pack(MAGIC, VERSION, MSG_PONG, seq, token)
-                    if len(data) >= HEADER.size + 4:
-                        pong += data[HEADER.size : HEADER.size + 4]
-                    try:
-                        self.sock.sendto(pong, addr)
-                    except OSError:
-                        pass
-                    continue
-
-                if mtype == MSG_INPUT and len(data) >= INPUT_SIZE:
-                    self._handle_input(data, addr, now)
-                    continue
-
+            if ready:
+                self._drain(now)
+            # One pad update per phone per wakeup, using only the newest state
+            # that arrived in this batch.
+            self._flush_inputs(now)
             self._housekeeping(now)
 
-            if now - last_status >= self.STATUS_INTERVAL:
-                last_status = now
-                self._status()
-
         self.shutdown()
+
+    def _dispatch(self, data: bytes, addr: tuple, now: float) -> None:
+        """Route one datagram. Cheap packets (ping/discover) are answered inline."""
+        if len(data) < HEADER.size:
+            return
+        magic, _ver, mtype, seq, token = HEADER.unpack_from(data)
+        if magic != MAGIC:
+            return
+        if mtype == MSG_DISCOVER:
+            self._handle_discover(data, addr)
+            return
+        if mtype == MSG_PING:
+            self._handle_ping(data, addr, now, seq, token)
+            return
+        if mtype == MSG_INPUT and len(data) >= INPUT_SIZE:
+            self._handle_input(data, addr, now)
+
+    def _drain(self, now: float) -> None:
+        """
+        Read every datagram the kernel has queued, without blocking.
+
+        The old loop handled one packet per iteration and then ran
+        housekeeping, so a Wi-Fi retransmit burst queued 10-30 input frames.
+        Each was applied in turn, making the game replay stale stick positions
+        for a moment. Draining first and applying the newest state once removes
+        that backlog entirely.
+        """
+        for _ in range(self.MAX_DRAIN):
+            try:
+                data, addr = self.sock.recvfrom(2048)
+            except (BlockingIOError, socket.timeout):
+                return
+            except OSError:
+                return
+            self._dispatch(data, addr, now)
+
+    def _handle_ping(self, data: bytes, addr: tuple, now: float, seq: int, token: int) -> None:
+        loss_permille = -1
+        with self.lock:
+            peer = self.peers.get(token)
+            if peer is not None:
+                peer.last_seen = now
+                if peer.addr != addr:
+                    # A ping from a new socket usually means the phone rebuilt
+                    # its link; its sequence counter starts over too.
+                    peer.addr = addr
+                    peer.applied_seq = None
+                    self._pending.pop(token, None)
+                received = max(0, peer.packet_count - peer.rate_mark)
+                total = received + peer.lost
+                if total > 0:
+                    loss_permille = min(1000, round(peer.lost * 1000 / total))
+
+        pong = HEADER.pack(MAGIC, VERSION, MSG_PONG, seq, token)
+        if len(data) >= HEADER.size + 4:
+            pong += data[HEADER.size : HEADER.size + 4]
+        if loss_permille >= 0:
+            # Trailing field added in 1.4: the phone shows the real uplink loss
+            # instead of guessing. Older apps stop reading after the clock echo.
+            pong += struct.pack("<H", loss_permille)
+        try:
+            self.sock.sendto(pong, addr)
+        except OSError:
+            pass
 
     def release_pads(self) -> None:
         """
@@ -1278,6 +1437,8 @@ class Server:
                 pass
 
     def shutdown(self) -> None:
+        self.running = False
+        self._pending.clear()
         with self.lock:
             peers = list(self.peers.values())
             self.peers.clear()
@@ -1295,6 +1456,9 @@ class Server:
             self.sock.close()
         except Exception:
             pass
+        thread = self._status_thread
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=1.0)
 
     # ------------------------------------------------------------------ display
     def _banner_lines(self):
@@ -1381,12 +1545,32 @@ class Server:
         parts = []
         for peer in peers:
             battery = f"{peer.battery}%" if peer.battery != 255 else "?"
+            loss = ""
+            if peer.lost:
+                loss = f" {peer.lost} lost"
             parts.append(
                 f"P{peer.slot + 1} {peer.addr[0]} "
-                f"{peer.rate:4.0f} pkt/s bat {battery}"
+                f"{peer.rate:4.0f} pkt/s{loss} bat {battery}"
             )
         head = f"  {len(peers)}/{self.max_phones} "
         return head + " | ".join(parts)
+
+    def _status_loop(self) -> None:
+        """
+        Write the live status line from its own thread.
+
+        Windows consoles block writes while the user has selected text
+        (QuickEdit mode). With the old code that blocked the UDP receive loop
+        itself, so the gamepad froze until the console was un-clicked. Status is
+        cosmetic; input never waits for it.
+        """
+        while self.running:
+            try:
+                self._status()
+            except Exception:
+                # A detached console can make stdout unusable; keep serving input.
+                pass
+            time.sleep(self.STATUS_INTERVAL)
 
     def _status(self) -> None:
         line = self._status_text()

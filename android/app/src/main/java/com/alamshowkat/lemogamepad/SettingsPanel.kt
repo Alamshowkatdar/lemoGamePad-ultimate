@@ -35,7 +35,10 @@ internal object PrefsKeys {
     const val HOST = "host"
     const val PORT = "port"
     const val DEADZONE = "deadzone"
+    const val STICK_CURVE = "stick_curve"
     const val HAPTICS = "haptics"
+    const val HAPTIC_STRENGTH = "haptic_strength"
+    const val INPUT_RATE = "input_rate"
     const val ONBOARDED = "onboarded"
     const val WIFI_GUIDE_SEEN = "wifi_guide_seen"
     const val THEME = "theme"
@@ -91,6 +94,7 @@ class SettingsPanel(
         fun onScreenPreview(enabled: Boolean)
         fun onScreenSize(small: Boolean)
         fun onScreenQuality(quality: ScreenQuality)
+        fun onHapticsChanged(strength: Float)
         fun attachScreenStream()
         fun onClosed()
         fun toast(message: String)
@@ -115,6 +119,8 @@ class SettingsPanel(
     private lateinit var statusTitle: TextView
     private lateinit var statusSub: TextView
     private lateinit var detailLine: TextView
+    private lateinit var latencyGraph: LatencyGraph
+    private lateinit var latencyStats: TextView
     private lateinit var hintLine: TextView
     private lateinit var connectBtn: TextView
     private lateinit var disconnectBtn: TextView
@@ -383,6 +389,25 @@ class SettingsPanel(
         }
         card.addView(detailLine)
 
+        // Live RTT sparkline. Kept in the status card so the answer to "is the
+        // link actually worse right now?" is one tap away instead of a guess.
+        latencyGraph = LatencyGraph(activity).apply {
+            visibility = View.GONE
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply { bottomMargin = px(6) }
+        }
+        card.addView(latencyGraph)
+
+        latencyStats = TextView(activity).apply {
+            textSize = 10.5f
+            letterSpacing = 0.04f
+            setPadding(px(1), 0, px(1), px(9))
+            visibility = View.GONE
+        }
+        card.addView(latencyStats)
+
         val actions = row()
         connectBtn = action("CONNECT", primary = true) { connect() }
         val reconnectBtn = action("RECONNECT", primary = false) { reconnect() }
@@ -396,6 +421,12 @@ class SettingsPanel(
             val t = pad.selectedTheme
             statusSub.setTextColor(t.muted)
             detailLine.setTextColor(t.textDim)
+            latencyStats.setTextColor(t.muted)
+            latencyGraph.setSamples(
+                link.rttHistory(),
+                t.accent,
+                t.muted,
+            )
         }
         return card
     }
@@ -755,6 +786,40 @@ class SettingsPanel(
         }
         card.addView(bar)
 
+        val curveLabel = tiny(
+            "STICK CURVE  ·  ${(pad.stickCurve * 100f).roundToInt()}%",
+            top = px(12),
+            bottom = px(2),
+        )
+        card.addView(curveLabel)
+        val curveBar = SeekBar(activity).apply {
+            max = 100
+            progress = (pad.stickCurve * 100f).roundToInt().coerceIn(0, 100)
+            setPadding(0, 0, 0, 0)
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(seekBar: SeekBar?, value: Int, fromUser: Boolean) {
+                    pad.stickCurve = value / 100f
+                    curveLabel.text = "STICK CURVE  ·  $value%"
+                }
+
+                override fun onStartTrackingTouch(seekBar: SeekBar?) = Unit
+
+                override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                    prefs.edit()
+                        .putInt(PrefsKeys.STICK_CURVE, (pad.stickCurve * 100f).roundToInt())
+                        .apply()
+                }
+            })
+        }
+        tinters += {
+            val t = pad.selectedTheme
+            curveBar.progressTintList = ColorStateList.valueOf(t.accent)
+            curveBar.thumbTintList = ColorStateList.valueOf(t.accent)
+            curveBar.progressBackgroundTintList = ColorStateList.valueOf(withAlpha(t.text, 30))
+        }
+        card.addView(curveBar)
+        card.addView(tiny("0% is linear · higher values calm small stick corrections", top = px(2)))
+
         card.addView(
             toggle("Vibration feedback", prefs.getBoolean(PrefsKeys.HAPTICS, true)) { on ->
                 pad.hapticsEnabled = on
@@ -762,6 +827,68 @@ class SettingsPanel(
             },
             topParams(px(8)),
         )
+
+        var strength = prefs.getInt(PrefsKeys.HAPTIC_STRENGTH, 100).coerceIn(0, 100)
+        val strengthLabel = tiny("VIBRATION STRENGTH  ·  $strength%", top = px(10), bottom = px(2))
+        card.addView(strengthLabel)
+        val strengthBar = SeekBar(activity).apply {
+            max = 100
+            progress = strength
+            setPadding(0, 0, 0, 0)
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(seekBar: SeekBar?, value: Int, fromUser: Boolean) {
+                    strength = value
+                    strengthLabel.text = "VIBRATION STRENGTH  ·  $value%"
+                    callbacks.onHapticsChanged(value / 100f)
+                }
+
+                override fun onStartTrackingTouch(seekBar: SeekBar?) = Unit
+
+                override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                    prefs.edit().putInt(PrefsKeys.HAPTIC_STRENGTH, strength).apply()
+                }
+            })
+        }
+        tinters += {
+            val t = pad.selectedTheme
+            strengthBar.progressTintList = ColorStateList.valueOf(t.accent)
+            strengthBar.thumbTintList = ColorStateList.valueOf(t.accent)
+            strengthBar.progressBackgroundTintList = ColorStateList.valueOf(withAlpha(t.text, 30))
+        }
+        card.addView(strengthBar)
+
+        card.addView(tiny("INPUT RATE", top = px(12), bottom = px(5)))
+        val rateRow = row()
+        val rateChips = LinkedHashMap<InputRate, TextView>()
+        val rateHint = tiny(link.inputRate.hint, top = px(5))
+
+        fun refreshRateChips() {
+            val t = pad.selectedTheme
+            for ((value, chipView) in rateChips) {
+                val on = link.inputRate == value
+                chipView.setTextColor(if (on) onColor(t.accent) else t.textDim)
+                chipView.background = GradientDrawable().apply {
+                    cornerRadius = px(10).toFloat()
+                    setColor(if (on) t.accent else withAlpha(t.surfaceAlt, 235))
+                    setStroke(px(1), withAlpha(if (on) t.accent else t.text, if (on) 255 else 34))
+                }
+            }
+        }
+
+        for ((index, value) in InputRate.values().withIndex()) {
+            val chipView = chip(value.label) {
+                link.inputRate = value
+                prefs.edit().putString(PrefsKeys.INPUT_RATE, value.id).apply()
+                rateHint.text = value.hint
+                refreshRateChips()
+            }
+            rateChips[value] = chipView
+            rateRow.addView(chipView, weightParams(1f, end = if (index < 2) px(4) else 0))
+        }
+        card.addView(rateRow)
+        card.addView(rateHint)
+        tinters += { refreshRateChips() }
+        refreshRateChips()
         return card
     }
 
@@ -1244,6 +1371,26 @@ class SettingsPanel(
                 append("No network interface")
             } else {
                 append(interfaceList)
+            }
+        }
+
+        val history = link.rttHistory()
+        val showStats = connected && history.isNotEmpty()
+        latencyGraph.visibility = if (showStats) View.VISIBLE else View.GONE
+        latencyStats.visibility = if (showStats) View.VISIBLE else View.GONE
+        if (showStats) {
+            latencyGraph.setSamples(history, t.accent, t.muted)
+            latencyStats.text = buildString {
+                append("avg ${link.rttAvgMs} ms")
+                append("  ·  min ${link.rttMinMs}")
+                append("  ·  max ${link.rttMaxMs}")
+                if (link.jitterMs > 0) append("  ·  ±${link.jitterMs} jitter")
+                when {
+                    link.lossPermille < 0 -> Unit
+                    link.lossPermille >= 5 ->
+                        append("  ·  ${(link.lossPermille + 5) / 10}% uplink loss")
+                    else -> append("  ·  no loss")
+                }
             }
         }
 

@@ -39,6 +39,10 @@ jobs:
         working-directory: pc
         run: python test_multi.py
 
+      - name: Latency path (coalescing, ordering, PONG stats)
+        working-directory: pc
+        run: python test_latency.py
+
       - name: Screen capture backends (fake Wayland tools)
         working-directory: pc
         run: python test_capture.py

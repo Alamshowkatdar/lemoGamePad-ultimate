@@ -4,7 +4,9 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
+import android.net.wifi.WifiManager
 import android.os.Build
+import android.os.Process
 import android.os.SystemClock
 import java.net.DatagramPacket
 import java.net.DatagramSocket
@@ -14,7 +16,10 @@ import java.net.InetSocketAddress
 import java.net.NetworkInterface
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.concurrent.locks.LockSupport
 import kotlin.concurrent.thread
+import kotlin.math.abs
+import kotlin.math.max
 import kotlin.math.min
 import kotlin.random.Random
 
@@ -28,6 +33,23 @@ enum class Transport(val label: String, val hint: String) {
     WIFI("WI-FI", "Phone and PC on the same Wi-Fi network"),
     BLUETOOTH("BLUETOOTH", "Pair first, then enable Bluetooth tethering"),
     USB("USB", "Enable USB tethering in the phone's hotspot menu"),
+}
+
+/**
+ * How often the phone pushes controller state.
+ *
+ * ECO is for long sessions on battery, STANDARD wakes the sender the instant
+ * the pad changes (so latency does not depend on a poll interval), and TURBO
+ * streams continuously for titles that sample the pad on their own clock.
+ */
+enum class InputRate(val id: String, val label: String, val hint: String) {
+    ECO("eco", "ECO", "Only send when something moves — best battery"),
+    STANDARD("standard", "STANDARD", "Wake instantly on change — recommended"),
+    TURBO("turbo", "TURBO", "Continuous 250 Hz — lowest latency, more battery");
+
+    companion object {
+        fun fromId(id: String?): InputRate = values().firstOrNull { it.id == id } ?: STANDARD
+    }
 }
 
 /**
@@ -61,6 +83,22 @@ class Link(private val state: PadState, context: Context? = null) {
     @Volatile var serverName: String = ""
     @Volatile var connected: Boolean = false
 
+    /** Connection quality, updated from the pong stream. -1 means "no data". */
+    @Volatile var rttAvgMs: Int = -1
+    @Volatile var rttMinMs: Int = -1
+    @Volatile var rttMaxMs: Int = -1
+    @Volatile var jitterMs: Int = 0
+
+    /** Uplink loss reported by the PC, in permille (0…1000). -1 = unknown. */
+    @Volatile var lossPermille: Int = -1
+
+    /** Sender policy; changing it wakes the sender so the new rate applies now. */
+    @Volatile var inputRate: InputRate = InputRate.STANDARD
+        set(value) {
+            field = value
+            wakeSender()
+        }
+
     var onRumble: ((Int, Int) -> Unit)? = null
 
     private val appContext = context?.applicationContext
@@ -81,6 +119,15 @@ class Link(private val state: PadState, context: Context? = null) {
     @Volatile private var viaTransport: Transport? = null
     @Volatile private var lastRebindAt = 0L
 
+    /**
+     * Android puts Wi-Fi into power save between packets. On a lightly loaded
+     * link that adds 50-300 ms to some frames — the classic "latency is fine,
+     * then it spikes" complaint. A high-performance Wi-Fi lock keeps the radio
+     * awake while a pad is connected. Released as soon as the link stops.
+     */
+    @Volatile
+    private var wifiLock: WifiManager.WifiLock? = null
+
     // Cached interface list for [readiness] / [localSummary]; see [probesUi].
     @Volatile private var probeSnapshot: List<Probe> = emptyList()
     @Volatile private var probeSnapshotAt = 0L
@@ -98,6 +145,14 @@ class Link(private val state: PadState, context: Context? = null) {
     private var cachedTransportHost: String? = null
     private var cachedTransport: Transport? = null
 
+    // RTT history for the settings sparkline. Guarded by historyLock because
+    // the receiver writes it while the settings sheet reads it every 500 ms.
+    private val historyLock = Any()
+    private val rttHistory = IntArray(HISTORY_SIZE)
+    private var rttHistoryIndex = 0
+    private var rttHistorySize = 0
+    private var lastRttSample = -1L
+
     // ---------------------------------------------------------------- lifecycle
     fun start() {
         if (running) {
@@ -105,6 +160,7 @@ class Link(private val state: PadState, context: Context? = null) {
             return
         }
         running = true
+        state.onChange = { wakeSender() }
         rebind()
         val gen = ++generation
         sender = thread(name = "vpad-sender", isDaemon = true) { sendLoop(gen) }
@@ -116,16 +172,19 @@ class Link(private val state: PadState, context: Context? = null) {
         generation++
         sender = null
         receiver = null
+        state.onChange = null
         closeSocket()
+        updateWifiLock(false)
         connected = false
         lastPongAt = 0
-        rttMs = -1
+        resetStats()
     }
 
     /** Drops the target but keeps the workers alive for a fast reconnect. */
     fun disconnect() {
         host = null
         resetConnection()
+        updateWifiLock(false)
     }
 
     /** Rebuilds the socket now, e.g. after a link change or a failed link. */
@@ -145,12 +204,27 @@ class Link(private val state: PadState, context: Context? = null) {
     private fun resetConnection() {
         connected = false
         lastPongAt = 0
-        rttMs = -1
         cachedHost = null
         cachedAddr = null
         cachedTransportHost = null
         cachedTransport = null
         serverName = ""
+        resetStats()
+    }
+
+    /** Clears RTT statistics when the target or socket changes. */
+    private fun resetStats() {
+        rttMs = -1
+        rttAvgMs = -1
+        rttMinMs = -1
+        rttMaxMs = -1
+        jitterMs = 0
+        lossPermille = -1
+        lastRttSample = -1
+        synchronized(historyLock) {
+            rttHistoryIndex = 0
+            rttHistorySize = 0
+        }
     }
 
     // ------------------------------------------------------------------ sockets
@@ -183,6 +257,8 @@ class Link(private val state: PadState, context: Context? = null) {
             null
         }
         if (fresh == null) return
+        // Low-delay marking and room for a burst, before the socket is bound.
+        tune(fresh)
         var bound = false
         if (choice?.network != null) {
             try {
@@ -205,10 +281,78 @@ class Link(private val state: PadState, context: Context? = null) {
         connected = false
         lastPongAt = 0
         rttMs = -1
+        updateWifiLock(host != null && choice?.transport == Transport.WIFI)
+        wakeSender()
         try {
             old?.close()
         } catch (_: Exception) {
         }
+    }
+
+    /**
+     * Socket-level latency hints. IPTOS_LOWDELAY asks routers and the phone's
+     * Wi-Fi driver to prefer these tiny packets; the buffers absorb a burst
+     * after a stall instead of dropping the newest state. All optional: some
+     * ROMs reject one or both, and a rejected hint must never kill the link.
+     */
+    private fun tune(s: DatagramSocket) {
+        try {
+            s.trafficClass = 0x10 // IPTOS_LOWDELAY
+        } catch (_: Exception) {
+        }
+        try {
+            s.sendBufferSize = 64 * 1024
+        } catch (_: Exception) {
+        }
+        try {
+            s.receiveBufferSize = 64 * 1024
+        } catch (_: Exception) {
+        }
+    }
+
+    /**
+     * Keep Wi-Fi out of power save while a controller link is live. Acquiring
+     * is idempotent; release happens on stop, disconnect and when the chosen
+     * link is not Wi-Fi (USB/Bluetooth tether does not need it).
+     */
+    @Suppress("DEPRECATION")
+    private fun updateWifiLock(active: Boolean) {
+        if (!active) {
+            try {
+                if (wifiLock?.isHeld == true) wifiLock?.release()
+            } catch (_: Exception) {
+            }
+            return
+        }
+        if (wifiLock?.isHeld == true) return
+        val ctx = appContext ?: return
+        val manager = try {
+            ctx.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+        } catch (_: Exception) {
+            null
+        } ?: return
+        val lock = wifiLock ?: try {
+            // LOW_LATENCY (API 29+) is designed for exactly this; older
+            // releases fall back to the high-performance lock.
+            val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                WifiManager.WIFI_MODE_FULL_LOW_LATENCY
+            } else {
+                WifiManager.WIFI_MODE_FULL_HIGH_PERF
+            }
+            manager.createWifiLock(mode, "lemoGamePad:low-latency").also { wifiLock = it }
+        } catch (_: Exception) {
+            null
+        } ?: return
+        try {
+            lock.acquire()
+        } catch (_: Exception) {
+        }
+    }
+
+    /** Wakes the sender immediately after a state change or a rate change. */
+    private fun wakeSender() {
+        val worker = sender ?: return
+        LockSupport.unpark(worker)
     }
 
     /** The network the current control socket uses, for the PiP TCP stream. */
@@ -238,9 +382,11 @@ class Link(private val state: PadState, context: Context? = null) {
 
     // ------------------------------------------------------------------ sender
     private fun sendLoop(gen: Int) {
+        raisePriority()
         var lastVersion = -1L
         var lastInputAt = 0L
         var lastPingAt = 0L
+        var nextFrameAt = 0L
 
         while (running && generation == gen) {
             val s = sock
@@ -250,20 +396,27 @@ class Link(private val state: PadState, context: Context? = null) {
             }
             val h = host
             val now = SystemClock.uptimeMillis()
+            val rate = inputRate
 
             if (h != null) {
                 val addr = addressOf(h)
                 if (addr != null) {
                     try {
-                        // Input: on every change, plus a keepalive twice a second.
                         val v = state.version
-                        if (v != lastVersion || now - lastInputAt > 500) {
+                        val changed = v != lastVersion
+                        // TURBO streams on a fixed clock; ECO/STANDARD send the
+                        // frame the moment the pad changes and fall back to a
+                        // keepalive so the PC never releases a held button.
+                        val due = rate == InputRate.TURBO && now >= nextFrameAt
+                        val keepalive = now - lastInputAt >= keepaliveMs(rate)
+                        if (changed || due || keepalive) {
                             val n = buildInput()
                             s.send(DatagramPacket(sendBuffer, n, addr, port))
                             lastVersion = v
                             lastInputAt = now
+                            if (due) nextFrameAt = now + TURBO_PERIOD_MS
                         }
-                        if (now - lastPingAt > 700) {
+                        if (now - lastPingAt > PING_INTERVAL_MS) {
                             val n = buildPing(now)
                             s.send(DatagramPacket(sendBuffer, n, addr, port))
                             lastPingAt = now
@@ -282,8 +435,36 @@ class Link(private val state: PadState, context: Context? = null) {
                 rebind()
             }
 
-            SystemClock.sleep(7)
+            // Park until the next frame is due or a change unpark()s us. This
+            // replaces the old 7 ms poll: input latency is now one network
+            // write, not "up to a scheduling quantum plus 7 ms".
+            val wakeIn = if (rate == InputRate.TURBO) {
+                (nextFrameAt - SystemClock.uptimeMillis()).coerceIn(1L, TURBO_PERIOD_MS)
+            } else {
+                val pingIn = lastPingAt + PING_INTERVAL_MS - SystemClock.uptimeMillis()
+                val keepIn = lastInputAt + keepaliveMs(rate) - SystemClock.uptimeMillis()
+                min(min(pingIn, keepIn), IDLE_PARK_MS).coerceAtLeast(1L)
+            }
+            LockSupport.parkNanos(wakeIn * 1_000_000L)
         }
+    }
+
+    /**
+     * Moves this worker up the scheduler queue. Rendering, video decoding and
+     * GC all compete for the CPU; without this the sender is exactly the kind
+     * of thread Android likes to delay when the user is actually playing.
+     */
+    private fun raisePriority() {
+        try {
+            Process.setThreadPriority(Process.THREAD_PRIORITY_DISPLAY)
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun keepaliveMs(rate: InputRate): Long = when (rate) {
+        InputRate.ECO -> 900L
+        InputRate.STANDARD -> 500L
+        InputRate.TURBO -> 500L
     }
 
     private fun addressOf(h: String): InetAddress? {
@@ -332,6 +513,7 @@ class Link(private val state: PadState, context: Context? = null) {
 
     // ---------------------------------------------------------------- receiver
     private fun receiveLoop(gen: Int) {
+        raisePriority()
         val buf = ByteArray(512)
 
         while (running && generation == gen) {
@@ -369,9 +551,15 @@ class Link(private val state: PadState, context: Context? = null) {
                     if (len >= Proto.HEADER_SIZE + 4) {
                         val sent = b.int.toLong() and 0xFFFFFFFFL
                         val now = SystemClock.uptimeMillis()
-                        rttMs = (now - sent) and 0xFFFFFFFFL
+                        val sample = (now - sent) and 0xFFFFFFFFL
+                        rttMs = sample
                         lastPongAt = now
                         connected = true
+                        if (len >= Proto.HEADER_SIZE + 6) {
+                            // 1.4 servers append the uplink loss they measured.
+                            lossPermille = b.short.toInt() and 0xFFFF
+                        }
+                        recordRtt(sample)
                     }
                 }
                 Proto.MSG_RUMBLE -> {
@@ -382,6 +570,37 @@ class Link(private val state: PadState, context: Context? = null) {
                     }
                 }
             }
+        }
+    }
+
+    /**
+     * Keeps a short RTT history plus average, range and jitter. "It fluctuates"
+     * is much easier to diagnose with numbers than with a single live value,
+     * and the settings sheet draws the history as a sparkline.
+     */
+    private fun recordRtt(sample: Long) {
+        val ms = sample.coerceIn(0L, 5000L).toInt()
+        rttAvgMs = if (rttAvgMs < 0) ms else (rttAvgMs * 7 + ms) / 8
+        rttMinMs = if (rttMinMs < 0) ms else min(rttMinMs, ms)
+        rttMaxMs = max(rttMaxMs, ms)
+        if (lastRttSample >= 0) {
+            val delta = abs(ms - lastRttSample.toInt())
+            jitterMs = if (jitterMs == 0) delta else (jitterMs * 7 + delta) / 8
+        }
+        lastRttSample = ms.toLong()
+        synchronized(historyLock) {
+            rttHistory[rttHistoryIndex] = ms
+            rttHistoryIndex = (rttHistoryIndex + 1) % HISTORY_SIZE
+            if (rttHistorySize < HISTORY_SIZE) rttHistorySize++
+        }
+    }
+
+    /** Oldest-to-newest RTT samples for the settings sparkline. */
+    fun rttHistory(): IntArray = synchronized(historyLock) {
+        if (rttHistorySize == 0) return IntArray(0)
+        IntArray(rttHistorySize) { i ->
+            val from = (rttHistoryIndex - rttHistorySize + i + HISTORY_SIZE) % HISTORY_SIZE
+            rttHistory[from]
         }
     }
 
@@ -898,6 +1117,18 @@ class Link(private val state: PadState, context: Context? = null) {
 
         /** How long the UI-facing interface list stays warm. */
         const val PROBE_CACHE_MS = 1200L
+
+        /** RTT samples kept for the settings sparkline (~30 s at 500 ms). */
+        const val HISTORY_SIZE = 60
+
+        /** One ping every half second keeps RTT/jitter readings meaningful. */
+        const val PING_INTERVAL_MS = 500L
+
+        /** Longest the sender sleeps when no change arrives (its timers wake it). */
+        const val IDLE_PARK_MS = 250L
+
+        /** TURBO frame spacing: 4 ms ≈ 250 Hz. */
+        const val TURBO_PERIOD_MS = 4L
 
         /** Which token this install keeps for good; see [token]. */
         fun loadToken(context: Context?): Int {
