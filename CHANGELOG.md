@@ -2,6 +2,17 @@
 
 Newest first. The reasoning behind each release is in [`docs/REVIEW.md`](docs/REVIEW.md).
 
+## Unreleased
+
+- **Multiple layouts** — the pad can now remember several arrangements. In
+  settings → **LAYOUTS**, use **SAVE AS…** (also available as **SAVE AS** in the
+  edit toolbar) to name the current control positions, sizes and hidden
+  controls; tap a saved name to switch instantly, or **DELETE** to remove one.
+  **DEFAULT** restores the built-in arrangement. Editing while a saved layout is
+  active updates that layout in place, so the pad and its saved copy stay in
+  sync. The existing *Customize layout* flow and the live layout are unchanged
+  for anyone who never opens the new card.
+
 ## 1.5.0
 
 - **Up to eight phones** — `--max-phones` now accepts `1`…`8` (default stays

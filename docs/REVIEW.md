@@ -370,3 +370,42 @@ now lets each phone ask for a pad directly.
   stolen.
 - Android `:app:assembleDebug` still builds; the selector is persisted in
   `PrefsKeys.PLAYER_SLOT` and sent immediately when changed.
+
+---
+
+## Layout presets (unreleased)
+
+### Why
+
+The pad has always had one custom arrangement. Players who use the phone in
+different positions (on a desk, in a grip, on a tablet stand) had to redraw all
+controls by hand each time, and there was no way to keep a known-good layout
+before experimenting.
+
+### Design
+
+- **Live layout stays where it was.** `PrefsKeys.LAYOUT` is still the active
+  snapshot, so updating from an older version keeps the arrangement the user
+  already had. The preset list lives beside it in `PrefsKeys.LAYOUTS`, with the
+  active name in `PrefsKeys.LAYOUT_ACTIVE`.
+- **Named copies, not modes.** A preset stores the same `layoutSnapshot()` string
+  (positions, scale and hidden flags) that the editor already writes. Switching
+  simply applies that string, so no second layout format can drift from the
+  editor.
+- **Editing follows the active preset.** `persistLayout()` writes the live
+  snapshot and, when a preset name is active, updates that preset in place.
+  "Save as" is the explicit way to fork a copy; "Default" clears the name and
+  resets the pad.
+- **Safe storage.** The list is a JSON array in one preference, so names may
+  contain punctuation and order is stable. A corrupt list is ignored rather
+  than crashing the sheet, and a stale active name is cleared on startup.
+- **Themed dialogs.** Saving and deleting use lightweight views added to the
+  activity's decor view instead of platform dialogs, so they match the selected
+  palette and sit above the immersive pad. They close on Back, on the scrim, or
+  when the activity pauses/destroys.
+
+### Tests
+
+- Android `:app:assembleDebug` builds after adding the store, dialogs and card.
+- Manual checks expected: save two layouts, switch between them, edit the active
+  one and switch away/back, delete the active one, and restart the app.

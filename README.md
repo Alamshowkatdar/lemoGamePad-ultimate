@@ -93,7 +93,7 @@ Everything is on the [latest release](https://github.com/Alamshowkatdar/lemoGame
 | --- | --- |
 | [Windows install](docs/INSTALL-WINDOWS.md) | One double-click install, UAC, firewall, manual setup, moving the EXE. |
 | [Linux install](docs/INSTALL-LINUX.md) | Release binary, from source, uinput, Wayland capture, firewall notes. |
-| [Android app guide](docs/ANDROID.md) | Install, transports, pairing, up to eight phones, player-slot selection (P1–P8), on-screen pad, themes, settings, screen preview, layout editing, reconnecting. |
+| [Android app guide](docs/ANDROID.md) | Install, transports, pairing, up to eight phones, player-slot selection (P1–P8), on-screen pad, themes, settings, screen preview, custom layouts with saved arrangements, reconnecting. |
 | [Troubleshooting](docs/TROUBLESHOOTING.md) | Symptom → fix table for the most common problems. |
 | [Command-line options](docs/COMMAND-LINE.md) | Every server flag, with defaults. |
 | [How it works](docs/PROTOCOL.md) | Architecture and the 28-byte wire protocol. |

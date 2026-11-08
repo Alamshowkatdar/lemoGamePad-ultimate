@@ -46,6 +46,8 @@ internal object PrefsKeys {
     const val THEME = "theme"
     const val FACES = "faces"
     const val LAYOUT = "layout"
+    const val LAYOUT_ACTIVE = "layout_active"
+    const val LAYOUTS = "layouts"
     const val TRANSPORT = "transport"
     const val TOKEN = "token"
     const val SCREEN = "screen"
@@ -63,7 +65,7 @@ internal fun transportById(id: String?): Transport = when (id) {
 }
 
 /** Picks black or white text for a coloured surface. */
-private fun onColor(background: Int): Int {
+internal fun onColor(background: Int): Int {
     val luminance = (
         0.299 * Color.red(background) +
             0.587 * Color.green(background) +
@@ -333,6 +335,7 @@ class SettingsPanel(
         content.addView(phoneGamepadCard(), cardParams())
         content.addView(appearanceCard(), cardParams())
         content.addView(controlsCard(), cardParams())
+        content.addView(layoutsCard(), cardParams())
         content.addView(screenCard(), cardParams())
         content.addView(footer())
 
@@ -786,21 +789,6 @@ class SettingsPanel(
         val card = card()
         card.addView(sectionTitle("CONTROLS"))
 
-        val layoutRow = row()
-        layoutRow.addView(
-            action("CUSTOMIZE LAYOUT", primary = false) { callbacks.onEditLayout() },
-            weightParams(1f, end = px(6)),
-        )
-        layoutRow.addView(
-            action("RESET LAYOUT", primary = false) {
-                pad.resetLayout()
-                callbacks.onLayoutSaved()
-                callbacks.toast("Layout reset")
-            },
-            weightParams(1f),
-        )
-        card.addView(layoutRow)
-
         val deadzoneLabel = tiny(
             "STICK DEADZONE  ·  ${(pad.deadzone * 100f).roundToInt()}%",
             top = px(12),
@@ -938,6 +926,163 @@ class SettingsPanel(
         card.addView(rateHint)
         tinters += { refreshRateChips() }
         refreshRateChips()
+        return card
+    }
+
+    /**
+     * Named layout presets. "DEFAULT" restores the built-in arrangement,
+     * SAVE AS copies the current pad under a name, and tapping a saved name
+     * switches to it immediately. Editing while a name is active updates that
+     * preset in place, so the on-screen arrangement and its saved copy never
+     * drift apart.
+     */
+    private fun layoutsCard(): LinearLayout {
+        val card = card()
+        card.addView(sectionTitle("LAYOUTS"))
+
+        val store = LayoutStore(prefs)
+        val listHost = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+        val summary = tiny("", top = px(7), bottom = 0)
+
+        fun styleChip(view: TextView, selected: Boolean) {
+            val t = pad.selectedTheme
+            view.setTextColor(if (selected) onColor(t.accent) else t.text)
+            view.background = GradientDrawable().apply {
+                cornerRadius = px(10).toFloat()
+                setColor(if (selected) t.accent else withAlpha(t.surfaceAlt, 235))
+                setStroke(
+                    px(1),
+                    withAlpha(if (selected) t.accent else t.text, if (selected) 255 else 34),
+                )
+            }
+        }
+
+        fun styleDelete(view: TextView) {
+            val t = pad.selectedTheme
+            view.setTextColor(t.muted)
+            view.background = GradientDrawable().apply {
+                cornerRadius = px(10).toFloat()
+                setColor(withAlpha(t.surfaceAlt, 235))
+                setStroke(px(1), withAlpha(t.text, 30))
+            }
+        }
+
+        fun refresh() {
+            listHost.removeAllViews()
+            val active = store.activeName()
+            val saved = store.saved()
+
+            fun addRow(name: String?, label: String, deletable: Boolean) {
+                val line = row()
+                val nameView = chip(label) {
+                    when {
+                        name == null -> {
+                            pad.resetLayout()
+                            store.clearActive()
+                            callbacks.onLayoutSaved()
+                            refresh()
+                            callbacks.toast("Default layout restored")
+                        }
+
+                        store.activate(name) -> {
+                            pad.applyLayout(store.activeData())
+                            callbacks.onLayoutSaved()
+                            refresh()
+                            callbacks.toast("Layout: $name")
+                        }
+
+                        else -> {
+                            refresh()
+                            callbacks.toast("That layout no longer exists")
+                        }
+                    }
+                }
+                styleChip(nameView, name != null && name == active)
+                line.addView(nameView, weightParams(1f, end = if (deletable) px(6) else 0))
+                if (deletable) {
+                    val target = name ?: label
+                    val delete = TextView(activity).apply {
+                        text = "DELETE"
+                        textSize = 9.5f
+                        letterSpacing = 0.09f
+                        gravity = Gravity.CENTER
+                        setPadding(px(10), px(8), px(10), px(8))
+                        isClickable = true
+                        isFocusable = true
+                        contentDescription = "Delete layout $target"
+                        setOnClickListener {
+                            LayoutDialogs.confirm(
+                                activity,
+                                pad.selectedTheme,
+                                title = "DELETE LAYOUT",
+                                message = "Delete \"$target\"? The current pad keeps its " +
+                                    "positions but is no longer saved under that name.",
+                                positive = "DELETE",
+                            ) {
+                                store.remove(target)
+                                refresh()
+                                callbacks.toast("Layout deleted")
+                            }
+                        }
+                        pressable(this)
+                    }
+                    styleDelete(delete)
+                    line.addView(delete, wrapParams())
+                }
+                listHost.addView(line, topParams(px(5)))
+            }
+
+            addRow(null, "DEFAULT", false)
+            for (entry in saved) addRow(entry.name, entry.name, true)
+            summary.text = when {
+                active != null -> "Current: $active"
+                else -> "Current: unsaved arrangement"
+            }
+        }
+
+        val actions = row()
+        actions.addView(
+            action("CUSTOMIZE", primary = false) { callbacks.onEditLayout() },
+            weightParams(1f, end = px(6)),
+        )
+        actions.addView(
+            action("SAVE AS…", primary = true) {
+                LayoutDialogs.promptName(
+                    activity,
+                    pad.selectedTheme,
+                    title = "SAVE LAYOUT",
+                    initial = "",
+                    existing = store.saved().map { it.name },
+                ) { name ->
+                    val replaced = store.save(name, pad.layoutSnapshot())
+                    callbacks.onLayoutSaved()
+                    refresh()
+                    callbacks.toast(
+                        if (replaced) {
+                            "Layout \"$name\" updated"
+                        } else {
+                            "Layout \"$name\" saved"
+                        },
+                    )
+                }
+            },
+            weightParams(1f),
+        )
+        card.addView(actions)
+        card.addView(
+            tiny(
+                "Every control's position, size and visibility is remembered. " +
+                    "Tap a saved layout to switch.",
+                top = px(6),
+            ),
+        )
+        card.addView(listHost)
+        card.addView(summary)
+
+        // Rebuild the list when the theme changes so the chips pick up the
+        // new palette, without accumulating a tinter per row.
+        tinters += { refresh() }
+        refresh()
         return card
     }
 

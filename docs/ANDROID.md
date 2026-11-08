@@ -277,7 +277,9 @@ Every change applies immediately.
 - **Phone-to-phone Bluetooth HID** — pair this phone as a standard gamepad with another Android phone (Android 9+), with a live *broadcasting / connected* line. No helper app or Accessibility permission is needed on the game host.
 - **Appearance** — eight palettes in a two-column picker with colour previews and a cross-fade.
 - **Face button labels** — PlayStation symbols or Xbox letters.
-- **Customize layout / Reset layout**.
+- **Layouts** — save several named arrangements, switch between them, delete
+  one, or restore the default.
+- **Customize layout** — drag, resize and hide controls.
 - **Stick deadzone** — 0–40 %, default 12 %.
 - **Stick curve** — 0–100 %, linear at 0; higher values keep small corrections
   near the centre.
@@ -331,9 +333,28 @@ Tap the status pill → **Customize layout**. A toolbar slides in at the top:
 - **Pinch** with a second finger while holding a control to resize it (55–190 %).
 - **Hold** a control for about half a second to hide it. Hidden controls show as
   faint dashed placeholders; tap one to restore it, or use **SHOW ALL**.
-- **SAVE** stores the layout; **DONE** saves and leaves edit mode; **RESET**
-  returns everything to default. The layout is also saved when you leave edit
-  mode, background the app, or press Back.
+- **SAVE AS** names the current arrangement; **DONE** saves and leaves edit mode;
+  **RESET** restores the built-in layout. The layout is also saved when you leave
+  edit mode, background the app, or press Back.
+
+### Saving several layouts
+
+Open settings → **LAYOUTS**. The card lists **DEFAULT** and every layout you
+have named:
+
+- **SAVE AS…** stores the current positions, sizes and hidden controls under a
+  name (up to 24 characters). Saving over an existing name replaces it, and the
+  dialog warns you first.
+- Tap a saved name to switch to it immediately. The active name is shown under
+  the list and is highlighted.
+- **DELETE** removes a saved name after a confirmation. The pad keeps the
+  arrangement it is showing; it just stops being tied to that name.
+- **DEFAULT** restores the built-in arrangement and forgets the active name.
+- **CUSTOMIZE** opens edit mode. If a saved layout is active, edits update that
+  layout in place, so switching away and back keeps your changes.
+
+The live layout is still stored separately, so updating from an older version
+keeps the arrangement you already had.
 
 The app keeps the screen on, hides the system bars and locks to landscape.
 

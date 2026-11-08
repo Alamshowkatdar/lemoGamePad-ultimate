@@ -33,6 +33,7 @@ class MainActivity : Activity() {
     private lateinit var view: GamepadView
     private lateinit var link: Link
     private lateinit var prefs: SharedPreferences
+    private lateinit var layouts: LayoutStore
     private lateinit var root: FrameLayout
     private var editBar: LinearLayout? = null
     private var settingsPanel: SettingsPanel? = null
@@ -100,6 +101,8 @@ class MainActivity : Activity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
         prefs = getSharedPreferences(PrefsKeys.FILE, MODE_PRIVATE)
+        layouts = LayoutStore(prefs)
+        if (layouts.activeName() == null) layouts.clearActive()
         phoneGamepad = BluetoothHidGamepad(applicationContext) { message ->
             handler.post { if (!isFinishing) toast(message) }
         }
@@ -111,7 +114,7 @@ class MainActivity : Activity() {
         } else {
             FaceLabels.PLAYSTATION
         }
-        view.applyLayout(prefs.getString(PrefsKeys.LAYOUT, null))
+        view.applyLayout(layouts.activeData())
         view.deadzone = prefs.getInt(PrefsKeys.DEADZONE, 12) / 100f
         view.stickCurve = prefs.getInt(PrefsKeys.STICK_CURVE, 0) / 100f
         view.hapticsEnabled = prefs.getBoolean(PrefsKeys.HAPTICS, true)
@@ -170,6 +173,7 @@ class MainActivity : Activity() {
         // A rumble callback can still be in flight on the receiver thread; make
         // sure it cannot restart the ticker after this method clears it.
         resumed = false
+        LayoutDialogs.dismissAll(this)
         settingsPanel?.dismiss(animate = false)
         if (view.editMode) exitEditing(save = true)
         handler.removeCallbacks(ticker)
@@ -189,6 +193,7 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        LayoutDialogs.dismissAll(this)
         phoneGamepadActive = false
         handler.removeCallbacks(phoneGamepadTicker)
         if (::phoneGamepad.isInitialized) phoneGamepad.stop()
@@ -523,7 +528,10 @@ class MainActivity : Activity() {
     }
 
     private fun persistLayout() {
-        prefs.edit().putString(PrefsKeys.LAYOUT, view.layoutSnapshot()).apply()
+        val snapshot = view.layoutSnapshot()
+        prefs.edit().putString(PrefsKeys.LAYOUT, snapshot).apply()
+        // Keep the named preset in sync when the user tweaks an active layout.
+        layouts.updateActive(snapshot)
     }
 
     private fun showEditBar() {
@@ -573,14 +581,23 @@ class MainActivity : Activity() {
         }
 
         addButton("DONE", true) { exitEditing(save = true) }
-        addButton("SAVE", false) {
-            persistLayout()
-            toast("Layout saved")
+        addButton("SAVE AS", false) {
+            LayoutDialogs.promptName(
+                this@MainActivity,
+                view.theme,
+                title = "SAVE LAYOUT",
+                initial = "",
+                existing = layouts.saved().map { it.name },
+            ) { name ->
+                val replaced = layouts.save(name, view.layoutSnapshot())
+                toast(if (replaced) "Layout \"$name\" updated" else "Layout \"$name\" saved")
+            }
         }
         addButton("RESET", false) {
             view.resetLayout()
+            layouts.clearActive()
             persistLayout()
-            toast("Layout reset")
+            toast("Default layout restored")
         }
         addButton("SHOW ALL", false) { view.showAll() }
 
