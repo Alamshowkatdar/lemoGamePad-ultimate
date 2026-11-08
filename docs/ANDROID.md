@@ -140,15 +140,22 @@ The QR payload is `vpad://connect?h=<ip>&p=<port>&n=<hostname>`; plain
 
 ---
 
-## Up to four phones on one PC
+## Up to eight phones on one PC
 
 Install the APK on the other phones and pair them the same way.
 
-- Each phone gets **its own virtual controller**. XInput slot order is the order
-  the phones first connected.
-- Default limit is **4 phones**; change it with `--max-phones 1` … `--max-phones 4`.
-- A fifth phone is ignored and the console logs
+- Each phone gets **its own virtual controller**. With the default **AUTO**
+  setting, XInput slot order is the order the phones first connected.
+- **Choose your player** — settings → **PLAYER SLOT** lets a phone ask for
+  **P1**…**P8**. A free pad is assigned immediately; a busy one falls back to the
+  next free pad and the phone moves over as soon as that pad frees up. The
+  status pill and the slot line show the pad the PC actually assigned.
+- Default limit is **4 phones**; change it with `--max-phones 1` … `--max-phones 8`.
+- A phone beyond the limit is ignored and the console logs
   `ignored <ip>: all N controller slots are in use`.
+- Windows games that read **XInput** still see at most four pads (an XInput
+  limit). Slots 5-8 are useful with `--pad ds4`, DirectInput/Raw Input titles,
+  emulators and on Linux.
 - Each phone keeps its slot (and its in-game player number) for as long as the
   server runs. A phone that drops off and reconnects returns as the same player.
 - Rumble is routed to the correct phone only.

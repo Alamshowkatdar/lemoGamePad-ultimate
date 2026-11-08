@@ -59,6 +59,9 @@ Linux and Android have their own guides:
    and prints a **QR code** you can scan from the phone. Leave this window open
    while you play.
 
+   The default is 4 controller slots. Add `--max-phones 8` for up to eight
+   phones; Windows games that read XInput still see at most four pads.
+
 That is the whole PC install. There is **no Python, no pip, no driver hunting,
 no firewall script** needed on a normal machine.
 

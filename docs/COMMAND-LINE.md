@@ -8,7 +8,7 @@
 lemoGamePad-server.exe                     # virtual Xbox 360 pad (best compatibility)
 lemoGamePad-server.exe --pad ds4           # virtual DualShock 4 instead
 lemoGamePad-server.exe --port 9999         # different control port (app setting must match)
-lemoGamePad-server.exe --max-phones 2      # allow 1-4 phones at once (default 4)
+lemoGamePad-server.exe --max-phones 8      # allow 1-8 phones at once (default 4)
 lemoGamePad-server.exe --no-rumble         # do not forward rumble to the phone
 lemoGamePad-server.exe --no-video          # disable the PC screen stream
 lemoGamePad-server.exe --no-qr             # do not print the pairing QR code

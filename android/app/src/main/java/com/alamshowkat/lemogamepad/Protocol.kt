@@ -22,7 +22,17 @@ object Proto {
     const val MSG_RUMBLE = 7
 
     const val HEADER_SIZE = 12
-    const val INPUT_SIZE = 28
+    /**
+     * 28 bytes of pad state plus one optional byte requesting a pad number
+     * (0 = automatic, 1..MAX_PLAYERS). Old servers ignore the extra byte.
+     */
+    const val INPUT_SIZE = 29
+
+    /** Highest virtual pad the PC server exposes (XInput itself stops at 4). */
+    const val MAX_PLAYERS = 8
+
+    /** PONG length when the server also reports the pad it assigned. */
+    const val PONG_WITH_SLOT_SIZE = HEADER_SIZE + 7
 
     /** The PC screen stream listens on the UDP port + 1 (9877 by default). */
     const val VIDEO_PORT_OFFSET = 1

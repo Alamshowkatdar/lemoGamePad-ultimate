@@ -134,6 +134,7 @@ class MainActivity : Activity() {
         link.port = prefs.getInt(PrefsKeys.PORT, Proto.PORT)
         link.transport = transportById(prefs.getString(PrefsKeys.TRANSPORT, null))
         link.inputRate = InputRate.fromId(prefs.getString(PrefsKeys.INPUT_RATE, null))
+        link.wantSlot = prefs.getInt(PrefsKeys.PLAYER_SLOT, 0)
         link.onRumble = { small, large -> handleRumble(small, large) }
 
         screenEnabled = prefs.getBoolean(PrefsKeys.SCREEN, false)
@@ -263,7 +264,8 @@ class MainActivity : Activity() {
                 }
                 val batt = if (batteryLevel in 0..100) "  ·  $batteryLevel%" else ""
                 val via = if (linkName.isBlank()) "" else "  ·  $linkName"
-                view.setStatus("$name$via$rtt$jitter$loss$batt", GamepadView.STATUS_OK)
+                val pad = if (link.assignedSlot > 0) "  ·  P${link.assignedSlot}" else ""
+                view.setStatus("$name$via$pad$rtt$jitter$loss$batt", GamepadView.STATUS_OK)
             }
             else -> {
                 val kind = link.transport

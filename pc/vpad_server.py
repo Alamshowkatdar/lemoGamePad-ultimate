@@ -459,7 +459,7 @@ def create_virtual_pad(kind: str, on_rumble=None):
 
 class PadSlot:
     """
-    One virtual controller slot. Up to four phones can share a PC; each gets
+    One virtual controller slot. Up to eight phones can share a PC; each gets
     its own pad, created lazily on its first input packet and reused when that
     phone leaves so the controller index stays stable in games.
     """
@@ -1044,14 +1044,22 @@ def print_qr(ip: str, port: int, name: str, out_dir: str) -> None:
 
 class Server:
     """
-    UDP control server for up to four phones at once.
+    UDP control server for up to eight phones at once.
 
     Phones are keyed by their 32 bit token, which they keep for the whole
     session, so a phone that drops off and comes back reuses the same peer and
     the same virtual controller instead of creating a duplicate. Each peer owns
     one [PadSlot]; pads are created lazily on the first input packet and are
     reused after that so the controller order in games stays stable.
+
+    Eight is the supported maximum. Windows games that read XInput still see
+    only four pads (an XInput limitation); extra slots are useful with the
+    ``ds4`` pad type, DirectInput/Raw Input games and on Linux.
     """
+
+    # The CLI/storage limit. Raising it further needs no protocol change, but
+    # XInput's four-controller ceiling makes more than eight pads impractical.
+    MAX_PHONES = 8
 
     PEER_TIMEOUT = 8.0
     STATUS_INTERVAL = 0.5
@@ -1083,7 +1091,7 @@ class Server:
         self.port = port
         self.pad_kind = pad_kind
         self.release_after = release_after
-        self.max_phones = max(1, min(int(max_phones), 4))
+        self.max_phones = max(1, min(int(max_phones), self.MAX_PHONES))
         self.lock = threading.RLock()
         self.peers: dict[int, Peer] = {}
         self.slots = [
@@ -1234,14 +1242,21 @@ class Server:
             return True
         return now - peer.last_seen >= self.ADDRESS_GRACE
 
-    def _register_peer(self, token: int, addr: tuple, now: float):
+    def _register_peer(self, token: int, addr: tuple, now: float, want_slot: int = 0):
         """
         Finds or creates the peer for a token.
+
+        [want_slot] is the 1-based pad number the phone asked for (0 = auto).
+        A free requested slot is honoured; when it is taken the phone keeps its
+        current pad (or takes the next free one) and tries again on the next
+        packet, so a slot frees up without reconnecting.
 
         Returns (peer, is_new, reason). peer is None when the PC already serves
         [max_phones] controllers ("full") or when the token tried to move from
         a still-active address it does not own ("move").
         """
+        moved_from = -1
+        ensure = None
         with self.lock:
             peer = self.peers.get(token)
             if peer is not None:
@@ -1256,12 +1271,32 @@ class Server:
                     peer.seq = 0
                     self._pending.pop(token, None)
                 peer.last_seen = now
+                # A phone can ask for a different pad from the settings sheet
+                # while it is already connected. Move it only when the wanted
+                # slot is free; otherwise it stays where it is and retries.
+                if 1 <= want_slot <= self.max_phones:
+                    target = self.slots[want_slot - 1]
+                    if target.peer is None:
+                        old = self._slot_of(peer)
+                        if old is not None:
+                            old.reset()
+                            moved_from = old.index
+                        target.peer = peer
+                        peer.slot = target.index
+                        peer.name = f"phone {target.index + 1}"
+                        ensure = target
                 return peer, False, ""
 
             if len(self.peers) >= self.max_phones:
                 return None, False, "full"
 
-            slot = next((s for s in self.slots if s.peer is None), None)
+            slot = None
+            if 1 <= want_slot <= self.max_phones:
+                wanted = self.slots[want_slot - 1]
+                if wanted.peer is None:
+                    slot = wanted
+            if slot is None:
+                slot = next((s for s in self.slots if s.peer is None), None)
             if slot is None:
                 return None, False, "full"
 
@@ -1276,12 +1311,19 @@ class Server:
             )
             slot.peer = peer
             self.peers[token] = peer
+            ensure = slot
 
         # Creating a ViGEm/uinput device can take tens of milliseconds; do it
         # after releasing the lock so discovery/status/ping never wait for it.
         # Only the receive thread registers peers, so this is not racy.
-        slot.ensure_pad()
-        return peer, True, ""
+        if ensure is not None:
+            ensure.ensure_pad()
+        if moved_from >= 0:
+            self._log(
+                f"controller moved: {peer.describe()} "
+                f"(pad {moved_from + 1} -> {peer.slot + 1})"
+            )
+        return peer, ensure is not None and moved_from < 0, ""
 
     def _drop_peer(self, peer: Peer) -> None:
         with self.lock:
@@ -1325,8 +1367,11 @@ class Server:
             return
         if _pad not in (0, 1):
             _pad = 0
+        # 1.5 adds an optional trailing byte: the 1-based pad number the phone
+        # would like. Old phones omit it (auto), old servers ignore it.
+        want_slot = data[INPUT_SIZE] if len(data) > INPUT_SIZE else 0
 
-        peer, fresh, reason = self._register_peer(token, addr, now)
+        peer, fresh, reason = self._register_peer(token, addr, now, want_slot)
         if peer is None:
             if now - self._full_logged_at > 10.0:
                 self._full_logged_at = now
@@ -1512,6 +1557,8 @@ class Server:
 
     def _handle_ping(self, data: bytes, addr: tuple, now: float, seq: int, token: int) -> None:
         loss_permille = -1
+        assigned_slot = 0
+        peer_present = False
         with self.lock:
             peer = self.peers.get(token)
             if peer is not None:
@@ -1528,6 +1575,8 @@ class Server:
                     peer.seq = 0
                     self._pending.pop(token, None)
                 peer.last_seen = now
+                peer_present = True
+                assigned_slot = peer.slot + 1
                 received = max(0, peer.packet_count - peer.rate_mark)
                 total = received + peer.lost
                 if total > 0:
@@ -1536,10 +1585,12 @@ class Server:
         pong = HEADER.pack(MAGIC, VERSION, MSG_PONG, seq, token)
         if len(data) >= HEADER.size + 4:
             pong += data[HEADER.size : HEADER.size + 4]
-        if loss_permille >= 0:
-            # Trailing field added in 1.4: the phone shows the real uplink loss
-            # instead of guessing. Older apps stop reading after the clock echo.
-            pong += struct.pack("<H", loss_permille)
+        if peer_present:
+            # Trailing fields added after 1.4. The phone shows the real uplink
+            # loss, then the pad the PC actually assigned (the requested one
+            # may have been busy). Older apps stop after the clock echo.
+            pong += struct.pack("<H", max(0, loss_permille))
+            pong += bytes([assigned_slot & 0xFF])
         try:
             self.sock.sendto(pong, addr)
         except OSError:
@@ -2330,7 +2381,7 @@ def main(argv=None) -> int:
         "--max-phones",
         type=int,
         default=4,
-        help="how many phones can share this PC at once, 1-4 (default 4)",
+        help="how many phones can share this PC at once, 1-8 (default 4)",
     )
     ap.add_argument("--no-rumble", action="store_true", help="do not forward rumble to the phone")
     ap.add_argument("--no-video", action="store_true", help="disable the PC screen stream")

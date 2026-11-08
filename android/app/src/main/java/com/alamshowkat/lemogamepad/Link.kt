@@ -92,6 +92,21 @@ class Link(private val state: PadState, context: Context? = null) {
     /** Uplink loss reported by the PC, in permille (0…1000). -1 = unknown. */
     @Volatile var lossPermille: Int = -1
 
+    /**
+     * Pad number this phone asks for: 0 = next free slot, 1..MAX_PLAYERS =
+     * preferred pad. The request travels with every input packet, so changing
+     * it moves an already connected phone without reconnecting. A taken slot
+     * falls back to the next free one and is retried on later packets.
+     */
+    @Volatile var wantSlot: Int = 0
+        set(value) {
+            field = value.coerceIn(0, Proto.MAX_PLAYERS)
+            wakeSender()
+        }
+
+    /** Pad the PC actually assigned, reported in PONG. 0 = not assigned yet. */
+    @Volatile var assignedSlot: Int = 0
+
     /** Sender policy; changing it wakes the sender so the new rate applies now. */
     @Volatile var inputRate: InputRate = InputRate.STANDARD
         set(value) {
@@ -213,6 +228,7 @@ class Link(private val state: PadState, context: Context? = null) {
         cachedTransportHost = null
         cachedTransport = null
         serverName = ""
+        assignedSlot = 0
         resetStats()
     }
 
@@ -405,6 +421,7 @@ class Link(private val state: PadState, context: Context? = null) {
     private fun sendLoop(gen: Int) {
         raisePriority()
         var lastVersion = -1L
+        var lastWantSlot = -1
         var lastInputAt = 0L
         var lastPingAt = 0L
         var nextFrameAt = 0L
@@ -424,7 +441,10 @@ class Link(private val state: PadState, context: Context? = null) {
                 if (addr != null) {
                     try {
                         val v = state.version
-                        val changed = v != lastVersion
+                        val want = wantSlot
+                        // A new slot request must reach the PC immediately even
+                        // when the pad itself is idle and ECO would wait.
+                        val changed = v != lastVersion || want != lastWantSlot
                         // TURBO streams on a fixed clock; ECO/STANDARD send the
                         // frame the moment the pad changes and fall back to a
                         // keepalive so the PC never releases a held button.
@@ -434,6 +454,7 @@ class Link(private val state: PadState, context: Context? = null) {
                             val n = buildInput()
                             s.send(DatagramPacket(sendBuffer, n, addr, port))
                             lastVersion = v
+                            lastWantSlot = want
                             lastInputAt = now
                             if (due) nextFrameAt = now + TURBO_PERIOD_MS
                         }
@@ -523,6 +544,7 @@ class Link(private val state: PadState, context: Context? = null) {
         b.put(state.r2.toByte())
         b.put(battery.toByte())
         b.put(0) // virtual pad type hint (0 = xbox 360)
+        b.put(wantSlot.toByte()) // preferred pad: 0 = auto, 1..8 = P1..P8
         return Proto.INPUT_SIZE
     }
 
@@ -579,6 +601,12 @@ class Link(private val state: PadState, context: Context? = null) {
                         if (len >= Proto.HEADER_SIZE + 6) {
                             // 1.4 servers append the uplink loss they measured.
                             lossPermille = b.short.toInt() and 0xFFFF
+                        }
+                        if (len >= Proto.PONG_WITH_SLOT_SIZE) {
+                            // 1.5 servers also append the pad they assigned;
+                            // the requested one may have been busy.
+                            val slot = b.get().toInt() and 0xFF
+                            assignedSlot = if (slot in 1..Proto.MAX_PLAYERS) slot else 0
                         }
                         recordRtt(sample)
                     }

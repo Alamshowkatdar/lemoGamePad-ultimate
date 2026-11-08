@@ -7,9 +7,10 @@
 - LAN/local-link only, plain UDP and TCP, no encryption. The QR code is a
   convenience, not an encrypted pairing protocol. Do not forward these ports to
   the internet.
-- Up to **4 phones per PC** (one virtual pad each). Two phones cannot both be
-  player 1, and games that only read one XInput pad (some old ports) will only see
-  the first controller.
+- Up to **8 phones per PC** (one virtual pad each; `--max-phones`, default 4).
+  Two phones cannot both be player 1. Windows games that read only XInput still
+  see at most four pads; use `--pad ds4`, DirectInput/Raw Input or Linux for
+  more.
 - Screen preview is one-way video only; it does not let you control the PC with
   the phone's touchscreen.
 - Bluetooth PAN and USB-to-PC rely on Android tethering (PAN / RNDIS). Phone-to-phone

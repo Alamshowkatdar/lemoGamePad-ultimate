@@ -87,11 +87,12 @@ class Phone:
                 pos += 4
         return offered, name, pad_type, ips
 
-    def input(self, buttons=0, lx=0, ly=0, rx=0, ry=0, l2=0, r2=0, battery=90):
+    def input(self, buttons=0, lx=0, ly=0, rx=0, ry=0, l2=0, r2=0, battery=90,
+              want_slot=0):
         packet = INPUT.pack(
             MAGIC, srv.VERSION, srv.MSG_INPUT, self.seq & 0xFFFF, self.token,
             buttons, lx, ly, rx, ry, l2, r2, battery, 0,
-        )
+        ) + bytes([want_slot & 0xFF])
         self.sock.sendto(packet, self.addr)
         self.seq += 1
 
@@ -360,6 +361,99 @@ def test_reconnect(server, phones):
         phone.close()
 
 
+def test_max_phones_cap():
+    """The CLI advertises eight; the constructor must clamp to exactly that."""
+    port = free_udp_port()
+    probe = srv.Server(
+        port, "x360", video_enabled=False, qr_enabled=False, max_phones=99
+    )
+    try:
+        assert probe.max_phones == 8, probe.max_phones
+        assert len(probe.slots) == 8, len(probe.slots)
+        print("  max-phones cap ok: 8 slots")
+    finally:
+        probe.shutdown()
+
+
+def start_isolated_server(max_phones=4, peer_timeout=6.0):
+    """Small server on its own socket, for tests that need a clean slot map."""
+    port = free_udp_port()
+    server = srv.Server(
+        port,
+        "x360",
+        release_after=0.4,
+        video_enabled=False,
+        qr_enabled=False,
+        max_phones=max_phones,
+    )
+    server.PEER_TIMEOUT = peer_timeout
+    server._print_banner = lambda: None
+    server._status = lambda: None
+    thread = threading.Thread(target=server.run, name="test-slot-server", daemon=True)
+    thread.start()
+    time.sleep(0.1)
+    return server, port, thread
+
+
+def test_requested_slot():
+    """P1..P8 requests: honour a free pad, fall back when busy, move live."""
+    server, port, thread = start_isolated_server(max_phones=4)
+    first = Phone(port)
+    second = Phone(port)
+    try:
+        first.token = first.discover(0)[0]
+        second.token = second.discover(0)[0]
+
+        # A direct request for P3 must land on slot index 2.
+        first.input(want_slot=3)
+        wait_for(lambda: first.token in server.peers, timeout=10.0,
+                 message="first phone did not register")
+        assert server.peers[first.token].slot == 2, server.peers[first.token].slot
+
+        # PONG reports the pad the PC actually assigned (trailing byte).
+        first.ping()
+        reported = None
+        for data, _ in first.drain(0.5):
+            magic, _ver, mtype, _seq, _tok = HEADER.unpack_from(data)
+            if magic == MAGIC and mtype == srv.MSG_PONG and len(data) >= HEADER.size + 7:
+                reported = data[HEADER.size + 6]
+        assert reported == 3, f"PONG should report pad 3, got {reported}"
+
+        # The same request from another phone cannot steal P3; it falls back.
+        second.input(want_slot=3)
+        wait_for(lambda: second.token in server.peers, timeout=10.0,
+                 message="second phone did not register")
+        assert server.peers[second.token].slot != 2, "P3 was stolen"
+
+        # Changing the request moves an already-connected phone to a free pad.
+        first.input(want_slot=2)
+        wait_for(lambda: server.peers[first.token].slot == 1, timeout=3.0,
+                 message="connected phone did not move to P2")
+        assert server.slots[2].peer is None, "the old pad was not released"
+
+        # A pad owned by another phone is never taken; the mover stays put.
+        occupied = server.peers[second.token].slot + 1
+        for _ in range(3):
+            first.input(want_slot=occupied)
+            time.sleep(0.05)
+        time.sleep(0.2)
+        assert server.peers[first.token].slot == 1, "an occupied pad was stolen"
+
+        # Out-of-range requests are ignored like AUTO.
+        first.input(want_slot=9)
+        time.sleep(0.2)
+        assert server.peers[first.token].slot == 1, "out-of-range slot moved the phone"
+        print(
+            "  requested slot ok: honours P3, falls back when busy, "
+            "moves live, never steals"
+        )
+    finally:
+        first.close()
+        second.close()
+        server.running = False
+        thread.join(timeout=3)
+
+
 def main() -> int:
     port = free_udp_port()
     server = srv.Server(
@@ -385,6 +479,8 @@ def main() -> int:
     phones = []
     try:
         print("lemoGamePad multi-phone test")
+        test_max_phones_cap()
+        test_requested_slot()
         test_discovery(server, port)
         phones = list(test_two_pads(server, port))
         phones = test_slot_limit(server, port, phones)

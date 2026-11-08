@@ -4,6 +4,16 @@ Newest first. The reasoning behind each release is in [`docs/REVIEW.md`](docs/RE
 
 ## Unreleased
 
+- **Up to eight phones** — `--max-phones` now accepts `1`…`8` (default stays
+  `4`). Windows XInput games still see four pads; slots 5-8 are useful with
+  `--pad ds4`, DirectInput/Raw Input titles and on Linux.
+- **Choose your player slot** — the Android settings sheet now has
+  **PLAYER SLOT**: AUTO (next free pad, unchanged) or P1…P8. The request travels
+  with the input packets, so a connected phone moves to the wanted pad without
+  reconnecting; a busy pad falls back to the next free one and is retried until
+  it frees up. The PC reports the pad it actually assigned, shown in the status
+  pill and beside the selector. The wire format stays compatible: the new
+  trailing byte is ignored by older servers, and older apps keep working.
 - **PC hardening** — a slow viewer can no longer corrupt the video stream with a
   half-written frame; one silent video client no longer stalls other viewers;
   a controller token cannot be moved to another machine's address while its

@@ -40,6 +40,7 @@ internal object PrefsKeys {
     const val HAPTICS = "haptics"
     const val HAPTIC_STRENGTH = "haptic_strength"
     const val INPUT_RATE = "input_rate"
+    const val PLAYER_SLOT = "player_slot"
     const val ONBOARDED = "onboarded"
     const val WIFI_GUIDE_SEEN = "wifi_guide_seen"
     const val THEME = "theme"
@@ -112,6 +113,8 @@ class SettingsPanel(
 
     private val tinters = ArrayList<() -> Unit>()
     private val transportViews = ArrayList<Pair<Transport, TextView>>()
+    private val slotViews = ArrayList<Pair<Int, TextView>>()
+    private var lastSlotSignature = Int.MIN_VALUE
     private val handler = Handler(Looper.getMainLooper())
 
     private lateinit var scrim: View
@@ -128,6 +131,7 @@ class SettingsPanel(
     private lateinit var scanBtn: TextView
     private lateinit var hostEdit: EditText
     private lateinit var portEdit: EditText
+    private lateinit var slotLine: TextView
     private lateinit var tetherBtn: TextView
     private lateinit var scanLine: TextView
     /** Set when a scan only succeeded on a link the user did not pick. */
@@ -489,6 +493,42 @@ class SettingsPanel(
         fields.addView(portEdit, weightParams(1f))
         card.addView(fields)
 
+        // Player slot: ask the PC for a specific pad instead of taking the
+        // next free one. AUTO keeps the old behaviour. The request is sent
+        // with every input packet, so it also moves an already-connected phone.
+        card.addView(tiny("PLAYER SLOT", top = px(10), bottom = px(5)))
+        slotViews.clear()
+        val slotsTop = row()
+        val slotsBottom = row()
+
+        fun addSlot(slot: Int, container: LinearLayout, weight: Float, end: Int) {
+            val label = if (slot == 0) "AUTO" else "P$slot"
+            val view = chip(label) { chooseSlot(slot) }
+            slotViews += slot to view
+            container.addView(view, weightParams(weight, end = end))
+        }
+
+        addSlot(0, slotsTop, 1.4f, px(4))
+        addSlot(1, slotsTop, 1f, px(4))
+        addSlot(2, slotsTop, 1f, px(4))
+        addSlot(3, slotsTop, 1f, px(4))
+        addSlot(4, slotsTop, 1f, 0)
+        slotsBottom.addView(View(activity), weightParams(1.4f, end = px(4)))
+        addSlot(5, slotsBottom, 1f, px(4))
+        addSlot(6, slotsBottom, 1f, px(4))
+        addSlot(7, slotsBottom, 1f, px(4))
+        addSlot(8, slotsBottom, 1f, 0)
+        card.addView(slotsTop)
+        card.addView(slotsBottom, topParams(px(4)))
+
+        slotLine = TextView(activity).apply {
+            textSize = 10f
+            letterSpacing = .03f
+            setLineSpacing(px(2).toFloat(), 1f)
+            setPadding(px(2), px(6), px(2), 0)
+        }
+        card.addView(slotLine)
+
         val scanRow = row()
         scanBtn = action("SCAN NETWORK", primary = false) { scan(autoConnect = true) }
         val qrBtn = action("SCAN QR", primary = false) { callbacks.onScanQr() }
@@ -510,6 +550,7 @@ class SettingsPanel(
         tinters += {
             val t = pad.selectedTheme
             hintLine.setTextColor(t.muted)
+            slotLine.setTextColor(t.muted)
             scanLine.setTextColor(t.muted)
         }
         return card
@@ -1208,6 +1249,67 @@ class SettingsPanel(
         return container
     }
 
+    // ------------------------------------------------------------- player slot
+    private fun chooseSlot(slot: Int) {
+        val wanted = slot.coerceIn(0, Proto.MAX_PLAYERS)
+        link.wantSlot = wanted
+        prefs.edit().putInt(PrefsKeys.PLAYER_SLOT, wanted).apply()
+        lastSlotSignature = Int.MIN_VALUE
+        refreshSlotChips()
+        callbacks.toast(if (wanted == 0) "Player slot: automatic" else "Requesting P$wanted")
+    }
+
+    private fun refreshSlotChips() {
+        val t = pad.selectedTheme
+        val want = link.wantSlot
+        val assigned = link.assignedSlot
+        var signature = ((want + 1) * 37 + (assigned + 1)) * 31 + t.accent
+        signature = signature * 31 + t.ok
+        if (signature != lastSlotSignature) {
+            lastSlotSignature = signature
+            for ((slot, chipView) in slotViews) {
+                val selected = slot == want
+                val isAssigned = slot != 0 && slot == assigned
+                chipView.alpha = if (!selected && want != 0 && !isAssigned) 0.72f else 1f
+                chipView.setTextColor(
+                    when {
+                        selected -> onColor(t.accent)
+                        isAssigned -> t.text
+                        else -> t.textDim
+                    },
+                )
+                chipView.background = GradientDrawable().apply {
+                    cornerRadius = px(10).toFloat()
+                    setColor(if (selected) t.accent else withAlpha(t.surfaceAlt, 235))
+                    setStroke(
+                        px(1),
+                        withAlpha(
+                            when {
+                                selected -> t.accent
+                                isAssigned -> t.ok
+                                else -> t.text
+                            },
+                            when {
+                                selected -> 255
+                                isAssigned -> 220
+                                else -> 34
+                            },
+                        ),
+                    )
+                }
+            }
+        }
+
+        slotLine.text = when {
+            link.host == null -> "AUTO takes the next free pad."
+            !link.connected -> "Waiting for the PC…"
+            assigned <= 0 -> "Waiting for the PC to assign a pad…"
+            want == 0 -> "Using P$assigned (AUTO)."
+            want == assigned -> "Using P$assigned."
+            else -> "P$want is busy — using P$assigned until it frees up."
+        }
+    }
+
     // -------------------------------------------------------------- connection
     private fun connect() {
         if (applyFields()) {
@@ -1373,6 +1475,7 @@ class SettingsPanel(
         }
         statusSub.text = buildString {
             if (via.isNotBlank()) append(via) else append("—")
+            if (connected && link.assignedSlot > 0) append("  ·  P${link.assignedSlot}")
             if (connected && link.rttMs >= 0) append("  ·  ${link.rttMs} ms")
             if (host != null) append("  ·  $host")
         }
@@ -1416,6 +1519,7 @@ class SettingsPanel(
         disconnectBtn.alpha = if (host == null) 0.4f else 1f
 
         refreshTransportChips(readiness)
+        refreshSlotChips()
         refreshBluetooth()
         refreshPhoneGamepad()
         tetherBtn.visibility = if (

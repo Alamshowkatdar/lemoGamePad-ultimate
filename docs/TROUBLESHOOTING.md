@@ -19,7 +19,8 @@
 | Bluetooth preview stutters / `LINKING…` | The PAN is ~3 Mbps. Turn **Screen preview** to **LOW** or **SMALL**, or switch preview off. |
 | USB shows "no interface yet" | Enable **USB tethering** (use **OPEN TETHERING SETTINGS**) and use a data cable. |
 | Windows marks the tether network "Public" | The server's rules cover every profile; if you added them manually, run `pc\allow_firewall.ps1` again. |
-| Fifth phone connects but does nothing | The server is at its slot limit; raise it with `--max-phones 4`. |
+| Another phone connects but does nothing | The server is at its slot limit (default 4); raise it with `--max-phones 8`. XInput games still see at most four pads. |
+| A phone always becomes the wrong player number | Open settings → **PLAYER SLOT** and pick **P1**…**P8**. A busy pad is not stolen: the phone uses the next free one and moves to the chosen pad as soon as it frees up. |
 | Two phones rumble each other | Fixed: rumble is routed per slot and duplicate reports are filtered. |
 | "Another copy of lemoGamePad-server may already be running" | Only one instance can own UDP 9876. Close the old one (Task Manager). |
 | Buttons stuck down | The server releases everything after 1.5 s without packets, and on exit. |
