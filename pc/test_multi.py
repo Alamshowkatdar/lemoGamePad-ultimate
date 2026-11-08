@@ -137,6 +137,14 @@ def pad_of(server, peer):
     return slot.pad
 
 
+def pad_buttons(server, peer):
+    """The pad's last button mask, or None while its device is still created."""
+    pad = pad_of(server, peer)
+    if pad is None or pad._last is None:
+        return None
+    return pad._last.buttons
+
+
 class Keepalive:
     """
     Send periodic input for fake phones while a test does slow setup.
@@ -214,11 +222,11 @@ def test_two_pads(server, port):
         assert first_peer.slot != second_peer.slot, "phones must get separate pads"
 
         wait_for(
-            lambda: pad_of(server, first_peer)._last.buttons == 1 << CROSS,
+            lambda: pad_buttons(server, first_peer) == 1 << CROSS,
             message="first pad did not receive its input",
         )
         wait_for(
-            lambda: pad_of(server, second_peer)._last.buttons == 1 << CIRCLE,
+            lambda: pad_buttons(server, second_peer) == 1 << CIRCLE,
             message="second pad did not receive its input",
         )
         assert pad_of(server, first_peer) is not pad_of(server, second_peer)
@@ -283,7 +291,6 @@ def test_rumble(server, phones):
     )
     first, second = phones[0], phones[1]
     first_peer = server.peers[first.token]
-    second_peer = server.peers[second.token]
     first.drain(0.1)
     second.drain(0.1)
 
@@ -427,6 +434,13 @@ def test_requested_slot():
         wait_for(lambda: first.token in server.peers, timeout=10.0,
                  message="first phone did not register")
         assert server.peers[first.token].slot == 2, server.peers[first.token].slot
+
+        # The peer is inserted before its virtual pad is created, and creating
+        # a uinput device can take several seconds on a busy CI runner. Wait
+        # for the receive thread to finish that work, otherwise the PONG below
+        # may still be sitting in the socket when drain() times out.
+        wait_for(lambda: server.slots[2].pad is not None, timeout=20.0,
+                 message="the virtual pad was never created")
 
         # PONG reports the pad the PC actually assigned (trailing byte).
         first.ping()
