@@ -26,7 +26,7 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Check out tagged source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Java
         uses: actions/setup-java@v4
@@ -95,7 +95,7 @@ jobs:
       VGAMEPAD_SKIP_VIGEMBUS_INSTALL: "true"
     steps:
       - name: Check out tagged source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}
 
@@ -127,7 +127,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Check out tagged source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}
 
@@ -161,7 +161,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Check out license files
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           sparse-checkout: |
             LICENSE
