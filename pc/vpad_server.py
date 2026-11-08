@@ -2250,11 +2250,11 @@ def _python_packages_missing() -> list:
     if os.name == "nt":
         wanted.append(("vgamepad", "vgamepad>=0.2.0"))
     else:
-        wanted.append(("evdev", "evdev>=1.6.1"))
+        wanted.append(("evdev", "evdev>=2.0.0"))
     wanted += [
-        ("mss", "mss>=10.0.0"),
-        ("PIL", "pillow>=10.0.0"),
-        ("qrcode", "qrcode>=7.4"),
+        ("mss", "mss>=10.2.0"),
+        ("PIL", "pillow>=13.0.0"),
+        ("qrcode", "qrcode>=8.2"),
     ]
     missing = []
     for module, package in wanted:
