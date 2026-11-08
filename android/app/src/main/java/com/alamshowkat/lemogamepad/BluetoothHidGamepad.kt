@@ -239,6 +239,8 @@ internal class BluetoothHidGamepad(
             try {
                 hid?.unregisterApp()
                 adapter?.closeProfileProxy(BluetoothProfile.HID_DEVICE, hid)
+            } catch (_: SecurityException) {
+                // BLUETOOTH_CONNECT can be revoked while the app is running.
             } catch (_: Exception) {
             }
             isRegistered = false
@@ -249,6 +251,8 @@ internal class BluetoothHidGamepad(
 
         private fun safeName(device: BluetoothDevice): String = try {
             device.name?.takeIf { it.isNotBlank() } ?: "game host"
+        } catch (_: SecurityException) {
+            "game host"
         } catch (_: Exception) {
             "game host"
         }

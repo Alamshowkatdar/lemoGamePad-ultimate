@@ -103,8 +103,9 @@ The script finds a suitable JDK, builds `assembleRelease` and copies the APK int
 `release\`. Without a keystore it produces an **unsigned** APK and tells you how
 to sign it.
 
-Toolchain used for the published build: JDK 21, Gradle 8.9, Android SDK platform
-34. Nothing else is required — the app uses the plain Android framework plus one
+Toolchain used for the published build: JDK 17, Gradle 9.8.2, Android Gradle
+plugin 9.5.1 with built-in Kotlin, Android SDK platform 34 and Build Tools 36.
+Nothing else is required — the app uses the plain Android framework plus one
 pure-Java ZXing jar; there is no AndroidX or Play Services dependency.
 
 ### Signing the APK yourself
