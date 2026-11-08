@@ -11,10 +11,15 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: android-build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     name: Build Android app
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Check out source
         uses: actions/checkout@v4

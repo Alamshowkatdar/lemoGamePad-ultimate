@@ -5,7 +5,8 @@
 ## How it works
 
 - The app samples the touch state and sends a **29-byte UDP datagram** on every
-  change, at up to ~140 Hz, plus a keepalive and a ping twice a second. The last
+  change, at up to 250 Hz in TURBO (or instantly on change in ECO/STANDARD),
+  plus a keepalive and a ping twice a second. The last
   byte asks for a player slot (`0` = next free, `1`…`8` = P1…P8).
 - The PC applies the newest packet to a virtual pad: ViGEmBus on Windows,
   `/dev/uinput` on Linux. Out-of-order or lost packets are overwritten by the
@@ -16,8 +17,8 @@
   the app picks the address on the subnet it probed. If the probe already carries
   a token the server **echoes it**, so re-pairing (or switching Wi-Fi → USB)
   reuses the same controller slot.
-- Each phone is keyed by its token. Up to eight `PadSlot`s exist (four by
-  default); a slot's virtual pad is created on first input and reused
+- Each phone is keyed by its token. Up to eight `PadSlot`s exist (eight by
+  default; see `--max-phones`); a slot's virtual pad is created on first input and reused
   afterwards, keeping controller order stable for games. A phone may ask for a
   specific pad in settings: a free request is honoured, a busy one falls back to
   the next free pad, and the request is retried on later packets so the phone

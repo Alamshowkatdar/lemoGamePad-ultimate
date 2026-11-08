@@ -14,11 +14,16 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: android-release-${{ github.event.release.tag_name || inputs.release_tag }}
+  cancel-in-progress: false
+
 jobs:
   release:
     if: github.event_name == 'release'
     name: Build and publish signed APK
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - name: Check out tagged source
         uses: actions/checkout@v4
@@ -56,6 +61,18 @@ jobs:
         working-directory: android
         run: chmod +x ./gradlew && ./gradlew --no-daemon assembleRelease
 
+      - name: Verify APK version matches the tag
+        working-directory: android
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          declared=$(sed -n 's/^[[:space:]]*versionName[[:space:]]*=[[:space:]]*"\(.*\)"/\1/p' app/build.gradle.kts | head -n1)
+          if [ "$declared" != "$tag" ]; then
+            echo "::error::versionName is '$declared' but the release tag is '$tag'"
+            exit 1
+          fi
+          echo "versionName $declared matches tag $tag"
+
       - name: Attach APK to published release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -71,6 +88,7 @@ jobs:
   windows-server:
     name: Build and publish Windows server
     runs-on: windows-latest
+    timeout-minutes: 45
     env:
       # Never let PyInstaller import vgamepad trigger a driver install on the
       # build runner; the driver is only needed at runtime on the user's PC.
@@ -106,6 +124,7 @@ jobs:
   linux-server:
     name: Build and publish Linux server
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Check out tagged source
         uses: actions/checkout@v4
@@ -139,7 +158,16 @@ jobs:
     needs: [release, windows-server, linux-server]
     if: always()
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
+      - name: Check out license files
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            LICENSE
+            THIRD_PARTY_LICENSES.md
+          sparse-checkout-cone-mode: false
+
       - name: Download release assets, checksum, upload
         env:
           GH_TOKEN: ${{ github.token }}
@@ -148,13 +176,15 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p assets
-          # This job has no checkout, so tell gh which repository to use.
+          # Publish the license texts next to the binaries they cover.
+          gh release upload "$RELEASE_TAG" LICENSE THIRD_PARTY_LICENSES.md --repo "$GH_REPO" --clobber
           gh release download "$RELEASE_TAG" --repo "$GH_REPO" --dir assets --clobber \
-            --pattern 'lemoGamePad-*' --pattern 'install-linux.sh'
+            --pattern 'lemoGamePad-*' --pattern 'install-linux.sh' \
+            --pattern 'LICENSE' --pattern 'THIRD_PARTY_LICENSES.md'
           cd assets
 
           files=()
-          for f in lemoGamePad-server lemoGamePad-server.exe install-linux.sh; do
+          for f in lemoGamePad-server lemoGamePad-server.exe install-linux.sh LICENSE THIRD_PARTY_LICENSES.md; do
             if [ ! -f "$f" ]; then
               echo "::error::missing release asset: $f"
               exit 1

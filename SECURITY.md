@@ -8,7 +8,7 @@ before reporting it.
 
 | Version | Supported |
 | --- | --- |
-| Latest release (1.4.x) | Yes |
+| Latest release (1.6.x) | Yes |
 | Older releases | No — upgrade first |
 
 ## Reporting a vulnerability

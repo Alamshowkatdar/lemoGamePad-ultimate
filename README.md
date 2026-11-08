@@ -68,7 +68,7 @@ either, only access to `/dev/uinput`.
 - **Android fixes** — screen preview, QR scanner and rumble shut down cleanly,
   identity tokens use `SecureRandom`, rebinds are synchronized, and ports are
   clamped so the video stream cannot target an invalid port.
-- Wire-compatible with 1.4 and 1.5 apps and servers.
+- Wire-compatible with 1.3 and later apps and servers.
 
 See the [changelog](CHANGELOG.md) for older releases and
 [`docs/REVIEW.md`](docs/REVIEW.md) for the reasoning behind them.
@@ -104,7 +104,7 @@ Everything is on the [latest release](https://github.com/Alamshowkatdar/lemoGame
 | [Android app guide](docs/ANDROID.md) | Install, transports, pairing, up to eight phones, player-slot selection (P1–P8), on-screen pad, themes, settings, screen preview, custom layouts with saved arrangements, reconnecting. |
 | [Troubleshooting](docs/TROUBLESHOOTING.md) | Symptom → fix table for the most common problems. |
 | [Command-line options](docs/COMMAND-LINE.md) | Every server flag, with defaults. |
-| [How it works](docs/PROTOCOL.md) | Architecture and the 28-byte wire protocol. |
+| [How it works](docs/PROTOCOL.md) | Architecture and the 29-byte wire protocol. |
 | [Building](docs/BUILDING.md) | Repository layout, source builds, signing the APK, tests, publishing. |
 | [Releasing](docs/RELEASING.md) | Version bump, tag, release checklist, asset verification. |
 | [Limitations](docs/LIMITATIONS.md) | What the project deliberately does not do. |

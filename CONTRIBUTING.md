@@ -101,7 +101,7 @@ unit-test suite yet; if you add one, wire it into
 
 ## Wire protocol and compatibility
 
-The 28-byte protocol is documented in [docs/PROTOCOL.md](docs/PROTOCOL.md).
+The 29-byte protocol is documented in [docs/PROTOCOL.md](docs/PROTOCOL.md).
 Changes must stay compatible with 1.3 clients and servers unless a version bump
 is explicitly agreed. If you change the protocol:
 
