@@ -1,0 +1,42 @@
+name: Feature request
+description: Suggest an improvement or a new capability
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please check [Limitations](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/blob/main/docs/LIMITATIONS.md)
+        first — some non-goals are deliberate (no motion controls, LAN-only, no
+        encryption, up to four phones).
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the use case, not only the solution.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Android app
+        - Windows server
+        - Linux server
+        - Protocol
+        - Documentation
+        - Build / release

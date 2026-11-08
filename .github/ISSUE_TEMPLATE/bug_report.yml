@@ -1,0 +1,82 @@
+name: Bug report
+description: Something does not work as documented
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Before filing:
+        - Read the [troubleshooting guide](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/blob/main/docs/TROUBLESHOOTING.md).
+        - For a **security** issue, do not file a public bug — use the
+          [security policy](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/blob/main/SECURITY.md).
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: A clear, short description of the problem.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Start the server ...
+        2. Connect the phone over ...
+        3. Press ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+
+  - type: input
+    id: app-version
+    attributes:
+      label: App version
+      description: Shown at the bottom of the settings sheet.
+      placeholder: "1.4.0"
+    validations:
+      required: true
+
+  - type: input
+    id: server-version
+    attributes:
+      label: Server version and OS
+      description: The version in the server banner, plus the exact OS.
+      placeholder: "1.4.0 on Windows 11 23H2 / Ubuntu 24.04"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: transport
+    attributes:
+      label: Transport
+      multiple: true
+      options:
+        - Wi-Fi
+        - Bluetooth PAN
+        - USB tethering
+        - Phone-to-phone Bluetooth HID
+        - Not applicable
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and diagnostics
+      description: |
+        Paste the server console output (including the ViGEmBus / Firewall /
+        uinput lines) and the app's diagnostics line. Remove personal data.
+      render: text
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
+      description: Screen preview on/off and quality, game name, phone model, etc.

@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Troubleshooting guide
+    url: https://github.com/Alamshowkatdar/lemoGamePad-ultimate/blob/main/docs/TROUBLESHOOTING.md
+    about: Most connection and pairing problems are covered here.
+  - name: Security policy
+    url: https://github.com/Alamshowkatdar/lemoGamePad-ultimate/blob/main/SECURITY.md
+    about: Report vulnerabilities privately, not as a public issue.
+  - name: Latest release
+    url: https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest
+    about: Download the signed APK and the server.
