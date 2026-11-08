@@ -1,0 +1,12 @@
+# Normalize text files to LF in the repository and on checkout.
+* text=auto eol=lf
+
+# Binary assets must never be converted.
+*.jar binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ico binary
+*.apk binary
+*.exe binary
+*.zip binary
