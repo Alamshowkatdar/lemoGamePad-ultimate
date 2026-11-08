@@ -27,7 +27,11 @@ object Proto {
     /** The PC screen stream listens on the UDP port + 1 (9877 by default). */
     const val VIDEO_PORT_OFFSET = 1
 
-    fun videoPort(controlPort: Int): Int = controlPort + VIDEO_PORT_OFFSET
+    /**
+     * Clamp the control port first: 65535 would make the video port 65536,
+     * which InetSocketAddress rejects and the stream would retry forever.
+     */
+    fun videoPort(controlPort: Int): Int = controlPort.coerceIn(1, 65534) + VIDEO_PORT_OFFSET
 
     // PS3 button bits, dibit order must match BUTTON_BITS in the Python server
     const val SELECT = 0

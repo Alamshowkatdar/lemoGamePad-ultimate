@@ -21,8 +21,13 @@ HERE=$(CDPATH= cd -- "$(dirname -- "$SELF")" && pwd)
 PC_DIR=$(dirname "$HERE")
 PYTHON="$PC_DIR/.venv/bin/python"
 
-if [ ! -x "$PYTHON" ]; then
-    PYTHON="${PYTHON:-python3}"
+if [ -x "$PYTHON" ]; then
+    :
+elif command -v python3 >/dev/null 2>&1; then
+    PYTHON=python3
+else
+    echo "python3 not found. Run pc/linux/install-linux.sh first." >&2
+    exit 1
 fi
 
 exec "$PYTHON" "$PC_DIR/vpad_server.py" "$@"

@@ -7,6 +7,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.ImageFormat
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
@@ -46,6 +47,7 @@ class ScanActivity : Activity() {
 
     private lateinit var root: FrameLayout
     private var scanner: QrScannerView? = null
+    private var overlay: ScanOverlay? = null
     private var hint: TextView? = null
     private var handled = false
 
@@ -122,7 +124,9 @@ class ScanActivity : Activity() {
         sv.onFailure = { message -> hint?.text = message }
         scanner = sv
         root.addView(sv, 0, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        root.addView(ScanOverlay(this), 1, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        val dim = ScanOverlay(this)
+        overlay = dim
+        root.addView(dim, 1, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
     }
 
     private fun handleCode(raw: String) {
@@ -154,12 +158,28 @@ class ScanActivity : Activity() {
 
     override fun onPause() {
         super.onPause()
+        overlay?.pause()
         scanner?.pause()
     }
 
     override fun onResume() {
         super.onResume()
+        overlay?.resume()
         scanner?.resume()
+    }
+
+    override fun onDestroy() {
+        scanner?.destroy()
+        scanner = null
+        overlay = null
+        super.onDestroy()
+    }
+
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        // The manifest handles orientation itself, so the preview must be
+        // rotated again or landscape <-> reverse-landscape stays upside down.
+        scanner?.refreshOrientation()
     }
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
@@ -196,13 +216,13 @@ class ScanActivity : Activity() {
                 val port = values["p"]?.toIntOrNull() ?: values["port"]?.toIntOrNull() ?: Proto.PORT
                 val name = values["n"] ?: values["name"] ?: ""
                 if (host.isBlank()) return null
-                return Triple(host, port.coerceIn(1, 65535), name)
+                return Triple(host, port.coerceIn(1, 65534), name)
             }
 
             val bits = s.split(':')
             if (bits.size == 2 && bits[0].isNotBlank()) {
                 val port = bits[1].toIntOrNull() ?: return null
-                return Triple(bits[0], port.coerceIn(1, 65535), "")
+                return Triple(bits[0], port.coerceIn(1, 65534), "")
             }
             return null
         }
@@ -217,9 +237,10 @@ private class QrScannerView(context: Context) : SurfaceView(context), SurfaceHol
     var onFailure: ((String) -> Unit)? = null
 
     private var camera: Camera? = null
-    private var decoding = false
+    @Volatile private var decoding = false
     private var frameCount = 0
     private var wantPreview = false
+    private var previewBuffer: ByteArray? = null
 
     private val reader = MultiFormatReader().apply {
         setHints(
@@ -229,7 +250,9 @@ private class QrScannerView(context: Context) : SurfaceView(context), SurfaceHol
             ),
         )
     }
-    private val worker = Executors.newSingleThreadExecutor()
+    private val worker = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "vpad-qr-decode").apply { isDaemon = true }
+    }
 
     init {
         holder.addCallback(this)
@@ -253,8 +276,9 @@ private class QrScannerView(context: Context) : SurfaceView(context), SurfaceHol
 
     private fun open() {
         if (camera != null) return
+        var c: Camera? = null
         try {
-            val c = Camera.open()
+            c = Camera.open()
             camera = c
             c.setPreviewDisplay(holder)
             c.setDisplayOrientation(displayOrientation())
@@ -274,16 +298,42 @@ private class QrScannerView(context: Context) : SurfaceView(context), SurfaceHol
                 }
             } catch (_: Exception) {
             }
+            var frameBytes = 0
             try {
                 c.parameters = params
+                val size = c.parameters.previewSize
+                val bits = ImageFormat.getBitsPerPixel(c.parameters.previewFormat)
+                if (size != null && bits > 0) {
+                    frameBytes = size.width * size.height * bits / 8
+                }
             } catch (_: Exception) {
             }
 
-            c.setPreviewCallback(this)
+            // Reuse one preview buffer instead of copying every frame. The
+            // buffer is only handed back to the camera after decoding, so the
+            // byte[] is never modified while the worker reads it.
+            if (frameBytes > 0) {
+                val buffer = ByteArray(frameBytes)
+                previewBuffer = buffer
+                c.setPreviewCallbackWithBuffer(this)
+                c.addCallbackBuffer(buffer)
+            } else {
+                c.setPreviewCallback(this)
+            }
             c.startPreview()
             onFailure?.invoke("Point the camera at the QR code in the lemoGamePad-server window")
         } catch (e: Exception) {
             camera = null
+            previewBuffer = null
+            try {
+                c?.setPreviewCallback(null)
+                c?.stopPreview()
+            } catch (_: Exception) {
+            }
+            try {
+                c?.release()
+            } catch (_: Exception) {
+            }
             onFailure?.invoke("Camera unavailable. Enter the PC address manually in Settings.")
         }
     }
@@ -291,8 +341,10 @@ private class QrScannerView(context: Context) : SurfaceView(context), SurfaceHol
     private fun close() {
         val c = camera ?: return
         camera = null
+        previewBuffer = null
         try {
             c.setPreviewCallback(null)
+            c.setPreviewCallbackWithBuffer(null)
             c.stopPreview()
         } catch (_: Exception) {
         }
@@ -315,6 +367,22 @@ private class QrScannerView(context: Context) : SurfaceView(context), SurfaceHol
     fun resumeAfterMiss() {
         decoding = false
         if (camera == null && wantPreview && holder.surface?.isValid == true) open()
+    }
+
+    /** Re-applies the rotation after the activity handles a config change. */
+    fun refreshOrientation() {
+        val c = camera ?: return
+        try {
+            c.setDisplayOrientation(displayOrientation())
+        } catch (_: Exception) {
+        }
+    }
+
+    /** Releases the camera and stops the decoder thread for good. */
+    fun destroy() {
+        wantPreview = false
+        close()
+        worker.shutdownNow()
     }
 
     /** Rotates the on-screen preview to match the current device rotation. */
@@ -344,26 +412,58 @@ private class QrScannerView(context: Context) : SurfaceView(context), SurfaceHol
     override fun onPreviewFrame(data: ByteArray?, camera: Camera?) {
         val c = camera ?: return
         val bytes = data ?: return
-        if (decoding) return
+        val reuse = previewBuffer === bytes
+
+        // With setPreviewCallbackWithBuffer the camera only delivers the next
+        // frame after this buffer is handed back. Every early return must
+        // release it, or the preview freezes.
+        fun release() {
+            if (reuse) {
+                try {
+                    c.addCallbackBuffer(bytes)
+                } catch (_: Exception) {
+                }
+            }
+        }
+
+        if (decoding || !isAttachedToWindow) {
+            release()
+            return
+        }
         frameCount++
-        if (frameCount % 2 != 0) return
+        if (frameCount % 2 != 0) {
+            release()
+            return
+        }
 
         val size = try {
             c.parameters.previewSize
         } catch (_: Exception) {
             null
-        } ?: return
-        if (size.width <= 0 || size.height <= 0) return
-        if (bytes.size < size.width * size.height) return
+        } ?: run {
+            release()
+            return
+        }
+        if (size.width <= 0 || size.height <= 0) {
+            release()
+            return
+        }
+        if (bytes.size < size.width * size.height) {
+            release()
+            return
+        }
 
         decoding = true
-        val copy = bytes.copyOf()
+        // The buffer path decodes the camera's own array (safe because it is
+        // not returned until the worker finishes). The legacy callback path
+        // has no such guarantee, so it keeps the copy.
+        val frameBytes = if (reuse) bytes else bytes.copyOf()
         val w = size.width
         val h = size.height
 
         worker.execute {
             try {
-                val source = PlanarYUVLuminanceSource(copy, w, h, 0, 0, w, h, false)
+                val source = PlanarYUVLuminanceSource(frameBytes, w, h, 0, 0, w, h, false)
                 val binary = BinaryBitmap(HybridBinarizer(source))
                 val result = reader.decodeWithState(binary)
                 post {
@@ -377,6 +477,12 @@ private class QrScannerView(context: Context) : SurfaceView(context), SurfaceHol
             } finally {
                 reader.reset()
                 decoding = false
+                if (reuse) {
+                    try {
+                        c.addCallbackBuffer(frameBytes)
+                    } catch (_: Exception) {
+                    }
+                }
             }
         }
     }
@@ -397,6 +503,21 @@ private class ScanOverlay(context: Context) : View(context) {
     private val box = RectF()
 
     private val accent = Color.rgb(62, 240, 140)
+    private var animating = true
+
+    fun pause() {
+        animating = false
+    }
+
+    fun resume() {
+        animating = true
+        postInvalidateOnAnimation()
+    }
+
+    override fun onDetachedFromWindow() {
+        animating = false
+        super.onDetachedFromWindow()
+    }
 
     override fun onDraw(canvas: Canvas) {
         val w = width.toFloat()
@@ -444,7 +565,7 @@ private class ScanOverlay(context: Context) : View(context) {
         stroke.strokeWidth = dp(2f)
         canvas.drawLine(box.left + dp(10f), ly, box.right - dp(10f), ly, stroke)
 
-        postInvalidateOnAnimation()
+        if (animating) postInvalidateOnAnimation()
     }
 
     private fun dp(v: Float): Float = v * resources.displayMetrics.density

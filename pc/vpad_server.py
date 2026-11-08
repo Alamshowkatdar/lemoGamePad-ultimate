@@ -27,6 +27,7 @@ Button bits (PS3 naming) are defined in BUTTON_BITS below.
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import io
 import os
@@ -383,15 +384,33 @@ def _begin_high_res_timer() -> None:
     running that granularity turns 20 fps into 12 fps and adds jitter to the
     receive timeout. Requesting 1 ms resolution is what most game servers do.
     """
+    global _high_res_timer_active
     if os.name != "nt":
         return
     try:
         import ctypes
 
         ctypes.windll.winmm.timeBeginPeriod(1)
+        _high_res_timer_active = True
     except Exception:
         pass
 
+
+def _end_high_res_timer() -> None:
+    """Release the 1 ms timer request so the PC can idle normally again."""
+    global _high_res_timer_active
+    if os.name != "nt" or not _high_res_timer_active:
+        return
+    try:
+        import ctypes
+
+        ctypes.windll.winmm.timeEndPeriod(1)
+    except Exception:
+        pass
+    _high_res_timer_active = False
+
+
+_high_res_timer_active = False
 
 
 class _MissingPad:
@@ -656,6 +675,30 @@ class VideoClient:
         except OSError:
             pass
 
+    def _send_frame(self, frame: bytes) -> bool:
+        """
+        Send one length-prefixed frame without ever corrupting the stream.
+
+        ``socket.sendall`` can time out after writing part of the buffer. The
+        old code then continued with the next frame, so that frame's 4-byte
+        length prefix landed in the middle of the truncated JPEG and every
+        later frame was misparsed. A partial write is therefore fatal for this
+        viewer; the phone reconnects and starts from a clean frame boundary.
+        """
+        view = memoryview(frame)
+        sent = 0
+        while sent < len(view):
+            try:
+                count = self.sock.send(view[sent:])
+            except socket.timeout:
+                if sent:
+                    raise
+                return False
+            if count <= 0:
+                raise OSError("socket closed while sending")
+            sent += count
+        return True
+
     def _run(self) -> None:
         try:
             self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
@@ -663,7 +706,6 @@ class VideoClient:
             # stale video behind the one-frame application queue.
             self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 32 * 1024)
             # Long enough for a weak Wi-Fi / Bluetooth link to drain one frame.
-            # A timeout only drops the frame; it does not tear down the viewer.
             self.sock.settimeout(5.0)
             while self.alive and self.server.running:
                 try:
@@ -671,9 +713,12 @@ class VideoClient:
                 except queue.Empty:
                     continue
                 try:
-                    self.sock.sendall(frame)
+                    if not self._send_frame(frame):
+                        continue
                 except socket.timeout:
-                    continue
+                    # Part of a frame is already on the wire; stop now rather
+                    # than let the next frame's header corrupt the stream.
+                    break
                 except OSError:
                     break
         finally:
@@ -700,7 +745,9 @@ class VideoServer:
     ):
         self.port = port
         self.fps = max(1, min(fps, 30))
-        self.width = max(160, width)
+        # The "high" profile is capped at 1920 px, so a larger balanced width
+        # would make the sharper profile lower-resolution than the default.
+        self.width = max(160, min(width, 1920))
         self.quality = max(20, min(quality, 90))
         self.max_viewers = max(1, max_viewers)
         self.enabled = False
@@ -712,6 +759,7 @@ class VideoServer:
         self._server: Optional[socket.socket] = None
         self._client_lock = threading.Lock()
         self._clients: list[VideoClient] = []
+        self._handshakes = 0
 
     @property
     def viewers(self) -> int:
@@ -781,6 +829,10 @@ class VideoServer:
             self._server = srv
         except OSError as exc:
             self.error = f"video port {self.port} unavailable ({exc})"
+            try:
+                srv.close()
+            except Exception:
+                pass
             return
 
         self.enabled = True
@@ -792,8 +844,15 @@ class VideoServer:
             except OSError:
                 break
 
+            # The hello read below takes up to 0.25 s. Doing it inline let one
+            # client that connects and stays silent stall every other viewer,
+            # so each connection gets its own short-lived handshake thread.
             with self._client_lock:
                 full = len(self._clients) >= self.max_viewers
+                if not full and self._handshakes < self.max_viewers + 2:
+                    self._handshakes += 1
+                else:
+                    full = True
             if full:
                 try:
                     client_sock.close()
@@ -801,6 +860,15 @@ class VideoServer:
                     pass
                 continue
 
+            threading.Thread(
+                target=self._handshake,
+                args=(client_sock, addr),
+                name=f"lemo-video-hello-{addr[0]}",
+                daemon=True,
+            ).start()
+
+    def _handshake(self, client_sock: socket.socket, addr: tuple) -> None:
+        try:
             # New phones send LGVQ + a profile byte. Older apps send nothing;
             # after a short timeout they keep receiving the legacy defaults.
             profile = "balanced"
@@ -816,7 +884,7 @@ class VideoServer:
                 pass
             except OSError:
                 client_sock.close()
-                continue
+                return
 
             if len(hello) == 5 and hello[:4] == b"LGVQ":
                 profile_id = hello[4]
@@ -832,19 +900,25 @@ class VideoServer:
                     client_sock.sendall(struct.pack(">iB", -1, resolved_id))
                 except OSError:
                     client_sock.close()
-                    continue
+                    return
 
             try:
                 client_sock.settimeout(None)
             except OSError:
                 client_sock.close()
-                continue
+                return
 
             client = VideoClient(self, client_sock, addr, profile)
             with self._client_lock:
+                if len(self._clients) >= self.max_viewers:
+                    client_sock.close()
+                    return
                 self._clients.append(client)
             print(f"[video] phone viewing the PC screen from {addr[0]} ({profile})")
             client.start()
+        finally:
+            with self._client_lock:
+                self._handshakes = max(0, self._handshakes - 1)
 
     def _capture_loop(self) -> None:
         try:
@@ -987,6 +1061,11 @@ class Server:
     # Upper bound on datagrams handled in one wakeup. A bounded drain keeps a
     # flood (or a bad Wi-Fi link replaying packets) from starving housekeeping.
     MAX_DRAIN = 512
+    # A token may move to a different source address once its old address has
+    # been silent for this long. Same-IP port changes are accepted at once.
+    # Without this grace any LAN host that learns a token could hijack a live
+    # controller slot with one spoofed packet.
+    ADDRESS_GRACE = 1.5
 
     def __init__(
         self,
@@ -1030,8 +1109,9 @@ class Server:
         if os.name == "nt" and hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
             # Refuse a second instance instead of silently sharing the port.
             self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
-        else:
-            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        # On Linux/BSD, SO_REUSEADDR lets a second server bind the same UDP
+        # port and split the phone's packets between two processes, so it is
+        # deliberately not set here.
         try:
             self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         except OSError:
@@ -1062,8 +1142,30 @@ class Server:
         self._last_plain_status = 0.0
         self._last_housekeeping = 0.0
         self._full_logged_at = 0.0
-        self._ip_cache = []
-        self._ip_cache_at = 0.0
+        # Computed once here and refreshed by the status thread: discovery must
+        # never do DNS or route lookups on the packet-receive thread.
+        self._ip_cache = self._pack_addresses(local_ips())
+        self._ip_cache_at = time.time()
+        # Input/idle log lines are produced on the receive thread; printing
+        # there can block for seconds in a Windows console with QuickEdit
+        # selection active. The status thread drains this queue instead.
+        self._log_queue: "queue.Queue[str]" = queue.Queue(maxsize=256)
+
+    @staticmethod
+    def _pack_addresses(addresses) -> list:
+        out = []
+        for text in addresses:
+            try:
+                packed = socket.inet_aton(text)
+            except OSError:
+                continue
+            if len(packed) == 4 and packed not in out:
+                out.append(packed)
+        return out[:8]
+
+    def _refresh_offer_addresses(self) -> None:
+        self._ip_cache = self._pack_addresses(local_ips())
+        self._ip_cache_at = time.time()
 
     # ---------------------------------------------------------------- discovery
     def _handle_discover(self, data: bytes, addr: tuple) -> None:
@@ -1081,12 +1183,10 @@ class Server:
             with self.lock:
                 while token == 0 or token in self.peers:
                     token = secrets.randbits(32)
-        else:
-            with self.lock:
-                peer = self.peers.get(token)
-                if peer is not None:
-                    peer.addr = addr
-                    peer.last_seen = now
+        # A DISCOVER carrying a known token is only an echo request now.
+        # Rebinding a live peer here let any LAN host move a controller to its
+        # own address with one spoofed packet. Address changes are handled by
+        # _register_peer/_handle_ping after the old address goes quiet.
 
         name = self.hostname.encode("utf-8")[:32]
         payload = HEADER.pack(MAGIC, VERSION, MSG_OFFER, seq, token)
@@ -1102,20 +1202,11 @@ class Server:
             pass
 
     def _offer_addresses(self):
-        """Cached packed IPv4 addresses of this machine (max 8)."""
-        now = time.time()
-        if now - self._ip_cache_at < 10.0:
-            return self._ip_cache
-        out = []
-        for text in local_ips():
-            try:
-                packed = socket.inet_aton(text)
-            except OSError:
-                continue
-            if len(packed) == 4 and packed not in out:
-                out.append(packed)
-        self._ip_cache = out[:8]
-        self._ip_cache_at = now
+        """Cached packed IPv4 addresses of this machine (max 8).
+
+        The cache is refreshed from the status thread, never here: local_ips()
+        can perform route/DNS lookups and must stay off the receive path.
+        """
         return self._ip_cache
 
     # ------------------------------------------------------------------- peers
@@ -1130,30 +1221,49 @@ class Server:
                     return slot
         return None
 
+    def _can_rebind(self, peer: Peer, addr: tuple, now: float) -> bool:
+        """
+        Whether a token is allowed to move to [addr].
+
+        A new source port on the same interface is the normal reconnect path
+        and is accepted immediately. A different IP (Wi-Fi -> USB, a new DHCP
+        lease) waits until the old address has been quiet for ADDRESS_GRACE,
+        so a spoofed packet cannot steal a controller that is still active.
+        """
+        if peer.addr[0] == addr[0]:
+            return True
+        return now - peer.last_seen >= self.ADDRESS_GRACE
+
     def _register_peer(self, token: int, addr: tuple, now: float):
         """
-        Finds or creates the peer for a token. Returns (peer, is_new); peer is
-        None when the PC already serves [max_phones] controllers.
+        Finds or creates the peer for a token.
+
+        Returns (peer, is_new, reason). peer is None when the PC already serves
+        [max_phones] controllers ("full") or when the token tried to move from
+        a still-active address it does not own ("move").
         """
         with self.lock:
             peer = self.peers.get(token)
             if peer is not None:
                 if peer.addr != addr:
+                    if not self._can_rebind(peer, addr, now):
+                        return None, False, "move"
                     # Same phone, new source port or a different interface.
                     # The new socket starts its sequence counter fresh, so the
                     # old position must not mark its first packets as "late".
                     peer.addr = addr
                     peer.applied_seq = None
+                    peer.seq = 0
                     self._pending.pop(token, None)
                 peer.last_seen = now
-                return peer, False
+                return peer, False, ""
 
             if len(self.peers) >= self.max_phones:
-                return None, False
+                return None, False, "full"
 
             slot = next((s for s in self.slots if s.peer is None), None)
             if slot is None:
-                return None, False
+                return None, False, "full"
 
             peer = Peer(
                 token=token,
@@ -1165,9 +1275,13 @@ class Server:
                 rate_mark_time=now,
             )
             slot.peer = peer
-            slot.ensure_pad()
             self.peers[token] = peer
-            return peer, True
+
+        # Creating a ViGEm/uinput device can take tens of milliseconds; do it
+        # after releasing the lock so discovery/status/ping never wait for it.
+        # Only the receive thread registers peers, so this is not racy.
+        slot.ensure_pad()
+        return peer, True, ""
 
     def _drop_peer(self, peer: Peer) -> None:
         with self.lock:
@@ -1212,13 +1326,18 @@ class Server:
         if _pad not in (0, 1):
             _pad = 0
 
-        peer, fresh = self._register_peer(token, addr, now)
+        peer, fresh, reason = self._register_peer(token, addr, now)
         if peer is None:
             if now - self._full_logged_at > 10.0:
                 self._full_logged_at = now
-                self._log(
-                    f"ignored {addr[0]}: all {self.max_phones} controller slots are in use"
-                )
+                if reason == "move":
+                    self._log(
+                        f"ignored {addr[0]}: token is still active at another address"
+                    )
+                else:
+                    self._log(
+                        f"ignored {addr[0]}: all {self.max_phones} controller slots are in use"
+                    )
             return
 
         with self.lock:
@@ -1228,7 +1347,6 @@ class Server:
             peer.packet_count += 1
             peer.battery = batt
             prev = peer.seq
-            peer.seq = seq
             if peer.released:
                 peer.released = False
             # A phone that restarts (or reconnects after a pause) begins again
@@ -1236,10 +1354,14 @@ class Server:
             # mistaken for an out-of-order duplicate.
             if gap > 2.0:
                 peer.applied_seq = None
-            # Only count small forward gaps; a wrap-around or a restarted phone
-            # would otherwise report a huge loss.
-            if prev and 0 < seq - prev < 300:
-                peer.lost += seq - prev - 1
+                peer.seq = seq
+            elif prev == 0 or _seq_newer(seq, prev):
+                # Only advance the metric counter for packets that are actually
+                # newer. A late duplicate must not make the next forward gap
+                # look like a huge loss on the settings sparkline.
+                if prev and 0 < seq - prev < 300:
+                    peer.lost += seq - prev - 1
+                peer.seq = seq
 
         if fresh:
             self._log(
@@ -1278,6 +1400,8 @@ class Server:
                 # sequence restarted on the same address and resync instead.
                 if now - peer.last_apply < 0.5:
                     continue
+                # Follow the new counter so later loss stats stay meaningful.
+                peer.seq = state.seq
             try:
                 slot.pad.apply(state)
             except Exception as exc:  # pragma: no cover - backend failure
@@ -1391,13 +1515,19 @@ class Server:
         with self.lock:
             peer = self.peers.get(token)
             if peer is not None:
-                peer.last_seen = now
                 if peer.addr != addr:
+                    if not self._can_rebind(peer, addr, now):
+                        # Do not answer a ping from an address that does not
+                        # own this token yet; answering would also leak the
+                        # peer's loss statistics to the sender.
+                        return
                     # A ping from a new socket usually means the phone rebuilt
                     # its link; its sequence counter starts over too.
                     peer.addr = addr
                     peer.applied_seq = None
+                    peer.seq = 0
                     self._pending.pop(token, None)
+                peer.last_seen = now
                 received = max(0, peer.packet_count - peer.rate_mark)
                 total = received + peer.lost
                 if total > 0:
@@ -1459,6 +1589,8 @@ class Server:
         thread = self._status_thread
         if thread is not None and thread.is_alive():
             thread.join(timeout=1.0)
+        self._drain_logs()
+        _end_high_res_timer()
 
     # ------------------------------------------------------------------ display
     def _banner_lines(self):
@@ -1531,10 +1663,23 @@ class Server:
         print()
 
     def _log(self, message: str) -> None:
-        if self._tty and self._status_live:
-            sys.stdout.write("\r\x1b[K")
-            self._status_live = False
-        print(f"[{time.strftime('%H:%M:%S')}] {message}")
+        """Queue a log line; never print on the packet-receive thread."""
+        line = f"[{time.strftime('%H:%M:%S')}] {message}"
+        try:
+            self._log_queue.put_nowait(line)
+        except queue.Full:
+            pass
+
+    def _drain_logs(self) -> None:
+        while True:
+            try:
+                line = self._log_queue.get_nowait()
+            except queue.Empty:
+                return
+            if self._tty and self._status_live:
+                sys.stdout.write("\r\x1b[K")
+                self._status_live = False
+            print(line)
 
     def _status_text(self) -> str:
         with self.lock:
@@ -1566,6 +1711,9 @@ class Server:
         """
         while self.running:
             try:
+                self._drain_logs()
+                if time.time() - self._ip_cache_at >= 10.0:
+                    self._refresh_offer_addresses()
                 self._status()
             except Exception:
                 # A detached console can make stdout unusable; keep serving input.
@@ -1624,6 +1772,14 @@ def _firewall_rule(port: int, proto: str) -> dict:
         key, sep, value = line.partition(":")
         if sep:
             fields[key.strip().lower()] = value.strip()
+    # Localized Windows (or a different netsh build) uses translated keys. If
+    # none of the expected fields parsed, report "unknown" instead of assuming
+    # a healthy rule from the defaults below.
+    if not any(k in fields for k in ("enabled", "action", "program", "profiles", "dir")):
+        return {}
+    program = fields.get("program", "").strip()
+    if program.lower() in ("any", "*"):
+        program = ""
     return {
         "name": name,
         "port": port,
@@ -1631,7 +1787,7 @@ def _firewall_rule(port: int, proto: str) -> dict:
         "present": True,
         "enabled": fields.get("enabled", "yes").lower().startswith("yes"),
         "allow": fields.get("action", "allow").lower().startswith("allow"),
-        "program": fields.get("program", ""),
+        "program": program,
     }
 
 
@@ -1779,6 +1935,18 @@ def _run_elevated(program: str, params: str, workdir: str = "") -> int:
         return -1
 
 
+def _system32() -> str:
+    """A system-owned folder to use as the working directory for elevated tools.
+
+    Launching an installer or shell with a user-writable cwd (``%LOCALAPPDATA%``
+    or ``%TEMP%``) lets a low-privilege process plant a DLL that the elevated
+    process then loads. System32 is ACL-protected, so it is the safe default.
+    """
+    root = os.environ.get("SystemRoot") or r"C:\Windows"
+    path = os.path.join(root, "System32")
+    return path if os.path.isdir(path) else root
+
+
 def _setup_folder() -> str:
     base = os.path.join(
         os.environ.get("LOCALAPPDATA") or tempfile.gettempdir(), "lemoGamePad"
@@ -1860,13 +2028,28 @@ def _ensure_vigem(install: bool) -> None:
         print(f"     Install it manually from {VIGEM_PAGE}")
         return
 
+    # The download lives under %LOCALAPPDATA%\lemoGamePad, which the current
+    # user (and any process running as that user) can modify. Re-check the
+    # hash immediately before handing the file to the elevated installer so a
+    # swap between download and launch is at least detected.
+    try:
+        if (
+            os.path.getsize(setup) != VIGEM_SETUP_SIZE
+            or _file_sha256(setup) != VIGEM_SETUP_SHA256
+        ):
+            raise OSError("installer changed on disk after download")
+    except OSError as exc:
+        print(f"  !! ViGEmBus installer could not be verified: {exc}")
+        print(f"     Install it manually from {VIGEM_PAGE}")
+        return
+
     log = os.path.join(_setup_folder(), "ViGEmBus-install.log")
     code = -1
     for attempt in (1, 2):
         if attempt == 2:
             print("  ViGEmBus     : driver did not register, trying once more ...")
         print("  ViGEmBus     : installing - Windows will ask for administrator permission.")
-        code = _run_elevated(setup, f'/qn /norestart /l*v "{log}"', _setup_folder())
+        code = _run_elevated(setup, f'/qn /norestart /l*v "{log}"', _system32())
         if code == -2:
             print("  !! ViGEmBus install was cancelled at the Windows prompt.")
             print(f"     Install it manually from {VIGEM_PAGE}")
@@ -1881,12 +2064,19 @@ def _ensure_vigem(install: bool) -> None:
     print(f"     Setup log: {log}")
 
 
-def _firewall_fix_commands(checks) -> list:
-    """netsh commands that would make every inbound rule match [checks]."""
+def _firewall_fix_commands(checks):
+    """Return (netsh commands, unknown checks) for [checks].
+
+    ``unknown`` lists the ports whose state netsh could not report (missing
+    tool, no permission, localized output). Callers must not treat an unknown
+    result as "already open".
+    """
     commands = []
+    unknown = []
     for proto, port in checks:
         rule = _firewall_rule(port, proto)
         if not rule:
+            unknown.append((proto, port))
             continue
         good = rule["present"] and rule.get("enabled") and rule.get("allow")
         if good and rule.get("program") and getattr(sys, "frozen", False):
@@ -1903,41 +2093,65 @@ def _firewall_fix_commands(checks) -> list:
             f'netsh advfirewall firewall add rule name="{name}" dir=in '
             f"action=allow protocol={proto} localport={port} profile=any"
         )
-    return commands
+    return commands, unknown
 
 
 def _ensure_firewall(checks, install: bool) -> None:
     """Open the inbound ports so phones can actually reach this PC."""
     if os.name != "nt":
         return
-    commands = _firewall_fix_commands(checks)
+    try:
+        commands, unknown = _firewall_fix_commands(checks)
+    except Exception as exc:
+        print(f"  Firewall     : could not query Windows Firewall ({exc})")
+        return
+
+    listing = " / ".join(f"{proto} {port}" for proto, port in checks)
     if not commands:
+        if unknown:
+            # Never print OK when netsh gave us nothing to go on.
+            print(f"  Firewall     : unknown for {listing} (could not query Windows Firewall)")
+            print("     If phones cannot connect, run pc\\allow_firewall.ps1 as Administrator.")
         return
     if not install:
-        print("  Firewall     : NOT open for this port (auto-install disabled).")
+        print(f"  Firewall     : NOT open for {listing} (auto-install disabled).")
         return
 
     print("  Firewall     : adding inbound rules - Windows will ask for administrator permission.")
-    folder = _setup_folder()
-    script = os.path.join(folder, "fix-firewall.cmd")
-    log = os.path.join(folder, "fix-firewall.log")
-    with open(script, "w", encoding="ascii", newline="\r\n") as fh:
-        fh.write("@echo off\r\n")
-        for command in commands:
-            fh.write(command + "\r\n")
-    cmd = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "cmd.exe")
-    code = _run_elevated(cmd, f'/c ""{script}" > "{log}" 2>&1"', folder)
+    # Run the netsh lines through PowerShell -EncodedCommand. The previous
+    # version wrote a .cmd file into %LOCALAPPDATA% and launched it elevated;
+    # a local process could replace that file before the UAC prompt was
+    # accepted. Encoding the script into the command line removes the
+    # writable script, and System32 as the working directory removes the
+    # DLL-planting hazard for the elevated process.
+    script = "$ErrorActionPreference = 'Stop'\r\n" + "\r\n".join(commands)
+    encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+    powershell = os.path.join(_system32(), "WindowsPowerShell", "v1.0", "powershell.exe")
+    try:
+        code = _run_elevated(
+            powershell,
+            f"-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand {encoded}",
+            _system32(),
+        )
+    except Exception as exc:
+        print(f"  !! Could not start the firewall helper: {exc}")
+        print("     Run pc\\allow_firewall.ps1 as Administrator.")
+        return
     if code == -2:
         print("  !! Firewall rules were cancelled at the Windows prompt.")
-        print("     Run the netsh lines printed by this server as Administrator.")
+        print("     Run pc\\allow_firewall.ps1 as Administrator.")
         return
-    if _firewall_fix_commands(checks):
+    try:
+        remaining, unknown = _firewall_fix_commands(checks)
+    except Exception:
+        remaining, unknown = [], []
+    if remaining:
         print("  !! Could not add the firewall rules automatically.")
-        print("     Run the netsh lines printed by this server as Administrator.")
-        if os.path.isfile(log):
-            print(f"     Details: {log}")
+        print("     Run pc\\allow_firewall.ps1 as Administrator.")
         return
-    listing = " / ".join(f"{proto} {port}" for proto, port in checks)
+    if unknown:
+        print(f"  Firewall     : rules submitted for {listing} (state could not be confirmed).")
+        return
     print(f"  Firewall     : OK ({listing} allowed)")
 
 
@@ -2044,10 +2258,9 @@ def _ensure_dependencies(port: int, video_port, install: bool) -> None:
 def local_ips():
     ips = []
     try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        ips.append(s.getsockname()[0])
-        s.close()
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))
+            ips.append(s.getsockname()[0])
     except OSError:
         pass
     try:

@@ -10,6 +10,7 @@ import android.bluetooth.BluetoothManager
 import android.content.Context
 import android.os.Build
 import java.util.concurrent.Executor
+import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import kotlin.math.roundToInt
 
@@ -31,7 +32,13 @@ internal class BluetoothHidGamepad(
     private val onStatus: (String) -> Unit,
 ) {
     private val appContext = context.applicationContext
-    private val executor: Executor = Executors.newSingleThreadExecutor()
+
+    /**
+     * Callbacks for the HID profile run here. It is created per start() and
+     * shut down in stop(): before, a single pool lived for the process and its
+     * non-daemon worker kept the app alive after the gamepad was stopped.
+     */
+    private var executor: ExecutorService? = null
     private var api: Api28? = null
 
     /** True only while a host phone is actually connected and listening. */
@@ -48,10 +55,16 @@ internal class BluetoothHidGamepad(
             return false
         }
         api?.let { return true }
-        val created = Api28(appContext, executor, onStatus)
+        val pool = Executors.newSingleThreadExecutor { runnable ->
+            Thread(runnable, "vpad-bt-hid").apply { isDaemon = true }
+        }
+        executor = pool
+        val created = Api28(appContext, pool, onStatus)
         api = created
         if (!created.start()) {
             api = null
+            executor = null
+            pool.shutdownNow()
             return false
         }
         return true
@@ -64,6 +77,8 @@ internal class BluetoothHidGamepad(
     fun stop() {
         api?.stop()
         api = null
+        executor?.shutdownNow()
+        executor = null
     }
 
     @TargetApi(Build.VERSION_CODES.P)

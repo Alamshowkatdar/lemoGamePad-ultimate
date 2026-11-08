@@ -16,12 +16,12 @@ import java.net.InetSocketAddress
 import java.net.NetworkInterface
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.security.SecureRandom
 import java.util.concurrent.locks.LockSupport
 import kotlin.concurrent.thread
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
-import kotlin.random.Random
 
 /**
  * How the phone reaches the PC. All three carry the same UDP protocol:
@@ -118,6 +118,8 @@ class Link(private val state: PadState, context: Context? = null) {
     @Volatile private var sock: DatagramSocket? = null
     @Volatile private var viaTransport: Transport? = null
     @Volatile private var lastRebindAt = 0L
+    /** Guards the sock swap so two rebind() calls cannot leak a socket. */
+    private val socketLock = Any()
 
     /**
      * Android puts Wi-Fi into power save between packets. On a lightly loaded
@@ -159,10 +161,12 @@ class Link(private val state: PadState, context: Context? = null) {
             if (sock == null) rebind()
             return
         }
+        // Bump the generation before the workers can observe running=true, so
+        // a worker left over from a previous start can never share this socket.
+        val gen = ++generation
         running = true
         state.onChange = { wakeSender() }
         rebind()
-        val gen = ++generation
         sender = thread(name = "vpad-sender", isDaemon = true) { sendLoop(gen) }
         receiver = thread(name = "vpad-receiver", isDaemon = true) { receiveLoop(gen) }
     }
@@ -229,8 +233,12 @@ class Link(private val state: PadState, context: Context? = null) {
 
     // ------------------------------------------------------------------ sockets
     private fun closeSocket() {
-        closeQuietly(sock)
-        sock = null
+        val old: DatagramSocket?
+        synchronized(socketLock) {
+            old = sock
+            sock = null
+        }
+        closeQuietly(old)
     }
 
     private fun closeQuietly(s: DatagramSocket?) {
@@ -275,17 +283,30 @@ class Link(private val state: PadState, context: Context? = null) {
                 // The socket still works on the default route.
             }
         }
-        val old = sock
-        sock = fresh
-        viaTransport = choice?.transport
+        // Publish under a lock: the sender watchdog and the main thread can
+        // both call rebind(), and reading the same old socket twice leaked one
+        // of the fresh sockets.
+        val published = publishSocket(fresh, choice?.transport)
+        if (!published) return
         connected = false
         lastPongAt = 0
         rttMs = -1
         updateWifiLock(host != null && choice?.transport == Transport.WIFI)
         wakeSender()
-        try {
-            old?.close()
-        } catch (_: Exception) {
+    }
+
+    /** Swaps [fresh] into [sock] and closes the old one. False if stopped. */
+    private fun publishSocket(fresh: DatagramSocket, transport: Transport?): Boolean {
+        synchronized(socketLock) {
+            if (!running) {
+                closeQuietly(fresh)
+                return false
+            }
+            val old = sock
+            sock = fresh
+            viaTransport = transport
+            closeQuietly(old)
+            return true
         }
     }
 
@@ -686,8 +707,14 @@ class Link(private val state: PadState, context: Context? = null) {
             val best = offers.firstOrNull { want != Transport.AUTO && it.kind == want }
                 ?: offers.firstOrNull()
             if (best != null) {
-                token = best.token
-                saveToken(appContext, best.token)
+                // The phone owns its identity token. A DISCOVER reply echoes
+                // that token; never adopt a value from the offer. A spoofed
+                // reply with token 0 used to silently stop all input (the PC
+                // drops token 0) while the UI still looked connected.
+                if (token == 0 && best.token != 0) {
+                    token = best.token
+                    saveToken(appContext, best.token)
+                }
                 cachedHost = null
                 cachedAddr = null
             }
@@ -1136,7 +1163,7 @@ class Link(private val state: PadState, context: Context? = null) {
             val saved = prefs?.getInt(PrefsKeys.TOKEN, 0) ?: 0
             if (saved != 0) return saved
             // 0 means "please assign one" in the protocol, so never use it.
-            var fresh = Random.nextInt()
+            var fresh = SecureRandom().nextInt()
             if (fresh == 0) fresh = 1
             prefs?.edit()?.putInt(PrefsKeys.TOKEN, fresh)?.apply()
             return fresh

@@ -26,6 +26,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.TextView
+import kotlin.concurrent.thread
 import kotlin.math.min
 import kotlin.math.roundToInt
 
@@ -145,6 +146,13 @@ class SettingsPanel(
     private var pendingBluetooth: (() -> Unit)? = null
     private var lastBluetoothRefresh = 0L
     private var lastChipSignature = Int.MIN_VALUE
+    /** Bumped on close/new scan so an in-flight discover cannot touch a dead UI. */
+    private var scanGeneration = 0
+    /** Bumped on close so an in-flight Bluetooth probe is discarded. */
+    private var bluetoothGeneration = 0
+    private var bluetoothRefreshing = false
+    /** Last status, rendered immediately while a fresh probe runs off-thread. */
+    @Volatile private var bluetoothCache: BluetoothPairing.Status? = null
 
     private val ticker = object : Runnable {
         override fun run() {
@@ -1232,7 +1240,8 @@ class SettingsPanel(
     /** Saves the address fields and points the link at them. */
     private fun applyFields(): Boolean {
         val host = hostEdit.text.toString().trim()
-        val port = portEdit.text.toString().toIntOrNull()?.coerceIn(1, 65535) ?: Proto.PORT
+        // 65535 is not usable: the screen stream listens on port + 1.
+        val port = portEdit.text.toString().toIntOrNull()?.coerceIn(1, 65534) ?: Proto.PORT
         if (portEdit.text.toString() != port.toString()) portEdit.setText(port.toString())
 
         val changed = link.host != host.ifBlank { null } || link.port != port
@@ -1256,10 +1265,14 @@ class SettingsPanel(
     private fun scan(autoConnect: Boolean) {
         if (scanning) return
         scanning = true
+        // A discover run takes up to three seconds. If the sheet closes (or a
+        // later scan starts) before it returns, the callback must not write to
+        // the detached panel or re-enable a button nobody can see.
+        val generation = ++scanGeneration
         // Remember the user's choice: the callback below may re-point the chip
         // at the link that actually answered.
         val want = selectedTransport
-        val port = portEdit.text.toString().toIntOrNull()?.coerceIn(1, 65535) ?: Proto.PORT
+        val port = portEdit.text.toString().toIntOrNull()?.coerceIn(1, 65534) ?: Proto.PORT
 
         link.port = port
         link.transport = selectedTransport
@@ -1276,6 +1289,7 @@ class SettingsPanel(
 
         link.discover(3000) { ip, name ->
             activity.runOnUiThread {
+                if (generation != scanGeneration) return@runOnUiThread
                 scanning = false
                 scanBtn.isEnabled = true
                 scanBtn.text = "SCAN NETWORK"
@@ -1515,11 +1529,40 @@ class SettingsPanel(
         phoneGamepadStatus.setTextColor(if (connected) t.ok else if (running) t.warn else t.muted)
     }
 
-    private fun refreshBluetooth(force: Boolean = false) {        val now = android.os.SystemClock.uptimeMillis()
+    private fun refreshBluetooth(force: Boolean = false) {
+        if (closed) return
+        val now = android.os.SystemClock.uptimeMillis()
         if (!force && now - lastBluetoothRefresh < 1500L) return
         lastBluetoothRefresh = now
 
-        val status = BluetoothPairing.status(activity)
+        // Render the previous reading at once, then refresh it in the
+        // background. status() walks every NetworkInterface (PAN address),
+        // which is too slow to repeat on the UI thread twice a second.
+        bluetoothCache?.let { renderBluetooth(it) }
+        if (bluetoothRefreshing) return
+        bluetoothRefreshing = true
+        val generation = ++bluetoothGeneration
+        thread(name = "vpad-bt-status", isDaemon = true) {
+            val status = try {
+                BluetoothPairing.status(activity)
+            } catch (_: Exception) {
+                null
+            }
+            handler.post {
+                // Discard a probe whose panel has closed or been replaced, and
+                // only clear the in-flight flag for the current generation so a
+                // stale probe cannot unblock a second concurrent one.
+                if (generation != bluetoothGeneration) return@post
+                bluetoothRefreshing = false
+                if (status == null || closed) return@post
+                bluetoothCache = status
+                renderBluetooth(status)
+            }
+        }
+    }
+
+    /** Applies a Bluetooth snapshot to the card's views. */
+    private fun renderBluetooth(status: BluetoothPairing.Status) {
         bluetoothStatus.text = when {
             !status.supported -> "No Bluetooth adapter on this phone."
             !status.permitted -> "Bluetooth access is off — allow nearby devices to pair."
@@ -1632,6 +1675,12 @@ class SettingsPanel(
         if (closed) return
         closed = true
         showing = false
+        // Invalidate any discover/probe that is still running. scanning is
+        // reset so a freshly opened sheet can start a new scan immediately.
+        scanGeneration++
+        bluetoothGeneration++
+        scanning = false
+        bluetoothRefreshing = false
         handler.removeCallbacks(ticker)
         hideKeyboard()
         (view.parent as? ViewGroup)?.removeView(view)

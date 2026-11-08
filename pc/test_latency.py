@@ -79,6 +79,11 @@ def main() -> int:
         port, "x360", video_enabled=False, qr_enabled=False, max_phones=2
     )
     server.running = False
+    # Server.__init__ already created a real pad for slot 0. Close it before
+    # replacing it, or the test leaves a /dev/uinput / ViGEm device behind.
+    real_pad = server.slots[0].pad
+    if real_pad is not None:
+        real_pad.close()
     rec = RecordingPad()
     server.slots[0].pad = rec
     addr = ("127.0.0.1", 42000)

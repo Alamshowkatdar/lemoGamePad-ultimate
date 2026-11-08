@@ -2,6 +2,27 @@
 
 Newest first. The reasoning behind each release is in [`docs/REVIEW.md`](docs/REVIEW.md).
 
+## Unreleased
+
+- **PC hardening** — a slow viewer can no longer corrupt the video stream with a
+  half-written frame; one silent video client no longer stalls other viewers;
+  a controller token cannot be moved to another machine's address while its
+  real owner is still active; and the log, IP cache and 1 ms timer no longer
+  block or linger on the receive path.
+- **Safer elevation** — the ViGEm installer is re-hashed immediately before the
+  UAC prompt, and the firewall helper runs from System32 through an encoded
+  command instead of a writable `.cmd` file under `%LOCALAPPDATA%`.
+- **Honest firewall status** — an unreadable `netsh` result is reported as
+  unknown instead of "OK".
+- **Cleaner ghost pads** — `clean_pads.ps1` now removes only root-enumerated
+  ViGEm devices, never a real controller, and asks before acting.
+- **Android lifecycle fixes** — the screen preview closes its socket when the
+  window is dismissed or the activity pauses; the QR scanner releases the
+  camera and decoder thread on destroy and reuses its preview buffer; rumble
+  stops when the app is backgrounded; the phone's identity token comes from
+  `SecureRandom` and is never adopted from a discovery reply; and a rebind can
+  no longer leak sockets.
+
 ## 1.4.0
 
 - **Steadier latency** — the PC now collapses a burst of queued packets into one

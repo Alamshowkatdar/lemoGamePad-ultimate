@@ -54,6 +54,8 @@ class MainActivity : Activity() {
     @Volatile private var rumbleAmp = 0
     @Volatile private var lastRumbleAt = 0L
     @Volatile private var hapticStrength = 1f
+    /** True between onResume and onPause; read by the link's rumble callback. */
+    @Volatile private var resumed = false
 
     private val phoneGamepadTicker = object : Runnable {
         override fun run() {
@@ -148,6 +150,7 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        resumed = true
         enterImmersive()
         link.host = prefs.getString(PrefsKeys.HOST, null)?.takeIf { it.isNotBlank() }
         link.start()
@@ -163,6 +166,9 @@ class MainActivity : Activity() {
 
     override fun onPause() {
         super.onPause()
+        // A rumble callback can still be in flight on the receiver thread; make
+        // sure it cannot restart the ticker after this method clears it.
+        resumed = false
         settingsPanel?.dismiss(animate = false)
         if (view.editMode) exitEditing(save = true)
         handler.removeCallbacks(ticker)
@@ -421,6 +427,9 @@ class MainActivity : Activity() {
         sv.onClose = {
             prefs.edit().putBoolean(PrefsKeys.SCREEN, false).apply()
             screenEnabled = false
+            // stopStreaming() closes the socket and stops the receiver thread;
+            // removing the view alone left both alive until process death.
+            sv.stopStreaming()
             root.removeView(sv)
             screenView = null
             toast("Screen preview off - re-enable it in settings")
@@ -758,6 +767,11 @@ class MainActivity : Activity() {
     }
 
     private fun handleRumble(small: Int, large: Int) {
+        // Rumble callbacks arrive on the link's receiver thread. After onPause
+        // the ticker has been removed and the vibrator cancelled, so ignore
+        // anything that was already in flight instead of re-arming it in the
+        // background.
+        if (!resumed) return
         val now = SystemClock.uptimeMillis()
         val amp = maxOf(small, large).coerceIn(0, 255)
         if (amp == 0) {

@@ -282,6 +282,14 @@ class ScreenView(context: Context) : View(context) {
     }
 
     // ------------------------------------------------------------------- draw
+    override fun onDetachedFromWindow() {
+        // Defensive: whoever removed this view may have forgotten to close the
+        // stream (the close button used to do exactly that). Never leave the
+        // socket and vpad-screen thread running against a detached view.
+        stopStreaming()
+        super.onDetachedFromWindow()
+    }
+
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
         pivotX = w / 2f

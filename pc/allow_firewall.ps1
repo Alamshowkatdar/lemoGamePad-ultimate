@@ -10,8 +10,17 @@
 
 param(
     [string]$Program = "",
-    [int]$Port = 9876
+    [ValidateRange(1, 65534)]
+    [int]$Port = 9876,
+    # Control port + 1 by default; pass -VideoPort 0 to skip the screen rule.
+    [ValidateRange(0, 65535)]
+    [int]$VideoPort = 0
 )
+
+if ($Port -lt 1 -or $Port -gt 65534) {
+    Write-Host "Port must be between 1 and 65534 (the video port is Port + 1)." -ForegroundColor Red
+    exit 1
+}
 
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $principal = New-Object Security.Principal.WindowsPrincipal($identity)
@@ -44,7 +53,20 @@ if (-not (Test-Path $Program)) {
 }
 
 $Program = (Resolve-Path $Program).Path
-$videoPort = $Port + 1
+
+# The PC screen preview uses TCP on the control port + 1, so 65535 is not a
+# valid control port. -VideoPort 0 disables the second rule entirely.
+$withVideo = $false
+if ($VideoPort -eq 0 -and $Port -lt 65535) {
+    $VideoPort = $Port + 1
+}
+if ($VideoPort -gt 0) {
+    if ($VideoPort -lt 1 -or $VideoPort -gt 65535 -or $VideoPort -eq $Port) {
+        Write-Host "Invalid -VideoPort $VideoPort." -ForegroundColor Red
+        exit 1
+    }
+    $withVideo = $true
+}
 
 function Add-Rule {
     param([string]$Name, [string]$Protocol, [int]$LocalPort)
@@ -62,9 +84,15 @@ function Add-Rule {
 
 Add-Rule "lemoGamePad ultimate (UDP $Port)" "UDP" $Port
 # The PC screen preview uses TCP on the control port + 1.
-Add-Rule "lemoGamePad ultimate (TCP $videoPort)" "TCP" $videoPort
+if ($withVideo) {
+    Add-Rule "lemoGamePad ultimate (TCP $VideoPort)" "TCP" $VideoPort
+}
 
 Write-Host "Firewall rules added for:" -ForegroundColor Green
 Write-Host "  $Program"
-Write-Host "  UDP $Port (controller)  +  TCP $videoPort (PC screen preview)"
+if ($withVideo) {
+    Write-Host "  UDP $Port (controller)  +  TCP $VideoPort (PC screen preview)"
+} else {
+    Write-Host "  UDP $Port (controller)"
+}
 Write-Host "  Profile: Any (Wi-Fi, Bluetooth PAN and USB tethering)"

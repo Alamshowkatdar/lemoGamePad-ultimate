@@ -24,8 +24,11 @@
     <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
     <uses-feature android:name="android.hardware.bluetooth" android:required="false" />
 
+    <!-- allowBackup stays off: the prefs hold this phone's controller
+         identity token. Restoring it onto another phone would make two devices
+         claim the same PC slot; a fresh token is generated on first launch. -->
     <application
-        android:allowBackup="true"
+        android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:hardwareAccelerated="true"

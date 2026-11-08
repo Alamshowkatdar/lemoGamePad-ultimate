@@ -86,7 +86,13 @@ def main() -> int:
         print(f"SKIP: {reason}")
         return 2
 
-    assert srv.create_virtual_pad("x360").__class__ is LinuxVirtualPad
+    probe = srv.create_virtual_pad("x360")
+    try:
+        assert probe.__class__ is LinuxVirtualPad
+    finally:
+        # create_virtual_pad() really creates a /dev/uinput device; close it
+        # instead of leaking one device per test run.
+        probe.close()
 
     rumble = []
     pad = LinuxVirtualPad("x360", on_rumble=lambda small, large: rumble.append((small, large)))
