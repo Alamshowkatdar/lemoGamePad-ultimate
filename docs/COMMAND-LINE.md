@@ -8,7 +8,7 @@
 lemoGamePad-server.exe                     # virtual Xbox 360 pad (best compatibility)
 lemoGamePad-server.exe --pad ds4           # virtual DualShock 4 instead
 lemoGamePad-server.exe --port 9999         # different control port (app setting must match)
-lemoGamePad-server.exe --max-phones 8      # allow 1-8 phones at once (default 4)
+lemoGamePad-server.exe --max-phones 8      # allow 1-8 phones at once (default 8)
 lemoGamePad-server.exe --no-rumble         # do not forward rumble to the phone
 lemoGamePad-server.exe --no-video          # disable the PC screen stream
 lemoGamePad-server.exe --no-qr             # do not print the pairing QR code
@@ -26,6 +26,15 @@ On Linux use `python3 vpad_server.py` with the same options (or the built
 The console shows the PC IPs, the pairing QR, one line per connected phone
 (slot, address, packets/second, battery), the idle state and the slot limit.
 `Ctrl+C`, `Ctrl+Break` or closing the window quits and unplugs every pad.
+
+**Eight phones on Windows.** XInput, the API most Windows games use for
+controllers, has a hard limit of four pads. With the default `x360` backend the
+server therefore emulates four Xbox 360 pads and automatically switches pads
+5–8 to DualShock 4/HID, which DirectInput and Raw Input games can see. If a
+game lists only four controllers, that is the game's XInput limit, not the
+server: use `--pad ds4` (all eight as DirectInput) or a game/emulator with
+DirectInput support. Linux has no such limit and can use all eight Xbox 360
+pads.
 
 **Why Xbox 360 and not a literal DualShock 3?** Windows has no built-in DS3
 driver; a true DS3 needs a kernel driver (DsHidMini). Games and emulators

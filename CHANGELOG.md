@@ -4,6 +4,13 @@ Newest first. The reasoning behind each release is in [`docs/REVIEW.md`](docs/RE
 
 ## Unreleased
 
+- **Eight phones works out of the box** — `--max-phones` now defaults to `8`
+  instead of `4`, so the fifth phone is no longer silently ignored. On Windows
+  the first four pads stay Xbox 360/XInput; pads 5–8 automatically use the
+  DualShock 4/HID backend, because Windows' XInput API itself exposes only four
+  controllers. XInput-only games still see four pads; DirectInput/Raw Input
+  games, emulators and Linux can use all eight. The console banner now names
+  the mixed backends and reminds you of the XInput limit.
 - **Multiple layouts** — the pad can now remember several arrangements. In
   settings → **LAYOUTS**, use **SAVE AS…** (also available as **SAVE AS** in the
   edit toolbar) to name the current control positions, sizes and hidden

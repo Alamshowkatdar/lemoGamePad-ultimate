@@ -1052,9 +1052,11 @@ class Server:
     one [PadSlot]; pads are created lazily on the first input packet and are
     reused after that so the controller order in games stays stable.
 
-    Eight is the supported maximum. Windows games that read XInput still see
-    only four pads (an XInput limitation); extra slots are useful with the
-    ``ds4`` pad type, DirectInput/Raw Input games and on Linux.
+    Eight is the supported maximum and the default. Windows' XInput API still
+    exposes only four pads; with the default ``x360`` backend, slots 5-8
+    automatically use the DualShock 4/HID backend so they remain usable by
+    DirectInput/Raw Input games and emulators. XInput-only games stay capped at
+    four, which is a Windows limit rather than a server limit.
     """
 
     # The CLI/storage limit. Raising it further needs no protocol change, but
@@ -1075,6 +1077,28 @@ class Server:
     # controller slot with one spoofed packet.
     ADDRESS_GRACE = 1.5
 
+    @staticmethod
+    def _slot_kinds(pad_kind: str, count: int, windows: Optional[bool] = None) -> list:
+        """
+        Backend name for each controller slot.
+
+        Windows' XInput API exposes exactly four pads, so on Windows a request
+        for more than four phones keeps Xbox 360 pads for P1-P4 and switches
+        P5-P8 to the DualShock 4/HID backend. Those extra pads still appear to
+        DirectInput/Raw Input games and emulators; XInput-only games remain
+        capped at four by Windows itself. Linux has no such ceiling, so every
+        slot keeps the requested backend.
+
+        [windows] exists so the choice can be tested on any platform.
+        """
+        if windows is None:
+            windows = os.name == "nt"
+        kinds = [pad_kind] * count
+        if windows and pad_kind == "x360" and count > 4:
+            for index in range(4, count):
+                kinds[index] = "ds4"
+        return kinds
+
     def __init__(
         self,
         port: int,
@@ -1086,16 +1110,17 @@ class Server:
         video_quality: int = 50,
         video_enabled: bool = True,
         qr_enabled: bool = True,
-        max_phones: int = 4,
+        max_phones: int = 8,
     ):
         self.port = port
         self.pad_kind = pad_kind
         self.release_after = release_after
         self.max_phones = max(1, min(int(max_phones), self.MAX_PHONES))
+        self.slot_kinds = self._slot_kinds(pad_kind, self.max_phones)
         self.lock = threading.RLock()
         self.peers: dict[int, Peer] = {}
         self.slots = [
-            PadSlot(index, pad_kind, self._slot_rumble)
+            PadSlot(index, self.slot_kinds[index], self._slot_rumble)
             for index in range(self.max_phones)
         ]
         # Create the first pad up front so a missing driver is reported in the
@@ -1646,7 +1671,15 @@ class Server:
     # ------------------------------------------------------------------ display
     def _banner_lines(self):
         ips = local_ips()
-        pad_name = "DualShock 4" if self.pad_kind == "ds4" else "Xbox 360"
+        mixed = len(set(self.slot_kinds)) > 1
+        if mixed:
+            first_ds4 = self.slot_kinds.index("ds4") + 1
+            pad_name = (
+                f"Xbox 360 (P1-{first_ds4 - 1}) + "
+                f"DualShock 4 (P{first_ds4}-P{self.max_phones})"
+            )
+        else:
+            pad_name = "DualShock 4" if self.pad_kind == "ds4" else "Xbox 360"
         lines = [
             "",
             f"  lemoGamePad ultimate  -  virtual {pad_name} gamepad",
@@ -1662,6 +1695,10 @@ class Server:
         else:
             lines.append("  Screen stream: disabled")
         lines.append(f"  Controllers  : up to {self.max_phones} phones at once")
+        if mixed:
+            lines.append(
+                "  Pads 5-8     : DS4/DirectInput (XInput only allows four pads)"
+            )
         if os.name == "nt":
             driver = "OK (virtual gamepad driver installed)"
             if not _vigem_installed():
@@ -2380,8 +2417,8 @@ def main(argv=None) -> int:
     ap.add_argument(
         "--max-phones",
         type=int,
-        default=4,
-        help="how many phones can share this PC at once, 1-8 (default 4)",
+        default=8,
+        help="how many phones can share this PC at once, 1-8 (default 8)",
     )
     ap.add_argument("--no-rumble", action="store_true", help="do not forward rumble to the phone")
     ap.add_argument("--no-video", action="store_true", help="disable the PC screen stream")

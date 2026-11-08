@@ -50,8 +50,10 @@ either, only access to `/dev/uinput`.
   or P1–P8. A connected phone moves to the chosen pad without reconnecting; a
   busy pad falls back to the next free one and is retried until it frees up.
   The status pill shows the pad the PC actually assigned.
-- **Up to eight phones** — `--max-phones 1`…`8`. XInput games still see four
-  pads; slots 5–8 work with `--pad ds4`, DirectInput/Raw Input titles and Linux.
+- **Up to eight phones** — `--max-phones 1`…`8`, now defaulting to 8. On Windows
+  pads 1–4 are Xbox 360/XInput and pads 5–8 automatically use DualShock 4/HID;
+  XInput-only games still see four pads, while DirectInput/Raw Input games,
+  emulators and Linux can use all eight.
 - **PC hardening** — partial video writes are framed safely, a silent viewer no
   longer stalls others, token moves need the old address to go quiet, and the
   log, IP cache and timer stay off the receive path.

@@ -361,6 +361,16 @@ def test_reconnect(server, phones):
         phone.close()
 
 
+def test_slot_kinds():
+    """P5-P8 fall back to DS4 on Windows; Linux keeps every requested pad."""
+    win8 = srv.Server._slot_kinds("x360", 8, windows=True)
+    assert win8 == ["x360"] * 4 + ["ds4"] * 4, win8
+    assert srv.Server._slot_kinds("x360", 4, windows=True) == ["x360"] * 4
+    assert srv.Server._slot_kinds("ds4", 8, windows=True) == ["ds4"] * 8
+    assert srv.Server._slot_kinds("x360", 8, windows=False) == ["x360"] * 8
+    print("  slot backends ok: P5-P8 use DS4 only on Windows")
+
+
 def test_max_phones_cap():
     """The CLI advertises eight; the constructor must clamp to exactly that."""
     port = free_udp_port()
@@ -373,6 +383,14 @@ def test_max_phones_cap():
         print("  max-phones cap ok: 8 slots")
     finally:
         probe.shutdown()
+
+    port = free_udp_port()
+    default = srv.Server(port, "x360", video_enabled=False, qr_enabled=False)
+    try:
+        assert default.max_phones == 8, default.max_phones
+        print("  default slots ok: 8 phones out of the box")
+    finally:
+        default.shutdown()
 
 
 def start_isolated_server(max_phones=4, peer_timeout=6.0):
@@ -479,6 +497,7 @@ def main() -> int:
     phones = []
     try:
         print("lemoGamePad multi-phone test")
+        test_slot_kinds()
         test_max_phones_cap()
         test_requested_slot()
         test_discovery(server, port)

@@ -409,3 +409,39 @@ before experimenting.
 - Android `:app:assembleDebug` builds after adding the store, dialogs and card.
 - Manual checks expected: save two layouts, switch between them, edit the active
   one and switch away/back, delete the active one, and restart the app.
+
+---
+
+## Eight phones by default (unreleased)
+
+### Why
+
+1.5.0 could hold eight phones, but `--max-phones` still defaulted to four. A
+fifth phone was therefore rejected unless the user knew to pass the flag, which
+looks exactly like "eight-player support does not work".
+
+There is also a separate Windows limit that cannot be coded away: XInput, the
+API most PC games use, exposes only four controllers. Creating eight XInput
+devices is possible in ViGEm, but the game can never open more than four.
+
+### Design
+
+- **Default 8.** The constructor and the command line now default to eight
+  slots. Pads are still created lazily, so unused slots cost nothing.
+- **Mixed backends on Windows.** With the default `--pad x360`, slots 1–4 stay
+  Xbox 360/XInput and slots 5–8 automatically use the DualShock 4/HID backend.
+  The extra pads are visible to DirectInput, Raw Input, emulators and tools
+  such as Steam, even though XInput-only titles still stop at four. `--pad ds4`
+  still makes all eight DirectInput devices; Linux keeps eight Xbox 360 evdev
+  pads.
+- **Honest banner.** When the mix is active the header names both backends and
+  prints `Pads 5-8 : DS4/DirectInput (XInput only allows four pads)`, so the
+  four-pad result in an XInput game is explained rather than silent.
+
+### Tests
+
+- `pc/test_multi.py` asserts the default is eight, the cap is still eight, the
+  Windows mix is exactly four `x360` + four `ds4`, and Linux keeps eight `x360`
+  slots.
+- The existing multi-phone, slot-selection, rumble, idle and reconnect tests
+  still pass.

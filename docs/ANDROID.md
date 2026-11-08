@@ -150,12 +150,14 @@ Install the APK on the other phones and pair them the same way.
   **P1**…**P8**. A free pad is assigned immediately; a busy one falls back to the
   next free pad and the phone moves over as soon as that pad frees up. The
   status pill and the slot line show the pad the PC actually assigned.
-- Default limit is **4 phones**; change it with `--max-phones 1` … `--max-phones 8`.
+- The default is **8 phones**; lower it with `--max-phones 1` … `--max-phones 8`.
 - A phone beyond the limit is ignored and the console logs
   `ignored <ip>: all N controller slots are in use`.
-- Windows games that read **XInput** still see at most four pads (an XInput
-  limit). Slots 5-8 are useful with `--pad ds4`, DirectInput/Raw Input titles,
-  emulators and on Linux.
+- Windows games that read **XInput** still see at most four pads (a Windows API
+  limit). With the default `x360` backend, pads 5–8 automatically use
+  DualShock 4/HID, which DirectInput/Raw Input games and emulators can use;
+  `--pad ds4` makes all eight DirectInput devices. Linux can use all eight
+  Xbox 360 pads.
 - Each phone keeps its slot (and its in-game player number) for as long as the
   server runs. A phone that drops off and reconnects returns as the same player.
 - Rumble is routed to the correct phone only.

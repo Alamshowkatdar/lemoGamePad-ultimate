@@ -49,7 +49,8 @@ Linux and Android have their own guides:
    ----------------------------------------------------------
    Control port : 9876 (UDP)
    Screen stream: 9877 (TCP)
-   Controllers  : up to 4 phones at once
+   Controllers  : up to 8 phones at once
+   Pads 5-8     : DS4/DirectInput (XInput only allows four pads)
    ViGEmBus     : OK (virtual gamepad driver installed)
    PC IP        : 192.168.1.23
    Firewall     : OK (UDP 9876 / TCP 9877 allowed)
@@ -59,8 +60,10 @@ Linux and Android have their own guides:
    and prints a **QR code** you can scan from the phone. Leave this window open
    while you play.
 
-   The default is 4 controller slots. Add `--max-phones 8` for up to eight
-   phones; Windows games that read XInput still see at most four pads.
+   The default is 8 controller slots. Windows games that read XInput still see
+   at most four pads; pads 5–8 automatically use the DualShock 4/HID backend so
+   DirectInput/Raw Input games and emulators can use all eight. Use
+   `--max-phones 4` if you want the old limit.
 
 That is the whole PC install. There is **no Python, no pip, no driver hunting,
 no firewall script** needed on a normal machine.
