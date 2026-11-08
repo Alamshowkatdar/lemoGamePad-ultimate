@@ -2,7 +2,7 @@
 
 Newest first. The reasoning behind each release is in [`docs/REVIEW.md`](docs/REVIEW.md).
 
-## Unreleased
+## 1.6.0
 
 - **Eight phones works out of the box** — `--max-phones` now defaults to `8`
   instead of `4`, so the fifth phone is no longer silently ignored. On Windows

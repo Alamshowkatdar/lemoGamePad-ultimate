@@ -1,4 +1,4 @@
-# Review notes — 1.3.6 / 1.3.7 / 1.4.0 / 1.5.0
+# Review notes — 1.3.6 / 1.3.7 / 1.4.0 / 1.5.0 / 1.6.0
 
 A pass over the whole app (Kotlin sources, manifest, Gradle files, CI) focused on
 bugs, UI smoothness, and making the phone-to-phone Bluetooth gamepad honest.
@@ -7,7 +7,10 @@ bugs, UI smoothness, and making the phone-to-phone Bluetooth gamepad honest.
 mapping (see [Linux face buttons (1.3.7.2)](#linux-face-buttons-1372)); 1.4.0
 takes a latency pass over both halves (see
 [Latency pass (1.4.0)](#latency-pass-140)); 1.5.0 adds eight-player support and
-per-phone slot selection (see [Player slots (1.5.0)](#player-slots-150)).
+per-phone slot selection (see [Player slots (1.5.0)](#player-slots-150)); 1.6.0
+adds saved layouts and makes the eight slots the default (see
+[Layout presets (1.6.0)](#layout-presets-160) and
+[Eight phones by default (1.6.0)](#eight-phones-by-default-160)).
 This file records what was found and what changed, so the reasoning does not get
 lost between releases.
 
@@ -373,7 +376,7 @@ now lets each phone ask for a pad directly.
 
 ---
 
-## Layout presets (unreleased)
+## Layout presets (1.6.0)
 
 ### Why
 
@@ -412,7 +415,7 @@ before experimenting.
 
 ---
 
-## Eight phones by default (unreleased)
+## Eight phones by default (1.6.0)
 
 ### Why
 
