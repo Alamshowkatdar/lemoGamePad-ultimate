@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import io
 import os
+import shlex
 import socket
 import stat
 import struct
@@ -21,17 +22,17 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import vpad_server as srv  # noqa: E402
 from PIL import Image  # noqa: E402
 
-FAKE_GRIM = """#!/usr/bin/env python3
+FAKE_GRIM = """#!{python}
 import sys
 w, h = 64, 48
 sys.stdout.buffer.write(b"P6\\n%d %d\\n255\\n" % (w, h) + bytes([200, 30, 30]) * (w * h))
-"""
+""".format(python=sys.executable)
 
-FAKE_BROKEN = """#!/usr/bin/env python3
+FAKE_BROKEN = """#!{python}
 import sys
 sys.stderr.write("compositor does not support this protocol\\n")
 sys.exit(1)
-"""
+""".format(python=sys.executable)
 
 
 def write_tool(folder: str, name: str, body: str) -> None:
@@ -102,7 +103,11 @@ def test_wayland_uses_grim() -> None:
 def test_broken_tool_is_skipped() -> None:
     with tempfile.TemporaryDirectory() as bin_dir:
         write_tool(bin_dir, "grim", FAKE_BROKEN)
-        write_tool(bin_dir, "spectacle", "#!/bin/sh\nexec python3 -c \"from PIL import Image; Image.new('RGB',(40,30),(5,6,7)).save('$5')\"\n")
+        spectacle = (
+            "#!/bin/sh\nexec {python} -c \"from PIL import Image; "
+            "Image.new('RGB',(40,30),(5,6,7)).save('$5')\"\n"
+        ).format(python=shlex.quote(sys.executable))
+        write_tool(bin_dir, "spectacle", spectacle)
         with Env(PATH=bin_dir + os.pathsep + os.environ["PATH"], XDG_SESSION_TYPE="wayland", LEMO_CAPTURE=None):
             capture, notes = srv.open_screen_capture()
             try:

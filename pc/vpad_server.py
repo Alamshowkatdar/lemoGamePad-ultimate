@@ -45,7 +45,7 @@ import threading
 import time
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 
 MAGIC = b"VPAD"
@@ -1205,7 +1205,6 @@ class Server:
         if len(data) < HEADER.size:
             return
         _, _, _, seq, token = HEADER.unpack_from(data)
-        now = time.time()
 
         # Echo the phone's own token when it already has one: a phone that
         # re-pairs (or switches Wi-Fi -> USB) must keep its slot instead of

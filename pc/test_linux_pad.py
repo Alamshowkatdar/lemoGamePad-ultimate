@@ -19,7 +19,6 @@ if not sys.platform.startswith("linux"):
     print("Linux only - nothing to do")
     raise SystemExit(0)
 
-import evdev
 from evdev import InputDevice, ecodes as e
 
 import linux_pad
