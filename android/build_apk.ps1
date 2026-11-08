@@ -55,12 +55,12 @@ try {
     $onPath = Get-Command gradle -ErrorAction SilentlyContinue
     if ($onPath) {
         $gradleCmd = $onPath.Source
-    } elseif (Test-Path (Join-Path $env:USERPROFILE "gradle-8.9\bin\gradle.bat")) {
-        $gradleCmd = Join-Path $env:USERPROFILE "gradle-8.9\bin\gradle.bat"
+    } elseif (Test-Path (Join-Path $env:USERPROFILE "gradle-9.8.2\bin\gradle.bat")) {
+        $gradleCmd = Join-Path $env:USERPROFILE "gradle-9.8.2\bin\gradle.bat"
     } elseif (Test-Path ".\gradlew.bat") {
         $gradleCmd = ".\gradlew.bat"
     } else {
-        throw "No Gradle found. Install Gradle 8.9+ or keep the gradle wrapper files."
+        throw "No Gradle found. Install Gradle 9.8+ or keep the gradle wrapper files."
     }
     Write-Host "Gradle: $gradleCmd"
     Write-Host ""
