@@ -143,11 +143,13 @@ jobs:
       - name: Download release assets, checksum, upload
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.event.release.tag_name }}
         run: |
           set -euo pipefail
           mkdir -p assets
-          gh release download "$RELEASE_TAG" --dir assets --clobber \
+          # This job has no checkout, so tell gh which repository to use.
+          gh release download "$RELEASE_TAG" --repo "$GH_REPO" --dir assets --clobber \
             --pattern 'lemoGamePad-*' --pattern 'install-linux.sh'
           cd assets
 
@@ -167,4 +169,4 @@ jobs:
 
           sha256sum "${files[@]}" > SHA256SUMS.txt
           cat SHA256SUMS.txt
-          gh release upload "$RELEASE_TAG" SHA256SUMS.txt --clobber
+          gh release upload "$RELEASE_TAG" SHA256SUMS.txt --repo "$GH_REPO" --clobber
