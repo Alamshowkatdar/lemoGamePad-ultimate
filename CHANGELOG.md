@@ -2,7 +2,7 @@
 
 Newest first. The reasoning behind each release is in [`docs/REVIEW.md`](docs/REVIEW.md).
 
-## Unreleased
+## 1.5.0
 
 - **Up to eight phones** — `--max-phones` now accepts `1`…`8` (default stays
   `4`). Windows XInput games still see four pads; slots 5-8 are useful with

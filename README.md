@@ -13,7 +13,7 @@ by **Alam showkat**
 
 [**Download the latest release →**](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) · [Report an issue](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/issues)
 
-**App source version:** 1.4.0. Download the signed APK and the Windows/Linux server from the [latest release](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) — use **1.3.7.2 or newer** on Linux, which fixes the swapped X/Y face buttons. The release workflow also publishes a `SHA256SUMS.txt` so you can verify your download.
+**App source version:** 1.5.0. Download the signed APK and the Windows/Linux server from the [latest release](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) — use **1.3.7.2 or newer** on Linux, which fixes the swapped X/Y face buttons. The release workflow also publishes a `SHA256SUMS.txt` so you can verify your download.
 
 ---
 
@@ -44,23 +44,23 @@ either, only access to `/dev/uinput`.
 > **lemoGamePad ultimate™** — trademark of **Alam showkat**.
 > App package: `com.alamshowkat.lemogamepad`.
 
-### What's new in 1.4.0
+### What's new in 1.5.0
 
-- **Steadier latency** — the PC now collapses a burst of queued packets into one
-  update at the newest position instead of replaying every old one, discards
-  out-of-order packets, and never lets the console window stall the input path.
-  The phone sends the moment the pad changes instead of polling every 7 ms,
-  holds a low-latency Wi-Fi lock while connected, and marks its packets
-  low-delay.
-- **See the link, not just guess at it** — settings show round-trip average,
-  min, max, jitter and uplink loss, plus a sparkline of the last ~30 seconds.
-  The status pill also shows loss and jitter.
-- **Input rate modes** — **ECO**, **STANDARD** (default, wake on change) and
-  **TURBO** (continuous 250 Hz) in settings.
-- **Stick precision curve** — calm small corrections without reducing full
-  deflection.
-- **Vibration strength** — scale game rumble from 0 to 100 %.
-- Wire-compatible with 1.3 apps and servers.
+- **Choose your player** — the Android settings sheet has **PLAYER SLOT**: AUTO
+  or P1–P8. A connected phone moves to the chosen pad without reconnecting; a
+  busy pad falls back to the next free one and is retried until it frees up.
+  The status pill shows the pad the PC actually assigned.
+- **Up to eight phones** — `--max-phones 1`…`8`. XInput games still see four
+  pads; slots 5–8 work with `--pad ds4`, DirectInput/Raw Input titles and Linux.
+- **PC hardening** — partial video writes are framed safely, a silent viewer no
+  longer stalls others, token moves need the old address to go quiet, and the
+  log, IP cache and timer stay off the receive path.
+- **Safer helpers** — the ViGEm installer is re-hashed before UAC, the firewall
+  helper runs from System32, and ghost-pad cleanup only touches ViGEm devices.
+- **Android fixes** — screen preview, QR scanner and rumble shut down cleanly,
+  identity tokens use `SecureRandom`, rebinds are synchronized, and ports are
+  clamped so the video stream cannot target an invalid port.
+- Wire-compatible with 1.4 apps and servers.
 
 See the [changelog](CHANGELOG.md) for older releases and
 [`docs/REVIEW.md`](docs/REVIEW.md) for the reasoning behind them.
@@ -115,4 +115,4 @@ licenses are listed in [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md).
 
 ---
 
-**lemoGamePad ultimate™ © Alam showkat** · v1.4.0
+**lemoGamePad ultimate™ © Alam showkat** · v1.5.0

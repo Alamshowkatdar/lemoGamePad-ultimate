@@ -1,4 +1,4 @@
-# Review notes — 1.3.6 / 1.3.7 / 1.4.0
+# Review notes — 1.3.6 / 1.3.7 / 1.4.0 / 1.5.0
 
 A pass over the whole app (Kotlin sources, manifest, Gradle files, CI) focused on
 bugs, UI smoothness, and making the phone-to-phone Bluetooth gamepad honest.
@@ -6,7 +6,8 @@ bugs, UI smoothness, and making the phone-to-phone Bluetooth gamepad honest.
 [Linux receiver (1.3.7)](#linux-receiver-137); 1.3.7.2 fixes its face-button
 mapping (see [Linux face buttons (1.3.7.2)](#linux-face-buttons-1372)); 1.4.0
 takes a latency pass over both halves (see
-[Latency pass (1.4.0)](#latency-pass-140)).
+[Latency pass (1.4.0)](#latency-pass-140)); 1.5.0 adds eight-player support and
+per-phone slot selection (see [Player slots (1.5.0)](#player-slots-150)).
 This file records what was found and what changed, so the reasoning does not get
 lost between releases.
 
@@ -330,3 +331,42 @@ versa.
 - `pc/test_multi.py` — unchanged, still passes (slot limit, routing, idle
   release, reconnect).
 - Compile check: `python3 -m py_compile pc/*.py`.
+
+---
+
+## Player slots (1.5.0)
+
+### Why
+
+With more than four phones, connection order decided the player number. A phone
+that joined late could not become player 2 without reconnecting everyone, and
+phones that moved between Wi-Fi/USB could shuffle the order. The settings sheet
+now lets each phone ask for a pad directly.
+
+### Design
+
+- **One extra byte on INPUT.** `want_pad` follows the existing pad-type byte:
+  `0` keeps the old automatic behaviour, `1`…`8` requests P1…P8. It is optional,
+  so 1.5 phones work with 1.4 servers and 1.5 servers still accept 1.4 phones.
+- **Prefer, do not steal.** At registration a free requested pad is used.
+  A busy pad falls back to the next free one; the request is retried on later
+  packets, so the phone moves as soon as that pad frees up. Another phone's live
+  pad is never taken.
+- **Live moves.** An already-connected phone can change its request from the
+  settings sheet. The server neutralises and releases the old pad, assigns the
+  new one, and logs the move. The sequence/position state is preserved, so the
+  first packet on the new pad is not treated as a duplicate.
+- **Assignment feedback.** PONG appends the assigned pad after the loss field.
+  The app shows it in the status pill and next to the P1–P8 selector, including
+  the “P3 is busy — using P5” case.
+- **Cap.** `MAX_PHONES` is 8 and the CLI/storage clamp uses it. XInput still
+  exposes four pads on Windows; slots 5–8 are for `--pad ds4`, DirectInput/Raw
+  Input and Linux.
+
+### Tests
+
+- `pc/test_multi.py` — requested P3 lands on slot 3, PONG reports it, a second
+  request falls back, a connected phone moves live, and an occupied pad is not
+  stolen.
+- Android `:app:assembleDebug` still builds; the selector is persisted in
+  `PrefsKeys.PLAYER_SLOT` and sent immediately when changed.
