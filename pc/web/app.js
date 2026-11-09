@@ -1671,7 +1671,7 @@
   });
 
   // ------------------------------------------------------------------ network
-  const VERSION = "1.6.6";
+  const VERSION = "1.6.7";
   let socket = null;
   let connected = false;
   let manualOffline = false;
@@ -2857,7 +2857,12 @@
 
   function bindDialogs() {
     $("#settings-close").addEventListener("click", closeSettings);
-    scrim.addEventListener("click", (event) => {
+    // Close on pointerdown, not click. The sheet is opened from the pad's
+    // pointerup handler, and the browser dispatches a compatibility click for
+    // that same tap afterwards. By then the scrim is visible but the sheet is
+    // still sliding in, so a click listener hit the scrim and closed the sheet
+    // instantly. A pointerdown can only happen on the next gesture.
+    scrim.addEventListener("pointerdown", (event) => {
       if (event.target === scrim) closeSettings();
     });
 

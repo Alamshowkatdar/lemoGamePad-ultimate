@@ -1,4 +1,4 @@
-# Review notes — 1.3.6 / 1.3.7 / 1.4.0 / 1.5.0 / 1.6.0 / 1.6.1 / 1.6.2 / 1.6.3 / 1.6.4 / 1.6.5 / 1.6.6
+# Review notes — 1.3.6 / 1.3.7 / 1.4.0 / 1.5.0 / 1.6.0 / 1.6.1 / 1.6.2 / 1.6.3 / 1.6.4 / 1.6.5 / 1.6.6 / 1.6.7
 
 A pass over the whole app (Kotlin sources, manifest, Gradle files, CI) focused on
 bugs, UI smoothness, and making the phone-to-phone Bluetooth gamepad honest.
@@ -19,7 +19,9 @@ the console; 1.6.3 fixes asset loading so the page is styled and connects;
 full-screen toggle to the browser CONTROL CENTRE (see
 [Browser full screen (1.6.5)](#browser-full-screen-165)); 1.6.6 removes the
 250 ms wait before browser input reaches the virtual pad (see
-[Browser input wake-up (1.6.6)](#browser-input-wake-up-166)).
+[Browser input wake-up (1.6.6)](#browser-input-wake-up-166)); 1.6.7 fixes the
+CONTROL CENTRE closing on the tap that opened it (see
+[Control Centre tap-through (1.6.7)](#control-centre-tap-through-167)).
 This file records what was found and what changed, so the reasoning does not get
 lost between releases.
 
@@ -612,3 +614,48 @@ scheduling; the server is no longer the bottleneck.
 - `pc/test_web.py::test_browser_input_wakes_loop` sends one browser frame after
   the loop has parked in `select()` and asserts the flush arrives in under
   180 ms. Before the fix it waited the full timeout.
+
+## Control Centre tap-through (1.6.7)
+
+### Symptom
+
+Tapping the status pill to open the browser CONTROL CENTRE often did nothing.
+Holding the pill for a moment worked, which made it look as if opening the
+sheet required a long press.
+
+### Cause
+
+The pill is drawn on the pad canvas, so the sheet opens from the canvas
+`pointerup` handler:
+
+```js
+if (hudPointer === id) { ...; openSettings(); }
+```
+
+`openSettings()` unhides the full-screen backdrop synchronously. The browser
+then dispatches the compatibility `click` for the same tap. The sheet is still
+translated off-screen at that moment (it slides in over 260 ms), so the click
+lands on the backdrop. The backdrop's `click` listener then called
+`closeSettings()` — the sheet opened and closed within one gesture.
+
+A long press suppresses the compatibility click, which is why holding appeared
+to fix it.
+
+### Fix
+
+Bind the backdrop to `pointerdown` instead of `click`:
+
+```js
+scrim.addEventListener("pointerdown", (event) => {
+  if (event.target === scrim) closeSettings();
+});
+```
+
+The `pointerdown` that opened the sheet happened on the canvas while the
+backdrop was hidden, so it cannot reach this listener. Only a new gesture can
+close the sheet. The close button still works as before.
+
+### Tests
+
+- `pc/test_web.py` asserts the served `app.js` binds the backdrop with
+  `pointerdown`, so a later edit cannot quietly restore the click-through.

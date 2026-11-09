@@ -290,6 +290,9 @@ def test_page_and_key(server, port):
     assert status == 200 and "WebSocket" in script, status
     assert "createImageBitmap" in script and "lmgb.layouts" in script
     assert "requestFullscreen" in script and "fullscreenchange" in script
+    # The sheet opens on the pad's pointerup, so its backdrop must not close on
+    # the compatibility click that follows the same tap.
+    assert 'scrim.addEventListener("pointerdown"' in script
     status, icon = http_get(port, "/favicon.svg")
     assert status == 200 and "<svg" in icon, status
     print("  page/key ok: page needs the key, relative assets load")

@@ -2,6 +2,17 @@
 
 Newest first. The reasoning behind each release is in [`docs/REVIEW.md`](docs/REVIEW.md).
 
+## 1.6.7
+
+- **The browser CONTROL CENTRE opens on a normal tap** — the sheet is opened
+  from the pad's `pointerup` handler, but the browser then dispatches the
+  compatibility `click` for that same tap. By that point the backdrop was
+  visible while the sheet was still sliding in, so the click hit the backdrop
+  and closed the sheet instantly. A long press avoided the click, which made it
+  look like the pill had to be held. The backdrop now closes on `pointerdown`,
+  which can only belong to a new gesture.
+- `pc/test_web.py` checks that the backdrop uses `pointerdown`.
+
 ## 1.6.6
 
 - **Browser input no longer waits for the 250 ms UDP timeout** — the packet
