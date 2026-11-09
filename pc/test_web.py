@@ -165,9 +165,16 @@ def test_page_and_key(server, port):
     status, _body = http_get(port, "/")
     assert status == 401, status
 
-    status, script = http_get(port, f"/app.js?k={KEY}")
+    # The browser requests relative assets without the page's query string, so
+    # style.css/app.js must load without a key or the UI stays unstyled and the
+    # WebSocket client never runs.
+    status, css = http_get(port, "/style.css")
+    assert status == 200 and ".stick" in css, status
+    status, script = http_get(port, "/app.js")
     assert status == 200 and "WebSocket" in script, status
-    print("  page/key ok: page and assets require the pairing key")
+    status, icon = http_get(port, "/favicon.svg")
+    assert status == 200 and "<svg" in icon, status
+    print("  page/key ok: page needs the key, relative assets load")
 
 
 def test_input_ping_and_rumble(server, port):

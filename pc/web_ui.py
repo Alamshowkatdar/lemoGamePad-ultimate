@@ -216,21 +216,34 @@ class _Handler(BaseHTTPRequestHandler):
         parsed = urllib.parse.urlsplit(self.path)
         query = urllib.parse.parse_qs(parsed.query)
         given = (query.get("k") or [""])[0]
-        if not given or not hmac.compare_digest(given, self.web.key):
-            self._plain(
-                401,
-                "Pairing link is not valid.\n"
-                "Open the browser pad URL printed by lemoGamePad-server.\n",
-            )
-            return
+        has_key = bool(given) and hmac.compare_digest(given, self.web.key)
 
         if parsed.path == "/ws":
+            if not has_key:
+                self._plain(
+                    401,
+                    "Pairing link is not valid.\n"
+                    "Open the browser pad URL printed by lemoGamePad-server.\n",
+                )
+                return
             self._websocket()
             return
 
         item = STATIC.get(parsed.path)
         if item is None:
             self._plain(404, "Not found\n")
+            return
+
+        # The page itself needs the pairing key. Its CSS/JS/icons are public
+        # code and must load without one: a browser requests them relative to
+        # index.html and does not carry the query string over. Control is still
+        # protected by the key on the WebSocket.
+        if parsed.path in ("/", "/index.html") and not has_key:
+            self._plain(
+                401,
+                "Pairing link is not valid.\n"
+                "Open the browser pad URL printed by lemoGamePad-server.\n",
+            )
             return
         self._file(*item)
 

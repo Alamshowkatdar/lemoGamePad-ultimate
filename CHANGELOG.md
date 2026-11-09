@@ -2,6 +2,17 @@
 
 Newest first. The reasoning behind each release is in [`docs/REVIEW.md`](docs/REVIEW.md).
 
+## 1.6.3
+
+- **Fix: browser pad stuck on "Connecting…" with no UI** — the server required
+  the pairing key for every file, but a browser requests `style.css` and
+  `app.js` relative to the page and does not carry its `?k=` query string.
+  Those requests returned `401`, so the page rendered unstyled and the
+  WebSocket client never ran. Static assets now load without the key; the page
+  and the WebSocket still require it, and control stays protected.
+- `pc/test_web.py` now fetches the assets the way a browser does, so this
+  cannot regress silently.
+
 ## 1.6.2
 
 - **Scannable browser QR** — the console now draws the browser pad URL as a QR

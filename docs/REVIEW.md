@@ -1,4 +1,4 @@
-# Review notes — 1.3.6 / 1.3.7 / 1.4.0 / 1.5.0 / 1.6.0 / 1.6.1 / 1.6.2
+# Review notes — 1.3.6 / 1.3.7 / 1.4.0 / 1.5.0 / 1.6.0 / 1.6.1 / 1.6.2 / 1.6.3
 
 A pass over the whole app (Kotlin sources, manifest, Gradle files, CI) focused on
 bugs, UI smoothness, and making the phone-to-phone Bluetooth gamepad honest.
@@ -13,7 +13,7 @@ adds saved layouts and makes the eight slots the default (see
 [Eight phones by default (1.6.0)](#eight-phones-by-default-160)); 1.6.1 adds a
 browser gamepad served by the PC (see
 [Browser pad (1.6.1)](#browser-pad-161)); 1.6.2 adds a scannable browser QR in
-the console.
+the console; 1.6.3 fixes asset loading so the page is styled and connects.
 This file records what was found and what changed, so the reasoning does not get
 lost between releases.
 
@@ -483,3 +483,8 @@ internet requirement, so the page is served by the same Python process.
 - All existing PC suites still pass.
 - 1.6.2 prints the browser URL as a console QR through the same helper the
   phone pairing QR uses; the saved web PNGs still cover every LAN address.
+- 1.6.3 fixes a real-browser-only bug: requiring the key on every asset made
+  `style.css` and `app.js` return `401`, because a browser requests them
+  without the page's query string. Assets are public code and now load without
+  the key; the page and WebSocket still require it. `test_web.py` fetches the
+  assets exactly as a browser does.
