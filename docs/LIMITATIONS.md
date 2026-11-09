@@ -14,7 +14,9 @@
   devices. The PC screen preview still depends on the server's screen stream
   (`--no-video` disables it), and only a few viewers can share that stream.
 - Up to **8 phones per PC** (one virtual pad each; `--max-phones`, default 8).
-  Two phones cannot both be player 1. Windows games that read only XInput still
+  Two phones cannot both be player 1. A requested slot matches the controller
+  number the game sees, because every lower pad is created first. Windows games
+  that read only XInput still
   see at most four pads (a Windows API limit); with the default `x360` backend
   pads 5–8 are DualShock 4/HID devices for DirectInput/Raw Input games and
   emulators. `--pad ds4` makes all eight DirectInput devices; Linux can use all
@@ -35,4 +37,4 @@
 
 ---
 
-**lemoGamePad ultimate™ © Alam showkat** · v1.6.7
+**lemoGamePad ultimate™ © Alam showkat** · v1.6.8

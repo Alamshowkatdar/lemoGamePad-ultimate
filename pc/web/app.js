@@ -1671,7 +1671,7 @@
   });
 
   // ------------------------------------------------------------------ network
-  const VERSION = "1.6.7";
+  const VERSION = "1.6.8";
   let socket = null;
   let connected = false;
   let manualOffline = false;

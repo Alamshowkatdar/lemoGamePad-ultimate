@@ -64,7 +64,9 @@ Tap the status pill to open **CONTROL CENTRE**:
 - **Connection** — the server name, `--max-phones` limit and **PLAYER SLOT**:
   **AUTO** (next free pad) or **P1**–**P8**. A busy pad falls back to the next
   free one and is retried until it frees up; the sheet shows which pad is
-  actually in use.
+  actually in use. The number matches the controller the game sees, because
+  the server creates every lower pad first; a move to an unused slot creates
+  that pad too.
 - **Appearance** — the eight themes (Neon, Midnight, Violet, Crimson, Solar,
   Retro, Arctic, Mono) with a cross-fade when switching, PlayStation or
   Xbox face-button labels, and the **FULL SCREEN** toggle.
@@ -190,7 +192,7 @@ See [SECURITY.md](../SECURITY.md) for the full threat model.
 | `Pairing link is not valid` | The server restarted (new random key) or the `?k=` part was dropped. Copy the current URL or rescan the web QR. |
 | Page loads but the dot stays red | The WebSocket is blocked. Some guest / AP-isolation Wi-Fi networks block device-to-device traffic; use a normal network or USB tethering. |
 | No controller appears | All `--max-phones` slots are busy. Disconnect an idle phone or raise the limit (maximum eight). |
-| P1–P8 request is ignored | Another device already has that pad; the page falls back to the next free pad until it frees up. |
+| P1–P8 request is ignored | Another device already has that pad; the page falls back to the next free pad until it frees up. A free requested slot is honoured in order, so P5 is the game's fifth controller. |
 | Controls feel delayed | Prefer 5 GHz Wi-Fi and close background downloads. Try TURBO, and keep the tab in the foreground. |
 | Theme or layout did not persist | Private/incognito windows may block `localStorage`; the session still works. |
 | No vibration | iOS Safari has no Vibration API. On Android, check that the browser is allowed to vibrate. |

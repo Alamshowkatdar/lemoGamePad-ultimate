@@ -1157,6 +1157,10 @@ class Server:
         self.max_phones = max(1, min(int(max_phones), self.MAX_PHONES))
         self.slot_kinds = self._slot_kinds(pad_kind, self.max_phones)
         self.lock = threading.RLock()
+        # Serialises device creation. Games identify controllers by the order
+        # the OS enumerates them, so pads must be created from P1 upward even
+        # when two web tabs register at the same moment.
+        self._pad_lock = threading.Lock()
         self.peers: dict[int, Peer] = {}
         self.slots = [
             PadSlot(index, self.slot_kinds[index], self._slot_rumble)
@@ -1164,7 +1168,7 @@ class Server:
         ]
         # Create the first pad up front so a missing driver is reported in the
         # banner instead of the first time a phone presses a button.
-        self.slots[0].ensure_pad()
+        self._ensure_pads_through(0)
 
         self.qr_enabled = qr_enabled
         self.web_port = int(web_port) if web_port else port + 2
@@ -1307,6 +1311,27 @@ class Server:
         return self._ip_cache
 
     # ------------------------------------------------------------------- peers
+    def _ensure_pads_through(self, index: int) -> None:
+        """
+        Create every virtual pad from P1 up to [index], in slot order.
+
+        Games number their controllers by the order the OS enumerates them,
+        not by our labels: if a phone asks for P5 while no other pad exists,
+        creating only slot 5 would make it the game's second controller. The
+        lower pads are therefore created first. They stay alive for the
+        lifetime of the server, so the order does not change later.
+
+        [index] is a zero-based slot index and is clamped to the configured
+        slots. Creation is serialised because phone packets and browser
+        WebSocket threads can both register a peer.
+        """
+        if not self.slots:
+            return
+        last = max(0, min(int(index), len(self.slots) - 1))
+        with self._pad_lock:
+            for slot in self.slots[:last + 1]:
+                slot.ensure_pad()
+
     def _slot_of(self, peer: Peer) -> Optional[PadSlot]:
         with self.lock:
             if 0 <= peer.slot < len(self.slots):
@@ -1348,7 +1373,8 @@ class Server:
         a still-active address it does not own ("move").
         """
         moved_from = -1
-        ensure = None
+        ensure_index = None
+        is_new = False
         with self.lock:
             peer = self.peers.get(token)
             if peer is not None:
@@ -1378,48 +1404,49 @@ class Server:
                         target.peer = peer
                         peer.slot = target.index
                         peer.name = f"{peer.label} {target.index + 1}"
-                        ensure = target
-                return peer, False, ""
+                        ensure_index = target.index
+            else:
+                if len(self.peers) >= self.max_phones:
+                    return None, False, "full"
 
-            if len(self.peers) >= self.max_phones:
-                return None, False, "full"
+                slot = None
+                if 1 <= want_slot <= self.max_phones:
+                    wanted = self.slots[want_slot - 1]
+                    if wanted.peer is None:
+                        slot = wanted
+                if slot is None:
+                    slot = next((s for s in self.slots if s.peer is None), None)
+                if slot is None:
+                    return None, False, "full"
 
-            slot = None
-            if 1 <= want_slot <= self.max_phones:
-                wanted = self.slots[want_slot - 1]
-                if wanted.peer is None:
-                    slot = wanted
-            if slot is None:
-                slot = next((s for s in self.slots if s.peer is None), None)
-            if slot is None:
-                return None, False, "full"
-
-            peer = Peer(
-                token=token,
-                addr=addr,
-                name=f"{label} {slot.index + 1}",
-                label=label,
-                slot=slot.index,
-                last_seen=now,
-                rate_mark=0,
-                rate_mark_time=now,
-                web_send=web_send,
-            )
-            slot.peer = peer
-            self.peers[token] = peer
-            ensure = slot
+                peer = Peer(
+                    token=token,
+                    addr=addr,
+                    name=f"{label} {slot.index + 1}",
+                    label=label,
+                    slot=slot.index,
+                    last_seen=now,
+                    rate_mark=0,
+                    rate_mark_time=now,
+                    web_send=web_send,
+                )
+                slot.peer = peer
+                self.peers[token] = peer
+                ensure_index = slot.index
+                is_new = True
 
         # Creating a ViGEm/uinput device can take tens of milliseconds; do it
         # after releasing the lock so discovery/status/ping never wait for it.
-        # Only the receive thread registers peers, so this is not racy.
-        if ensure is not None:
-            ensure.ensure_pad()
+        # A move needs this too: a target slot that was never used has no pad,
+        # and _flush_inputs deliberately skips a slot without one.
+        if ensure_index is not None:
+            self._ensure_pads_through(ensure_index)
         if moved_from >= 0:
             self._log(
                 f"controller moved: {peer.describe()} "
                 f"(pad {moved_from + 1} -> {peer.slot + 1})"
             )
-        return peer, ensure is not None and moved_from < 0, ""
+        return peer, is_new, ""
 
     def _drop_peer(self, peer: Peer) -> None:
         with self.lock:

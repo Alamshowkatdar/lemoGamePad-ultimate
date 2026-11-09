@@ -2,6 +2,29 @@
 
 Newest first. The reasoning behind each release is in [`docs/REVIEW.md`](docs/REVIEW.md).
 
+## 1.6.8
+
+- **The player slot now matches the game's controller number** — pads were
+  created lazily on first use, so a request for **P5** while P1–P4 had never
+  connected created the game's *first* virtual controller, not its fifth.
+  Choosing P5 could therefore move the phone to the second or third pad in the
+  game. Every pad from P1 through the requested slot is now created in slot
+  order before the request is accepted, so the OS enumerates them as P1…P8.
+  Device creation is serialised with a pad lock because phone packets and
+  browser WebSocket threads can register at the same time.
+- **Moving to a slot that had never been used now works** — the move updated
+  the server's slot bookkeeping but returned before the target pad existed, and
+  the flush path deliberately skips a slot without a device, so input after the
+  move was silently dropped. A move now creates the target pad as well.
+- **Eight controllers verified** — eight simultaneous browser clients receive
+  P1–P8, and a live move from P1 to P8 keeps working. On Linux the server
+  creates eight distinct real pads (`/dev/input/event18`–`event25`). Windows
+  XInput-only games still see four (a Windows API limit); pads 5–8 are
+  DualShock 4/HID devices for DirectInput/Raw Input games and emulators, and
+  `--pad ds4` makes all eight DirectInput devices.
+- `pc/test_multi.py` gained `test_pad_creation_order` (P5 creates P1–P5 and not
+  P6–P8) and now asserts that a moved-to pad exists and receives input.
+
 ## 1.6.7
 
 - **The browser CONTROL CENTRE opens on a normal tap** — the sheet is opened

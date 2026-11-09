@@ -1,4 +1,4 @@
-# Review notes — 1.3.6 / 1.3.7 / 1.4.0 / 1.5.0 / 1.6.0 / 1.6.1 / 1.6.2 / 1.6.3 / 1.6.4 / 1.6.5 / 1.6.6 / 1.6.7
+# Review notes — 1.3.6 / 1.3.7 / 1.4.0 / 1.5.0 / 1.6.0 / 1.6.1 / 1.6.2 / 1.6.3 / 1.6.4 / 1.6.5 / 1.6.6 / 1.6.7 / 1.6.8
 
 A pass over the whole app (Kotlin sources, manifest, Gradle files, CI) focused on
 bugs, UI smoothness, and making the phone-to-phone Bluetooth gamepad honest.
@@ -21,7 +21,9 @@ full-screen toggle to the browser CONTROL CENTRE (see
 250 ms wait before browser input reaches the virtual pad (see
 [Browser input wake-up (1.6.6)](#browser-input-wake-up-166)); 1.6.7 fixes the
 CONTROL CENTRE closing on the tap that opened it (see
-[Control Centre tap-through (1.6.7)](#control-centre-tap-through-167)).
+[Control Centre tap-through (1.6.7)](#control-centre-tap-through-167)); 1.6.8
+makes a requested slot match the game's controller number and fixes moves to
+never-used pads (see [Player slot order (1.6.8)](#player-slot-order-168)).
 This file records what was found and what changed, so the reasoning does not get
 lost between releases.
 
@@ -659,3 +661,70 @@ close the sheet. The close button still works as before.
 
 - `pc/test_web.py` asserts the served `app.js` binds the backdrop with
   `pointerdown`, so a later edit cannot quietly restore the click-through.
+
+## Player slot order (1.6.8)
+
+### Symptom
+
+Two reports arrived together: selecting a different **PLAYER SLOT** in the app
+or the browser did not change the position in the game, and eight devices did
+not work. Choosing **P5** could put the phone on the game's second controller,
+and a move to a pad that had never been used produced no input at all.
+
+### Cause
+
+`PadSlot` created its device lazily on first input, and only the slot that won
+the request was created:
+
+```python
+if ensure is not None:
+    ensure.ensure_pad()
+```
+
+Games number controllers by the order the OS enumerates them, not by the
+server's labels. If P1–P4 had never connected, creating only slot 5 made that
+device the *first* controller the game saw. The same shortcut made P2 the
+first controller when it was the only phone connected. With several phones the
+order depended on whichever packet arrived first, so labels and game positions
+drifted apart.
+
+A live move had a second bug: `_register_peer` updated the slot maps and then
+returned early from the existing-peer branch, before any pad creation. The
+target slot therefore kept `pad is None`. `_flush_inputs` skips a slot without
+a device, so every packet after the move was dropped until the page or phone
+reconnected.
+
+### Fix
+
+- `_ensure_pads_through(index)` creates every pad from P1 up to the requested
+  slot, in slot order. The constructor calls it for P1 so a missing driver
+  still appears in the banner.
+- `_register_peer` runs it for a new peer and for a move, after releasing the
+  main lock so discovery, status and ping do not wait for ViGEm/uinput.
+- A dedicated `_pad_lock` serialises creation: phone packets and browser
+  WebSocket threads can both register peers, and two registrations creating
+  pads out of order would reintroduce the mismatch.
+- The existing-peer branch now falls through to the shared creation path, and
+  the `is_new` flag replaces the old `ensure is not None and moved_from < 0`
+  expression.
+
+Pads created for lower slots stay alive for the lifetime of the server, so the
+enumeration order cannot change when a phone leaves or reconnects.
+
+### Result
+
+- On Linux, eight requests create eight distinct real devices
+  (`/dev/input/event18`–`event25` in the test environment), and a live move
+  from P1 to P8 leaves the old slot empty and the new pad receiving input.
+- Eight simultaneous browser WebSocket clients receive P1–P8 in order.
+- Windows still exposes at most four pads to XInput-only games (a Windows API
+  limit). Pads 5–8 use the DS4/HID backend for DirectInput/Raw Input games and
+  emulators; `--pad ds4` makes all eight DirectInput devices.
+
+### Tests
+
+- `pc/test_multi.py::test_pad_creation_order` replaces the pad factory with a
+  fake and asserts that a P5 request creates exactly P1–P5, never P6–P8.
+- `test_requested_slot` now waits for the moved-to pad and sends a button
+  press, so a move that leaves `pad is None` fails instead of silently
+  dropping input.

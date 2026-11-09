@@ -400,6 +400,59 @@ def test_max_phones_cap():
         default.shutdown()
 
 
+def test_pad_creation_order():
+    """
+    A request for P5 must create P1..P5 in order, never only P5.
+
+    Games number controllers by the order the OS enumerates them, so creating
+    just the requested pad would hand P5 the game's first controller.
+    """
+    created = []
+    original = srv.create_virtual_pad
+
+    class FakePad:
+        def __init__(self):
+            self.ok = True
+            self.error = ""
+            self._last = srv.InputState()
+
+        def apply(self, state):
+            self._last = state
+
+        def close(self):
+            pass
+
+    def fake_create(kind, on_rumble=None):
+        pad = FakePad()
+        created.append(pad)
+        return pad
+
+    srv.create_virtual_pad = fake_create
+    server = None
+    try:
+        server = srv.Server(
+            free_udp_port(), "x360", video_enabled=False, qr_enabled=False,
+            max_phones=8,
+        )
+        # The constructor creates P1 up front so a missing driver shows in the
+        # banner.
+        assert len(created) == 1, len(created)
+
+        peer, fresh, reason = server._register_peer(
+            0x5EED, ("127.0.0.1", 5000), time.time(), want_slot=5
+        )
+        assert peer is not None and fresh and reason == "", (peer, fresh, reason)
+        assert peer.slot == 4, peer.slot
+        assert len(created) == 5, len(created)
+        assert all(slot.pad is not None for slot in server.slots[:5])
+        assert all(slot.pad is None for slot in server.slots[5:]), "created too many"
+        print("  pad order ok: P5 created P1-P5 first, no P6-P8")
+    finally:
+        srv.create_virtual_pad = original
+        if server is not None:
+            server.shutdown()
+
+
 def start_isolated_server(max_phones=4, peer_timeout=6.0):
     """Small server on its own socket, for tests that need a clean slot map."""
     port = free_udp_port()
@@ -463,6 +516,16 @@ def test_requested_slot():
                  message="connected phone did not move to P2")
         assert server.slots[2].peer is None, "the old pad was not released"
 
+        # A slot that was never used has no device yet. The move must create
+        # it, otherwise input sent after the move is silently dropped.
+        wait_for(lambda: server.slots[1].pad is not None, timeout=20.0,
+                 message="the moved-to pad was never created")
+        first.input(buttons=1 << CROSS)
+        wait_for(
+            lambda: pad_buttons(server, server.peers[first.token]) == 1 << CROSS,
+            message="the moved-to pad did not receive input",
+        )
+
         # A pad owned by another phone is never taken; the mover stays put.
         occupied = server.peers[second.token].slot + 1
         for _ in range(3):
@@ -513,6 +576,7 @@ def main() -> int:
         print("lemoGamePad multi-phone test")
         test_slot_kinds()
         test_max_phones_cap()
+        test_pad_creation_order()
         test_requested_slot()
         test_discovery(server, port)
         phones = list(test_two_pads(server, port))

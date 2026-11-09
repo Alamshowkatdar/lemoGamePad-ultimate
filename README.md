@@ -13,7 +13,7 @@ by **Alam showkat**
 
 [**Download the latest release →**](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) · [Report an issue](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/issues)
 
-**App source version:** 1.6.7. Download the signed APK and the Windows/Linux server from the [latest release](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) — use **1.3.7.2 or newer** on Linux, which fixes the swapped X/Y face buttons. The release workflow also publishes a `SHA256SUMS.txt` so you can verify your download.
+**App source version:** 1.6.8. Download the signed APK and the Windows/Linux server from the [latest release](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) — use **1.3.7.2 or newer** on Linux, which fixes the swapped X/Y face buttons. The release workflow also publishes a `SHA256SUMS.txt` so you can verify your download.
 
 ---
 
@@ -44,18 +44,19 @@ either, only access to `/dev/uinput`.
 > **lemoGamePad ultimate™** — trademark of **Alam showkat**.
 > App package: `com.alamshowkat.lemogamepad`.
 
-### What's new in 1.6.7
+### What's new in 1.6.8
 
-- **The CONTROL CENTRE opens on a normal tap** — the sheet is opened from the
-  pad's `pointerup`, and the browser's compatibility `click` for that same tap
-  used to land on the freshly shown backdrop while the sheet was still sliding
-  in, closing it again. A quick tap looked like it did nothing (a long press
-  happened to avoid the click). The backdrop now closes on `pointerdown`, which
-  can only belong to a new gesture.
-- **Everything from 1.6.6** — browser input applied within 1–2 ms instead of
-  waiting for the 250 ms UDP timeout, plus full screen and the rebuilt pad with
-  eight themes, PS/Xbox labels, player slots, latency graph, layout editing and
-  the PC screen preview.
+- **PLAYER SLOT now really picks that player** — a request for **P5** used to
+  create the game's *first* virtual pad if P1–P4 had never connected, so the
+  slot chips did not match the controller number in the game. Pads are now
+  created from P1 upward in slot order, and a live move to a never-used slot
+  also creates its pad instead of dropping input.
+- **Eight controllers** — eight phones or browser tabs now take P1–P8 on Linux
+  with eight distinct real pads. Windows games that read only XInput still see
+  four (a Windows API limit); pads 5–8 are DualShock 4/HID for
+  DirectInput/Raw Input games, and `--pad ds4` makes all eight DirectInput.
+- **Everything from 1.6.7** — CONTROL CENTRE opens on a normal tap, browser
+  input applies in 1–2 ms, plus full screen and the rebuilt pad.
 - Wire-compatible with 1.3 and later apps and servers.
 
 ### Highlights from 1.6.4
@@ -174,4 +175,4 @@ licenses are listed in [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md).
 
 ---
 
-**lemoGamePad ultimate™ © Alam showkat** · v1.6.7
+**lemoGamePad ultimate™ © Alam showkat** · v1.6.8

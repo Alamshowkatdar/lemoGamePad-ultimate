@@ -150,6 +150,10 @@ Install the APK on the other phones and pair them the same way.
   **P1**…**P8**. A free pad is assigned immediately; a busy one falls back to the
   next free pad and the phone moves over as soon as that pad frees up. The
   status pill and the slot line show the pad the PC actually assigned.
+- The chosen number matches the game's controller number: the server creates
+  every pad from P1 up to the requested slot first, so one phone asking for
+  **P5** still appears as the fifth controller rather than the first. A move to
+  a slot that was never used creates that pad before input continues.
 - The default is **8 phones**; lower it with `--max-phones 1` … `--max-phones 8`.
 - A phone beyond the limit is ignored and the console logs
   `ignored <ip>: all N controller slots are in use`.
