@@ -42,9 +42,11 @@ By design:
   **unauthenticated and unencrypted**. Anyone who can reach those ports on the
   PC can inject controller input or watch the screen preview.
 - The browser pad (TCP 9878) is also LAN-only. It is protected by a random
-  per-run pairing key in the URL and by an `Origin` check on the WebSocket, but
-  it runs over plain HTTP, so a device that can sniff the LAN or obtain the URL
-  can use it. Treat the key like a temporary password and restart the server to
+  per-run pairing key in the URL and by an `Origin` check on both WebSockets
+  (`/ws` for control and `/screen` for the preview), but it runs over plain
+  HTTP, so a device that can sniff the LAN or obtain the URL can use it or watch
+  the preview. The screen relay connects only to the local video server on
+  loopback. Treat the key like a temporary password and restart the server to
   rotate it.
 - The pairing token is an identity hint for controller-slot reuse, **not** a
   secret or an authentication mechanism.

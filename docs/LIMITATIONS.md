@@ -9,8 +9,10 @@
   the internet.
 - The browser pad is served over plain HTTP with a per-run key, and its rumble
   reaches the page only where the browser supports the Vibration API (Android
-  yes, iOS Safari no). It cannot show the PC screen preview; use the Android app
-  for that.
+  yes, iOS Safari no). Its themes, layouts and screen-preview position are
+  per-browser `localStorage` state, not shared with the Android app or other
+  devices. The PC screen preview still depends on the server's screen stream
+  (`--no-video` disables it), and only a few viewers can share that stream.
 - Up to **8 phones per PC** (one virtual pad each; `--max-phones`, default 8).
   Two phones cannot both be player 1. Windows games that read only XInput still
   see at most four pads (a Windows API limit); with the default `x360` backend
@@ -33,4 +35,4 @@
 
 ---
 
-**lemoGamePad ultimate™ © Alam showkat** · v1.6.3
+**lemoGamePad ultimate™ © Alam showkat** · v1.6.4

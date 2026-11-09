@@ -1,4 +1,4 @@
-# Review notes — 1.3.6 / 1.3.7 / 1.4.0 / 1.5.0 / 1.6.0 / 1.6.1 / 1.6.2 / 1.6.3
+# Review notes — 1.3.6 / 1.3.7 / 1.4.0 / 1.5.0 / 1.6.0 / 1.6.1 / 1.6.2 / 1.6.3 / 1.6.4
 
 A pass over the whole app (Kotlin sources, manifest, Gradle files, CI) focused on
 bugs, UI smoothness, and making the phone-to-phone Bluetooth gamepad honest.
@@ -13,7 +13,9 @@ adds saved layouts and makes the eight slots the default (see
 [Eight phones by default (1.6.0)](#eight-phones-by-default-160)); 1.6.1 adds a
 browser gamepad served by the PC (see
 [Browser pad (1.6.1)](#browser-pad-161)); 1.6.2 adds a scannable browser QR in
-the console; 1.6.3 fixes asset loading so the page is styled and connects.
+the console; 1.6.3 fixes asset loading so the page is styled and connects;
+1.6.4 rebuilds the page to match the Android pad and adds the screen preview
+(see [Browser pad parity (1.6.4)](#browser-pad-parity-164)).
 This file records what was found and what changed, so the reasoning does not get
 lost between releases.
 
@@ -488,3 +490,45 @@ internet requirement, so the page is served by the same Python process.
   without the page's query string. Assets are public code and now load without
   the key; the page and WebSocket still require it. `test_web.py` fetches the
   assets exactly as a browser does.
+
+## Browser pad parity (1.6.4)
+
+The browser page worked, but it was a simpler layout with one theme, a flat
+player selector and no screen preview. The Android pad had moved on, and the
+two halves should not feel like different products.
+
+### Design
+
+- **One renderer per platform, same model.** The page draws the pad on a single
+  canvas using the fractional node layout, geometry, spring press animation and
+  theme colours copied from `GamepadView`. The DOM is now only the settings
+  sheet, dialogs and the screen PiP.
+- **All eight themes, PS/Xbox labels.** The palette table mirrors `Theme.kt`,
+  including the light Arctic theme and the cross-fade used when switching.
+- **Settings parity.** The sheet mirrors `SettingsPanel`: status pill and
+  latency graph, CONNECT/RECONNECT/DISCONNECT, player-slot chips, deadzone,
+  curve, vibration on/off and strength, and input-rate modes.
+- **Layouts in the browser.** Drag to move, pinch to resize, hold to hide.
+  Named layouts are stored under `lmgb.layouts` as the same
+  `key:fx,fy,scale,hidden` snapshots, with DEFAULT/RESET/SHOW ALL and in-place
+  updates when a named layout is active. This is per-browser state, not a
+  replacement for the Android `LayoutStore`.
+- **Screen preview.** Browsers cannot open the phone's raw TCP video socket, so
+  `pc/web_ui.py` gained an authenticated `/screen` WebSocket. The relay connects
+  to `127.0.0.1:<video port>`, performs the `LGVQ` handshake, forwards binary
+  JPEG frames with a one-frame queue, and reconnects when the client changes
+  quality. The page draws them into a draggable canvas PiP with LOW/BALANCED/HIGH
+  and small/large sizes.
+- **Rate modes are honest.** The phone can send at 250 Hz; a background browser
+  tab cannot. ECO and STANDARD are change-only with a heartbeat and TURBO is
+  one update per animation frame (about 60 Hz), all documented in the sheet.
+
+### Tests
+
+- `pc/test_web.py` now checks the hello message, the new sheet markup and asset
+  content, the screen relay's unavailable/auth paths, and a fake TCP video
+  server that verifies quality negotiation, JPEG forwarding and a live quality
+  switch.
+- A headless DOM/canvas smoke run covers boot, theme and slot cycling, HUD
+  settings, a layout drag and save, and the screen toggle without a real browser.
+- All existing PC suites still pass.

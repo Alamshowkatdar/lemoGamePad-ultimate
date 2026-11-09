@@ -2,6 +2,35 @@
 
 Newest first. The reasoning behind each release is in [`docs/REVIEW.md`](docs/REVIEW.md).
 
+## 1.6.4
+
+- **Browser pad rebuilt to match the Android app** — the page now uses the same
+  canvas pad geometry and spring-press rendering as `GamepadView`, with all
+  eight themes and a cross-fade when switching, PlayStation/Xbox face labels,
+  the CONTROL CENTRE settings sheet, player-slot chips (AUTO/P1–P8), status
+  pill, latency graph and CONNECT / RECONNECT / DISCONNECT.
+- **Layout editing in the browser** — drag controls, pinch to resize and hold
+  to hide, then save named arrangements. DEFAULT/RESET/SHOW ALL and in-place
+  updates of an active layout behave like the Android **LAYOUTS** card. The
+  current layout, saved layouts and every setting persist in `localStorage` on
+  that browser only.
+- **PC screen preview** — the browser can now show the same JPEG stream as the
+  phone. A new authenticated `/screen` WebSocket relays raw TCP frames from the
+  local `VideoServer`, negotiates LOW/BALANCED/HIGH through `LGVQ`, coalesces
+  to the newest frame, reconnects after a drop or quality change, and supports
+  small/large sizes plus drag-to-move. It stays disabled when `--no-video` is
+  set or the stream is not running.
+- **Input-rate modes for the browser** — ECO is change-only with a 1 s
+  heartbeat, STANDARD is change-only with a 250 ms heartbeat, and TURBO sends
+  continuously at about 60 Hz. The server still receives changes immediately.
+- **Screen relay security** — `/screen` requires the same pairing key as the
+  pad and the same `Origin`/`Host` check. Static assets remain public so
+  relative `<link>`/`<script>` requests work; the page and both WebSockets stay
+  protected.
+- `pc/test_web.py` now covers the hello message, the new controls, screen
+  authentication and a fake video server that exercises the relay's quality
+  switch end to end.
+
 ## 1.6.3
 
 - **Fix: browser pad stuck on "Connecting…" with no UI** — the server required

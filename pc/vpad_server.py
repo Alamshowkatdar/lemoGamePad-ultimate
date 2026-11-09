@@ -1179,6 +1179,9 @@ class Server:
                 on_close=self._drop_web_peer,
                 on_token=self._new_web_token,
                 log=self._log,
+                server_name=socket.gethostname()[:32],
+                max_players=self.max_phones,
+                screen_info=self._screen_info,
             )
         self.video = None
         if video_enabled:
@@ -1425,6 +1428,18 @@ class Server:
                 token = secrets.randbits(32)
                 if token and token not in self.peers:
                     return token
+
+    def _screen_info(self):
+        """Where the browser screen relay can reach the local video server."""
+        video = self.video
+        if video is None or not video.running or video.error:
+            return None
+        return {
+            "host": "127.0.0.1",
+            "port": video.port,
+            "fps": video.fps,
+            "width": video.width,
+        }
 
     def _web_input(self, token: int, ip: str, state: dict, want_slot: int, send_rumble):
         """Adapt a browser message to the same path UDP phone input uses."""

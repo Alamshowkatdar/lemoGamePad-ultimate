@@ -14,6 +14,7 @@ import os
 import socket
 import struct
 import sys
+import threading
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -134,7 +135,7 @@ class WebSocket:
         body = bytes(byte ^ mask[index % 4] for index, byte in enumerate(payload))
         self.sock.sendall(bytes(header) + body)
 
-    def recv(self, timeout: float = 3.0) -> dict:
+    def recv_raw(self, timeout: float = 3.0) -> tuple[int, bytes]:
         self.sock.settimeout(timeout)
         first = self._read(2)
         opcode = first[0] & 0x0F
@@ -143,9 +144,20 @@ class WebSocket:
             length = struct.unpack(">H", self._read(2))[0]
         elif length == 127:
             length = struct.unpack(">Q", self._read(8))[0]
-        payload = self._read(length)
+        return opcode, self._read(length)
+
+    def recv(self, timeout: float = 3.0) -> dict:
+        opcode, payload = self.recv_raw(timeout)
         assert opcode == 0x1, opcode
         return json.loads(payload.decode("utf-8"))
+
+    def recv_binary(self, timeout: float = 3.0) -> bytes:
+        """Skip status messages and return the next binary screen frame."""
+        while True:
+            opcode, payload = self.recv_raw(timeout)
+            if opcode == 0x2:
+                return payload
+            assert opcode == 0x1, opcode
 
     def close(self) -> None:
         try:
@@ -153,6 +165,100 @@ class WebSocket:
             self.sock.close()
         except OSError:
             pass
+
+
+class FakeVideoServer:
+    """A tiny TCP JPEG source that speaks the LGVQ handshake."""
+
+    FRAME = b"\xff\xd8fake-jpeg-frame\xff\xd9"
+
+    def __init__(self):
+        self.sock = socket.socket()
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.sock.bind(("127.0.0.1", 0))
+        self.sock.listen(4)
+        self.port = self.sock.getsockname()[1]
+        self.qualities: list[int] = []
+        self.frames = 0
+        self._stop = threading.Event()
+        self.thread = threading.Thread(target=self._run, name="fake-video", daemon=True)
+        self.thread.start()
+
+    def _recv(self, conn: socket.socket, size: int) -> bytes:
+        data = b""
+        while len(data) < size:
+            chunk = conn.recv(size - len(data))
+            if not chunk:
+                raise EOFError
+            data += chunk
+        return data
+
+    def _run(self) -> None:
+        self.sock.settimeout(0.2)
+        while not self._stop.is_set():
+            try:
+                conn, _addr = self.sock.accept()
+            except socket.timeout:
+                continue
+            except OSError:
+                return
+            try:
+                self._serve(conn)
+            except (OSError, EOFError):
+                pass
+            finally:
+                try:
+                    conn.close()
+                except OSError:
+                    pass
+
+    def _serve(self, conn: socket.socket) -> None:
+        conn.settimeout(2.0)
+        handshake = self._recv(conn, 5)
+        if handshake[:4] != b"LGVQ":
+            return
+        quality = handshake[4]
+        self.qualities.append(quality)
+        conn.sendall(struct.pack(">iB", -1, quality))
+        while not self._stop.is_set():
+            conn.sendall(struct.pack(">I", len(self.FRAME)) + self.FRAME)
+            self.frames += 1
+            time.sleep(0.02)
+
+    def stop(self) -> None:
+        self._stop.set()
+        try:
+            self.sock.close()
+        except OSError:
+            pass
+        if self.thread.is_alive():
+            self.thread.join(timeout=1.0)
+
+
+def start_screen_web(video: FakeVideoServer):
+    port = free_port()
+    web = srv.WebGamepadServer(
+        port,
+        KEY,
+        on_input=lambda *_args: 0,
+        on_ping=lambda *_args: 0,
+        on_close=lambda *_args: None,
+        on_token=lambda: 1,
+        log=lambda _message: None,
+        server_name="Test PC",
+        max_players=4,
+        screen_info=lambda: {
+            "host": "127.0.0.1",
+            "port": video.port,
+            "fps": 24,
+            "width": 1024,
+        },
+    )
+    web.start()
+    wait_for(lambda: web.enabled or web.error, message="screen web server did not start")
+    if web.error:
+        raise AssertionError(web.error)
+    return web, port
 
 
 def test_page_and_key(server, port):
@@ -165,13 +271,17 @@ def test_page_and_key(server, port):
     status, _body = http_get(port, "/")
     assert status == 401, status
 
+    for marker in ("theme-grid", "slot-row", "screen-pip", "data-faces", "dialog-scrim"):
+        assert marker in body, f"page is missing {marker}"
+
     # The browser requests relative assets without the page's query string, so
     # style.css/app.js must load without a key or the UI stays unstyled and the
     # WebSocket client never runs.
     status, css = http_get(port, "/style.css")
-    assert status == 200 and ".stick" in css, status
+    assert status == 200 and "#pad-canvas" in css and ".swatch" in css, status
     status, script = http_get(port, "/app.js")
     assert status == 200 and "WebSocket" in script, status
+    assert "createImageBitmap" in script and "lmgb.layouts" in script
     status, icon = http_get(port, "/favicon.svg")
     assert status == 200 and "<svg" in icon, status
     print("  page/key ok: page needs the key, relative assets load")
@@ -180,6 +290,12 @@ def test_page_and_key(server, port):
 def test_input_ping_and_rumble(server, port):
     client = WebSocket(port, f"/ws?k={KEY}")
     try:
+        hello = client.recv()
+        assert hello["t"] == "h", hello
+        assert hello["max"] == 2, hello
+        assert isinstance(hello["n"], str) and hello["n"], hello
+        assert hello["screen"] is False, hello
+
         client.send({"t": "i", "b": 1 << 14, "lx": 12345, "ly": -8000,
                      "rx": 0, "ry": 0, "l2": 0, "r2": 0})
         wait_for(lambda: len(server.peers) == 1, message="browser peer was not registered")
@@ -257,6 +373,73 @@ def test_want_slot(server, port):
         client.close()
 
 
+def test_screen_unavailable(server, port):
+    client = WebSocket(port, f"/screen?k={KEY}")
+    try:
+        message = client.recv()
+        assert message["t"] == "e", message
+        assert "not available" in message["m"], message
+        print("  screen off ok: the relay reports a missing video stream")
+    finally:
+        client.close()
+
+
+def test_screen_auth(server, port):
+    try:
+        WebSocket(port, "/screen?k=wrong")
+        raise AssertionError("wrong key was accepted for the screen relay")
+    except AssertionError as exc:
+        assert "401" in str(exc), exc
+
+    try:
+        WebSocket(port, f"/screen?k={KEY}", origin="http://evil.example")
+        raise AssertionError("cross-site origin was accepted for the screen relay")
+    except AssertionError as exc:
+        assert "403" in str(exc), exc
+    print("  screen security ok: key and origin are checked")
+
+
+def test_screen_stream():
+    video = FakeVideoServer()
+    web, port = start_screen_web(video)
+    client = None
+    try:
+        client = WebSocket(port, f"/screen?k={KEY}&q=1")
+        connecting = client.recv()
+        assert connecting["t"] == "v" and connecting["s"] == "connecting", connecting
+        assert connecting["q"] == 1, connecting
+        assert connecting["fps"] == 24 and connecting["w"] == 1024, connecting
+
+        live = client.recv()
+        assert live["t"] == "v" and live["s"] == "live", live
+        assert live["q"] == 1, live
+
+        frame = client.recv_binary()
+        assert frame == FakeVideoServer.FRAME, frame
+        assert 1 in video.qualities, video.qualities
+
+        client.send({"t": "q", "q": 0})
+        wait_for(lambda: 0 in video.qualities, message="quality change was not forwarded")
+
+        deadline = time.time() + 4.0
+        switched = False
+        while time.time() < deadline:
+            opcode, payload = client.recv_raw(timeout=1.0)
+            if opcode != 0x1:
+                continue
+            message = json.loads(payload.decode("utf-8"))
+            if message.get("t") == "v" and message.get("s") == "live" and message.get("q") == 0:
+                switched = True
+                break
+        assert switched, "relay did not report the new quality"
+        print("  screen ok: relay negotiates quality and forwards JPEG frames")
+    finally:
+        if client is not None:
+            client.close()
+        web.stop()
+        video.stop()
+
+
 def main() -> int:
     server, port = start_server()
     try:
@@ -265,8 +448,11 @@ def main() -> int:
         test_clamp(server, port)
         test_wrong_key_and_origin(server, port)
         test_want_slot(server, port)
+        test_screen_unavailable(server, port)
+        test_screen_auth(server, port)
     finally:
         server.shutdown()
+    test_screen_stream()
     print("web pad checks passed")
     return 0
 

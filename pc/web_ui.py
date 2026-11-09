@@ -19,6 +19,8 @@ import hashlib
 import hmac
 import json
 import os
+import queue
+import socket
 import struct
 import sys
 import threading
@@ -28,6 +30,7 @@ from typing import Callable, Optional
 
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 MAX_PAYLOAD = 64 * 1024
+MAX_SCREEN_FRAME = 4 * 1024 * 1024
 CSP = (
     "default-src 'self'; "
     "script-src 'self'; "
@@ -89,6 +92,9 @@ class WebGamepadServer:
         on_close: Callable,
         on_token: Callable,
         log: Optional[Callable[[str], None]] = None,
+        server_name: str = "lemoGamePad",
+        max_players: int = 8,
+        screen_info: Optional[Callable[[], Optional[dict]]] = None,
     ):
         self.port = port
         self.key = key
@@ -97,6 +103,9 @@ class WebGamepadServer:
         self.on_close = on_close
         self.on_token = on_token
         self.log = log or print
+        self.server_name = server_name or "lemoGamePad"
+        self.max_players = max(1, int(max_players))
+        self.screen_info = screen_info
         self.enabled = False
         self.error = ""
         self.running = False
@@ -189,6 +198,31 @@ class WebGamepadServer:
         except Exception as exc:
             self.log(f"browser disconnect failed: {exc}")
 
+    def screen_endpoint(self) -> Optional[dict]:
+        """Return the local TCP screen source, or None when video is off."""
+        if self.screen_info is None:
+            return None
+        try:
+            info = self.screen_info()
+        except Exception as exc:
+            self.log(f"screen lookup failed: {exc}")
+            return None
+        if not isinstance(info, dict):
+            return None
+        try:
+            host = str(info.get("host") or "127.0.0.1")
+            port = int(info.get("port") or 0)
+        except (TypeError, ValueError):
+            return None
+        if not (0 < port < 65536):
+            return None
+        return {
+            "host": host,
+            "port": port,
+            "fps": int(info.get("fps") or 0),
+            "width": int(info.get("width") or 0),
+        }
+
 
 class _QuietHTTPServer(ThreadingHTTPServer):
     daemon_threads = True
@@ -226,7 +260,19 @@ class _Handler(BaseHTTPRequestHandler):
                     "Open the browser pad URL printed by lemoGamePad-server.\n",
                 )
                 return
-            self._websocket()
+            self._websocket("pad")
+            return
+
+        if parsed.path == "/screen":
+            if not has_key:
+                self._plain(
+                    401,
+                    "Pairing link is not valid.\n"
+                    "Open the browser pad URL printed by lemoGamePad-server.\n",
+                )
+                return
+            quality = _clamp((query.get("q") or ["1"])[0], 0, 2)
+            self._websocket("screen", quality)
             return
 
         item = STATIC.get(parsed.path)
@@ -285,7 +331,7 @@ class _Handler(BaseHTTPRequestHandler):
             pass
 
     # ---------------------------------------------------------------- websocket
-    def _websocket(self) -> None:
+    def _websocket(self, mode: str = "pad", quality: int = 1) -> None:
         if self.headers.get("Upgrade", "").lower() != "websocket":
             self._plain(400, "Expected a WebSocket upgrade\n")
             return
@@ -309,7 +355,7 @@ class _Handler(BaseHTTPRequestHandler):
         self.close_connection = True
 
         connection = _Connection(
-            self.connection, self.client_address[0], self.web
+            self.connection, self.client_address[0], self.web, mode, quality
         )
         connection.run()
 
@@ -331,11 +377,20 @@ class _Handler(BaseHTTPRequestHandler):
 class _Connection:
     """One browser tab: parses WebSocket frames and forwards pad input."""
 
-    def __init__(self, sock, ip: str, web: WebGamepadServer):
+    def __init__(
+        self,
+        sock,
+        ip: str,
+        web: WebGamepadServer,
+        mode: str = "pad",
+        quality: int = 1,
+    ):
         self.sock = sock
         self.ip = ip
         self.web = web
-        self.token = int(web.on_token())
+        self.mode = mode
+        self.screen_quality = _clamp(quality, 0, 2)
+        self.token = 0 if mode == "screen" else int(web.on_token())
         self.seq = 0
         self.slot = 0
         self.closed = False
@@ -343,6 +398,7 @@ class _Connection:
         self._send_lock = threading.Lock()
         self._fragment = b""
         self._fragment_opcode: Optional[int] = None
+        self._relay: Optional["_ScreenRelay"] = None
         self.name = f"browser {self.token & 0xFF:02X}"
 
     # ------------------------------------------------------------------ frames
@@ -394,6 +450,14 @@ class _Connection:
         except OSError:
             self.closed = True
 
+    def send_binary(self, payload: bytes) -> bool:
+        try:
+            self._send(0x2, payload)
+            return True
+        except OSError:
+            self.closed = True
+            return False
+
     def send_rumble(self, small: int, large: int) -> None:
         self.send_json(
             {
@@ -440,10 +504,54 @@ class _Connection:
             self.slot = slot
             self.send_json({"t": "s", "n": slot})
 
+    def _screen_message(self, payload: bytes) -> None:
+        try:
+            message = json.loads(payload.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError):
+            return
+        if not isinstance(message, dict):
+            return
+        if message.get("t") == "q":
+            quality = _clamp(message.get("q"), 0, 2)
+            if quality != self.screen_quality:
+                self.screen_quality = quality
+                relay = self._relay
+                if relay is not None:
+                    relay.set_quality(quality)
+
     # -------------------------------------------------------------------- loop
+    def _start_screen(self) -> None:
+        endpoint = self.web.screen_endpoint()
+        if endpoint is None:
+            self.send_json({"t": "e", "m": "PC screen preview is not available"})
+            return
+        self.send_json(
+            {
+                "t": "v",
+                "s": "connecting",
+                "q": self.screen_quality,
+                "fps": endpoint.get("fps", 0),
+                "w": endpoint.get("width", 0),
+            }
+        )
+        self._relay = _ScreenRelay(self, endpoint, self.screen_quality)
+        self._relay.start()
+
     def run(self) -> None:
         self.web._track(self)
-        self.web.log(f"browser connected: {self.ip}")
+        if self.mode == "screen":
+            self.web.log(f"browser screen connected: {self.ip}")
+            self._start_screen()
+        else:
+            self.web.log(f"browser connected: {self.ip}")
+            self.send_json(
+                {
+                    "t": "h",
+                    "n": self.web.server_name,
+                    "max": self.web.max_players,
+                    "screen": self.web.screen_endpoint() is not None,
+                }
+            )
         try:
             while not self.closed:
                 fin, opcode, payload = self._read_frame()
@@ -472,7 +580,10 @@ class _Connection:
                 if opcode == 0x2:  # binary is not used by the page
                     continue
                 if opcode == 0x1:
-                    self._message(payload)
+                    if self.mode == "screen":
+                        self._screen_message(payload)
+                    else:
+                        self._message(payload)
         except (EOFError, OSError, ValueError):
             pass
         finally:
@@ -483,9 +594,16 @@ class _Connection:
             return
         self._finished = True
         self.closed = True
+        relay = self._relay
+        self._relay = None
+        if relay is not None:
+            relay.stop()
         self.web._untrack(self)
-        self.web.closed(self)
-        self.web.log(f"browser disconnected: {self.ip}")
+        if self.mode == "screen":
+            self.web.log(f"browser screen disconnected: {self.ip}")
+        else:
+            self.web.closed(self)
+            self.web.log(f"browser disconnected: {self.ip}")
         try:
             self.sock.close()
         except OSError:
@@ -501,3 +619,196 @@ class _Connection:
             self.sock.close()
         except OSError:
             pass
+
+
+class _ScreenRelay:
+    """Proxy the local TCP JPEG stream into one browser WebSocket.
+
+    The Android app can speak the length-prefixed video protocol directly.
+    Browsers cannot open a raw TCP socket, so this relay connects to the video
+    server on loopback, negotiates the requested LGVQ quality, and forwards the
+    newest complete JPEG as a binary WebSocket message. Frames are coalesced
+    like the phone path: a slow tab never builds a backlog of stale images.
+    """
+
+    def __init__(self, connection: _Connection, endpoint: dict, quality: int):
+        self.connection = connection
+        self.host = endpoint["host"]
+        self.port = int(endpoint["port"])
+        self.fps = int(endpoint.get("fps") or 0)
+        self.width = int(endpoint.get("width") or 0)
+        self.quality = _clamp(quality, 0, 2)
+        self.generation = 0
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._wake = threading.Event()
+        self._sock: Optional[socket.socket] = None
+        self._queue: "queue.Queue[Optional[bytes]]" = queue.Queue(maxsize=1)
+        self._reader_thread: Optional[threading.Thread] = None
+        self._sender_thread: Optional[threading.Thread] = None
+
+    # ---------------------------------------------------------------- lifecycle
+    def start(self) -> None:
+        self._reader_thread = threading.Thread(
+            target=self._reader, name="lemo-web-screen", daemon=True
+        )
+        self._sender_thread = threading.Thread(
+            target=self._sender, name="lemo-web-screen-tx", daemon=True
+        )
+        self._reader_thread.start()
+        self._sender_thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        self._wake.set()
+        with self._lock:
+            sock, self._sock = self._sock, None
+        if sock is not None:
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            try:
+                sock.close()
+            except OSError:
+                pass
+        try:
+            self._queue.put_nowait(None)
+        except queue.Full:
+            pass
+        for thread in (self._reader_thread, self._sender_thread):
+            if thread is not None and thread.is_alive():
+                thread.join(timeout=1.0)
+
+    def set_quality(self, quality: int) -> None:
+        quality = _clamp(quality, 0, 2)
+        with self._lock:
+            if quality == self.quality:
+                return
+            self.quality = quality
+            self.generation += 1
+            sock, self._sock = self._sock, None
+        self._wake.set()
+        if sock is not None:
+            # Unblock the reader; it reconnects immediately with the new
+            # profile rather than waiting for the next frame boundary.
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            try:
+                sock.close()
+            except OSError:
+                pass
+
+    # ----------------------------------------------------------------- sending
+    def _offer(self, frame: bytes) -> None:
+        try:
+            while True:
+                self._queue.get_nowait()
+        except queue.Empty:
+            pass
+        try:
+            self._queue.put_nowait(frame)
+        except queue.Full:
+            pass
+
+    def _sender(self) -> None:
+        while not self._stop.is_set():
+            try:
+                frame = self._queue.get(timeout=0.5)
+            except queue.Empty:
+                continue
+            if frame is None:
+                return
+            if not self.connection.send_binary(frame):
+                self._stop.set()
+                return
+
+    # ----------------------------------------------------------------- reading
+    @staticmethod
+    def _recv_exact(sock: socket.socket, size: int) -> bytes:
+        data = bytearray()
+        while len(data) < size:
+            chunk = sock.recv(size - len(data))
+            if not chunk:
+                raise EOFError("video server closed the stream")
+            data.extend(chunk)
+        return bytes(data)
+
+    def _reader(self) -> None:
+        backoff = 0.7
+        while not self._stop.is_set():
+            with self._lock:
+                quality = self.quality
+                generation = self.generation
+            sock: Optional[socket.socket] = None
+            try:
+                sock = socket.create_connection((self.host, self.port), timeout=2.5)
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                sock.settimeout(5.0)
+                sock.sendall(b"LGVQ" + bytes([quality]))
+                with self._lock:
+                    if self._stop.is_set() or generation != self.generation:
+                        raise EOFError("relay cancelled")
+                    self._sock = sock
+
+                length: Optional[int] = None
+                accepted = quality
+                header = self._recv_exact(sock, 4)
+                first = struct.unpack(">i", header)[0]
+                if first == -1:
+                    accepted = self._recv_exact(sock, 1)[0]
+                    if accepted not in (0, 1, 2):
+                        raise ValueError("video server sent an invalid quality")
+                elif 0 < first <= MAX_SCREEN_FRAME:
+                    length = first
+                else:
+                    raise ValueError("video server sent an invalid frame header")
+
+                self.connection.send_json(
+                    {
+                        "t": "v",
+                        "s": "live",
+                        "q": accepted,
+                        "fps": self.fps,
+                        "w": self.width,
+                    }
+                )
+                backoff = 0.7
+
+                while not self._stop.is_set() and generation == self.generation:
+                    if length is None:
+                        length = struct.unpack(">i", self._recv_exact(sock, 4))[0]
+                    if length <= 0 or length > MAX_SCREEN_FRAME:
+                        break
+                    frame = self._recv_exact(sock, length)
+                    self._offer(frame)
+                    length = None
+            except Exception as exc:  # socket errors, bad quality, cancellation
+                if not self._stop.is_set() and generation == self.generation:
+                    self.connection.send_json(
+                        {
+                            "t": "v",
+                            "s": "retry",
+                            "q": quality,
+                            "m": str(exc)[:90],
+                        }
+                    )
+            finally:
+                with self._lock:
+                    if self._sock is sock:
+                        self._sock = None
+                if sock is not None:
+                    try:
+                        sock.close()
+                    except OSError:
+                        pass
+
+            if self._stop.is_set():
+                break
+            if generation != self.generation:
+                continue
+            self._wake.wait(backoff)
+            self._wake.clear()
+            backoff = min(backoff * 2.0, 4.0)

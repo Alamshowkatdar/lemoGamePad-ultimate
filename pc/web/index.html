@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
-  <meta name="theme-color" content="#0b0e14">
+  <meta name="theme-color" content="#0f1a14">
   <meta name="color-scheme" content="dark">
   <title>lemoGamePad &mdash; browser pad</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
@@ -11,93 +11,160 @@
 </head>
 <body>
   <div id="app">
-    <header id="hud">
-      <span id="dot" class="dot" aria-hidden="true"></span>
-      <span id="status" role="status">Connecting&hellip;</span>
-      <span id="pad" class="badge" hidden>P1</span>
-      <span id="ping" class="ping"></span>
-      <button id="help-toggle" class="ghost" type="button" aria-expanded="false">Keys</button>
-    </header>
+    <canvas id="pad-canvas" aria-label="Browser gamepad. Drag the sticks and tap the buttons."></canvas>
 
-    <section id="help" hidden>
-      <div class="help-grid">
-        <div><b>Left stick</b><span>W A S D</span></div>
-        <div><b>Right stick</b><span>I J K L</span></div>
-        <div><b>D-pad</b><span>Arrow keys</span></div>
-        <div><b>Face buttons</b><span>Numpad 8 / 6 / 2 / 4</span></div>
-        <div><b>L1 / R1</b><span>Q / E</span></div>
-        <div><b>L2 / R2</b><span>1 / 2</span></div>
-        <div><b>Start / Select / PS</b><span>Enter / Shift / `</span></div>
-        <div><b>Release sticks</b><span>let go of the key</span></div>
-      </div>
-      <p class="muted">Everything stays on your Wi-Fi. This page has no internet access.</p>
-      <label class="slot-pick">Player slot
-        <select id="slot-select">
-          <option value="0" selected>Auto</option>
-          <option value="1">P1</option>
-          <option value="2">P2</option>
-          <option value="3">P3</option>
-          <option value="4">P4</option>
-          <option value="5">P5</option>
-          <option value="6">P6</option>
-          <option value="7">P7</option>
-          <option value="8">P8</option>
-        </select>
-      </label>
-    </section>
+    <div id="edit-bar" hidden>
+      <button type="button" class="action primary" data-edit="done">DONE</button>
+      <button type="button" class="action" data-edit="save">SAVE AS</button>
+      <button type="button" class="action" data-edit="reset">RESET</button>
+      <button type="button" class="action" data-edit="show">SHOW ALL</button>
+    </div>
 
-    <main id="pad-ui" aria-label="Browser gamepad">
-      <div class="top">
-        <div class="shoulders">
-          <button class="btn trigger" data-btn="l2" type="button" aria-label="L2">L2</button>
-          <button class="btn bumper" data-btn="l1" type="button" aria-label="L1">L1</button>
-        </div>
-        <div class="menu">
-          <button class="btn small" data-btn="select" type="button" aria-label="Select">SEL</button>
-          <button class="btn small ps" data-btn="ps" type="button" aria-label="PlayStation">PS</button>
-          <button class="btn small" data-btn="start" type="button" aria-label="Start">START</button>
-        </div>
-        <div class="shoulders right">
-          <button class="btn bumper" data-btn="r1" type="button" aria-label="R1">R1</button>
-          <button class="btn trigger" data-btn="r2" type="button" aria-label="R2">R2</button>
-        </div>
-      </div>
+    <div id="screen-pip" hidden aria-label="PC screen preview">
+      <canvas id="screen-canvas"></canvas>
+      <div id="pip-hint" class="pip-hint">PC SCREEN</div>
+      <span class="pip-chip">PC</span>
+      <span id="pip-dot" class="pip-dot"></span>
+      <span id="pip-badge" class="pip-badge">BAL</span>
+      <button id="pip-close" class="pip-close" type="button" aria-label="Close screen preview">&#215;</button>
+    </div>
 
-      <div class="middle">
-        <div class="side left">
-          <div class="stick" id="stick-l" data-stick="l" role="application" aria-label="Left analog stick" tabindex="0">
-            <div class="ring"></div>
-            <div class="knob"></div>
-            <span class="stick-label">L3</span>
-          </div>
-          <div class="dpad" role="group" aria-label="D-pad">
-            <button class="btn dpad-btn up" data-btn="up" type="button" aria-label="Up">&#9650;</button>
-            <button class="btn dpad-btn right" data-btn="right" type="button" aria-label="Right">&#9654;</button>
-            <button class="btn dpad-btn down" data-btn="down" type="button" aria-label="Down">&#9660;</button>
-            <button class="btn dpad-btn left" data-btn="left" type="button" aria-label="Left">&#9664;</button>
-          </div>
-        </div>
-
-        <div class="side right">
-          <div class="faces" role="group" aria-label="Face buttons">
-            <button class="btn face tri" data-btn="triangle" type="button" aria-label="Triangle">&#9651;</button>
-            <button class="btn face cir" data-btn="circle" type="button" aria-label="Circle">&#9675;</button>
-            <button class="btn face cro" data-btn="cross" type="button" aria-label="Cross">&#10005;</button>
-            <button class="btn face squ" data-btn="square" type="button" aria-label="Square">&#9633;</button>
-          </div>
-          <div class="stick" id="stick-r" data-stick="r" role="application" aria-label="Right analog stick" tabindex="0">
-            <div class="ring"></div>
-            <div class="knob"></div>
-            <span class="stick-label">R3</span>
-          </div>
-        </div>
-      </div>
-    </main>
-
-    <footer>
-      <p id="hint">Hold the device in landscape. Touch the pad, or use the keyboard.</p>
-    </footer>
+    <div id="toast" role="status" aria-live="polite"></div>
   </div>
+
+  <div id="settings-scrim" hidden>
+    <aside id="settings" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+      <header class="sheet-head">
+        <div class="sheet-titles">
+          <p class="eyebrow">CONTROL CENTRE</p>
+          <h2 id="settings-title">lemoGamePad ultimate</h2>
+          <p class="author">ALAM SHOWKAT &middot; <span id="app-version">v1.6.4</span></p>
+        </div>
+        <button id="settings-close" class="round" type="button" aria-label="Close settings">&#10005;</button>
+      </header>
+      <div class="sheet-divider"></div>
+
+      <div class="sheet-body">
+        <section class="card">
+          <div class="row status-top">
+            <span id="sheet-dot" class="dot" aria-hidden="true"></span>
+            <b id="sheet-status-title">NOT PAIRED</b>
+            <span id="sheet-status-sub" class="status-sub"></span>
+          </div>
+          <p id="sheet-detail" class="detail"></p>
+          <canvas id="latency-graph" class="latency" height="44" hidden></canvas>
+          <p id="latency-stats" class="latency-stats" hidden></p>
+          <div class="row actions">
+            <button id="connect-btn" class="action primary" type="button">CONNECT</button>
+            <button id="reconnect-btn" class="action" type="button">RECONNECT</button>
+            <button id="disconnect-btn" class="action" type="button">DISCONNECT</button>
+          </div>
+        </section>
+
+        <section class="card">
+          <h3 class="section-title">CONNECTION</h3>
+          <p id="server-line" class="tiny"></p>
+          <p class="tiny label">PLAYER SLOT</p>
+          <div id="slot-row" class="chip-row"></div>
+          <p id="slot-line" class="tiny note"></p>
+          <div class="row actions gap">
+            <button id="copy-link" class="action" type="button">COPY PAGE LINK</button>
+            <button id="key-help" class="action" type="button">KEYBOARD MAP</button>
+          </div>
+          <p class="tiny note">
+            This page is served by the PC, so no network scan is needed.
+            Open the URL printed in the server window on any device on the same Wi-Fi.
+          </p>
+        </section>
+
+        <section class="card">
+          <h3 class="section-title">APPEARANCE</h3>
+          <p class="tiny label">THEME &middot; TAP A PALETTE TO CROSS-FADE THE PAD</p>
+          <div id="theme-grid" class="theme-grid"></div>
+          <p class="tiny label spaced">FACE BUTTON LABELS</p>
+          <div class="row gap">
+            <button class="chip wide" type="button" data-faces="ps">PLAYSTATION</button>
+            <button class="chip wide" type="button" data-faces="xbox">XBOX</button>
+          </div>
+        </section>
+
+        <section class="card">
+          <h3 class="section-title">CONTROLS</h3>
+          <p id="deadzone-label" class="tiny label">STICK DEADZONE &middot; 12%</p>
+          <input id="deadzone" class="slider" type="range" min="0" max="40" step="1" value="12" aria-label="Stick deadzone">
+          <p id="curve-label" class="tiny label spaced">STICK CURVE &middot; 0%</p>
+          <input id="curve" class="slider" type="range" min="0" max="100" step="1" value="0" aria-label="Stick curve">
+          <p class="tiny note">0% is linear &middot; higher values calm small stick corrections</p>
+
+          <div class="row between spaced">
+            <span class="tiny">Vibration feedback</span>
+            <button id="haptics-toggle" class="toggle" type="button" aria-pressed="true">ON</button>
+          </div>
+          <p id="strength-label" class="tiny label spaced">VIBRATION STRENGTH &middot; 100%</p>
+          <input id="strength" class="slider" type="range" min="0" max="100" step="1" value="100" aria-label="Vibration strength">
+
+          <p class="tiny label spaced">INPUT RATE</p>
+          <div class="row gap" id="rate-row">
+            <button class="chip wide" type="button" data-rate="eco">ECO</button>
+            <button class="chip wide" type="button" data-rate="standard">STANDARD</button>
+            <button class="chip wide" type="button" data-rate="turbo">TURBO</button>
+          </div>
+          <p id="rate-hint" class="tiny note"></p>
+        </section>
+
+        <section class="card">
+          <h3 class="section-title">LAYOUTS</h3>
+          <div class="row gap">
+            <button id="edit-layout" class="action" type="button">CUSTOMIZE</button>
+            <button id="save-layout" class="action primary" type="button">SAVE AS&hellip;</button>
+          </div>
+          <p class="tiny note">
+            Every control's position, size and visibility is remembered.
+            Tap a saved layout to switch.
+          </p>
+          <div id="layout-list" class="layout-list"></div>
+          <p id="layout-summary" class="tiny note"></p>
+        </section>
+
+        <section class="card">
+          <h3 class="section-title">PC SCREEN</h3>
+          <div class="row between">
+            <span class="tiny">Screen preview window</span>
+            <button id="screen-toggle" class="toggle" type="button" aria-pressed="false">OFF</button>
+          </div>
+          <p class="tiny label spaced">PREVIEW SIZE</p>
+          <div class="row gap" id="screen-size">
+            <button class="chip wide" type="button" data-size="small">SMALL</button>
+            <button class="chip wide" type="button" data-size="large">LARGE</button>
+          </div>
+          <p class="tiny label spaced">STREAM QUALITY</p>
+          <div class="row gap" id="screen-quality">
+            <button class="chip wide" type="button" data-quality="0">LOW</button>
+            <button class="chip wide" type="button" data-quality="1">BALANCED</button>
+            <button class="chip wide" type="button" data-quality="2">HIGH</button>
+          </div>
+          <p id="screen-hint" class="tiny note"></p>
+          <p class="tiny note">LOW sends less data &middot; HIGH is sharper &middot; live FPS appears on the preview</p>
+        </section>
+
+        <p class="footer">lemoGamePad ultimate&trade;<br>by Alam showkat &middot; <span id="footer-version">v1.6.4</span></p>
+      </div>
+    </aside>
+  </div>
+
+  <div id="dialog-scrim" hidden>
+    <div id="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title">
+      <p class="eyebrow" id="dialog-eyebrow">LAYOUT</p>
+      <h3 id="dialog-title">SAVE LAYOUT</h3>
+      <p id="dialog-message"></p>
+      <input id="dialog-input" maxlength="28" autocomplete="off" spellcheck="false" hidden>
+      <div class="row gap">
+        <button id="dialog-cancel" class="action" type="button">CANCEL</button>
+        <button id="dialog-ok" class="action primary" type="button">SAVE</button>
+      </div>
+    </div>
+  </div>
+
   <script src="app.js"></script>
 </body>
 </html>
