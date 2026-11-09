@@ -100,6 +100,12 @@ TURBO is the lowest-latency choice on a fast local network; ECO is the lightest
 on battery. The server keeps the latest state either way, so a change is never
 waiting for the next heartbeat.
 
+The ~60 Hz ceiling is on the browser side: JavaScript timers share the main
+thread, pointer events arrive at the display refresh rate, and background tabs
+are throttled. It is not a server limit — since 1.6.6 the server applies a
+browser frame within a millisecond or two of receiving it, and a phone can
+still stream at its full 250 Hz over UDP.
+
 ## Layouts
 
 The pad can be rearranged on the browser itself:

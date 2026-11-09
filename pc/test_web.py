@@ -448,6 +448,66 @@ def test_screen_stream():
         video.stop()
 
 
+def test_browser_input_wakes_loop():
+    """Browser input must not wait for the UDP select() timeout."""
+    udp_port = free_port()
+    web_port = free_port()
+    server = srv.Server(
+        udp_port,
+        "x360",
+        video_enabled=False,
+        qr_enabled=False,
+        max_phones=1,
+        web_port=web_port,
+        web_key=KEY,
+    )
+    server._print_banner = lambda: None
+    server._status = lambda: None
+
+    flushes = []
+    original = server._flush_inputs
+
+    def wrapped(now):
+        had_input = bool(server._pending)
+        original(now)
+        flushes.append((time.perf_counter(), had_input))
+
+    server._flush_inputs = wrapped
+    thread = threading.Thread(target=server.run, name="web-wake-test", daemon=True)
+    thread.start()
+    client = None
+    try:
+        wait_for(lambda: server.web.enabled or server.web.error,
+                 message="web did not start")
+        if server.web.error:
+            raise AssertionError(server.web.error)
+        client = WebSocket(web_port, f"/ws?k={KEY}")
+        client.recv()  # hello
+
+        # Wait for a flush so the loop is parked in select(), then send. The
+        # old loop only flushed on its 250 ms timeout.
+        wait_for(lambda: flushes, timeout=2.0, message="server loop did not start")
+        flushes.clear()
+        sent = time.perf_counter()
+        client.send({"t": "i", "b": 1 << 14, "lx": 0, "ly": 0,
+                     "rx": 0, "ry": 0, "l2": 0, "r2": 0})
+        wait_for(
+            lambda: any(had and stamp >= sent for stamp, had in flushes),
+            timeout=1.0,
+            message="browser input was not flushed",
+        )
+        flushed = min(stamp for stamp, had in flushes if had and stamp >= sent)
+        elapsed = (flushed - sent) * 1000.0
+        assert elapsed < 180.0, f"browser input waited {elapsed:.0f} ms"
+        print(f"  wake ok: browser input flushed in {elapsed:.0f} ms")
+    finally:
+        if client is not None:
+            client.close()
+        server.running = False
+        server._wake_loop()
+        thread.join(timeout=3.0)
+
+
 def main() -> int:
     server, port = start_server()
     try:
@@ -461,6 +521,7 @@ def main() -> int:
     finally:
         server.shutdown()
     test_screen_stream()
+    test_browser_input_wakes_loop()
     print("web pad checks passed")
     return 0
 

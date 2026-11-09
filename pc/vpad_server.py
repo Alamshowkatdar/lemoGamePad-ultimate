@@ -1216,6 +1216,16 @@ class Server:
         # Non-blocking + select(): one wakeup can drain everything the kernel
         # has queued, instead of applying one packet per 250 ms timeout.
         self.sock.setblocking(False)
+        # Browser input arrives on the HTTP/WebSocket threads, which the UDP
+        # select() cannot see. Without a wakeup channel a tab would wait for
+        # the 250 ms select timeout before its pad state was applied.
+        try:
+            self._wake_recv, self._wake_send = socket.socketpair()
+            self._wake_recv.setblocking(False)
+            self._wake_send.setblocking(False)
+        except OSError:  # pragma: no cover - exotic platform without socketpair
+            self._wake_recv = None
+            self._wake_send = None
         self.running = True
         # token -> (peer, newest InputState) waiting for the pad to be updated.
         # Collapsing a burst to its newest state is the single biggest win for
@@ -1463,6 +1473,10 @@ class Server:
             label="browser",
             web_send=send_rumble,
         )
+        # The web connection runs on its own thread. Wake the UDP select loop
+        # so this state is flushed to the pad now instead of at the next
+        # 250 ms timeout.
+        self._wake_loop()
         return peer.slot + 1 if peer is not None else 0
 
     def _web_ping(self, token: int) -> int:
@@ -1595,6 +1609,25 @@ class Server:
             self._pending[token] = (peer, state)
         return peer
 
+    def _wake_loop(self) -> None:
+        """Nudge the select() loop after input arrived on a web thread."""
+        if self._wake_send is None:
+            return
+        try:
+            self._wake_send.send(b"\0")
+        except (BlockingIOError, OSError):
+            pass
+
+    def _drain_wake(self) -> None:
+        if self._wake_recv is None:
+            return
+        while True:
+            try:
+                if not self._wake_recv.recv(4096):
+                    return
+            except (BlockingIOError, OSError):
+                return
+
     def _flush_inputs(self, now: float) -> None:
         """
         Push one pad update per phone for everything received since the last
@@ -1676,15 +1709,22 @@ class Server:
         )
         self._status_thread.start()
 
+        watch = [self.sock]
+        if self._wake_recv is not None:
+            watch.append(self._wake_recv)
+
         while self.running:
             try:
-                ready, _, _ = select.select([self.sock], [], [], self.SOCKET_TIMEOUT)
+                ready, _, _ = select.select(watch, [], [], self.SOCKET_TIMEOUT)
             except (OSError, ValueError):
                 break
 
             now = time.time()
             if ready:
-                self._drain(now)
+                if self._wake_recv is not None and self._wake_recv in ready:
+                    self._drain_wake()
+                if self.sock in ready:
+                    self._drain(now)
             # One pad update per phone per wakeup, using only the newest state
             # that arrived in this batch.
             self._flush_inputs(now)
@@ -1791,6 +1831,7 @@ class Server:
 
     def shutdown(self) -> None:
         self.running = False
+        self._wake_loop()
         self._pending.clear()
         with self.lock:
             peers = list(self.peers.values())
@@ -1814,6 +1855,14 @@ class Server:
             self.sock.close()
         except Exception:
             pass
+        for sock in (self._wake_recv, self._wake_send):
+            if sock is not None:
+                try:
+                    sock.close()
+                except Exception:
+                    pass
+        self._wake_recv = None
+        self._wake_send = None
         thread = self._status_thread
         if thread is not None and thread.is_alive():
             thread.join(timeout=1.0)

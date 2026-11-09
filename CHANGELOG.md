@@ -2,6 +2,18 @@
 
 Newest first. The reasoning behind each release is in [`docs/REVIEW.md`](docs/REVIEW.md).
 
+## 1.6.6
+
+- **Browser input no longer waits for the 250 ms UDP timeout** — the packet
+  loop only selected on the phone's UDP socket, while browser input was queued
+  from the HTTP/WebSocket threads. The server now has a `socketpair()` wake-up
+  channel, so a browser frame is flushed to the virtual pad as soon as it
+  arrives instead of on the next timeout. Measured delay fell from about
+  **245 ms** to **1–2 ms** (worst case under 10 ms). Coalescing is unchanged:
+  the newest state is still applied once per wake-up.
+- `pc/test_web.py` gained `test_browser_input_wakes_loop`, which fails if a
+  browser frame waits more than 180 ms.
+
 ## 1.6.5
 
 - **Full-screen toggle in the browser pad** — the CONTROL CENTRE now has a

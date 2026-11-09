@@ -1,4 +1,4 @@
-# Review notes — 1.3.6 / 1.3.7 / 1.4.0 / 1.5.0 / 1.6.0 / 1.6.1 / 1.6.2 / 1.6.3 / 1.6.4 / 1.6.5
+# Review notes — 1.3.6 / 1.3.7 / 1.4.0 / 1.5.0 / 1.6.0 / 1.6.1 / 1.6.2 / 1.6.3 / 1.6.4 / 1.6.5 / 1.6.6
 
 A pass over the whole app (Kotlin sources, manifest, Gradle files, CI) focused on
 bugs, UI smoothness, and making the phone-to-phone Bluetooth gamepad honest.
@@ -17,7 +17,9 @@ the console; 1.6.3 fixes asset loading so the page is styled and connects;
 1.6.4 rebuilds the page to match the Android pad and adds the screen preview
 (see [Browser pad parity (1.6.4)](#browser-pad-parity-164)); 1.6.5 adds a
 full-screen toggle to the browser CONTROL CENTRE (see
-[Browser full screen (1.6.5)](#browser-full-screen-165)).
+[Browser full screen (1.6.5)](#browser-full-screen-165)); 1.6.6 removes the
+250 ms wait before browser input reaches the virtual pad (see
+[Browser input wake-up (1.6.6)](#browser-input-wake-up-166)).
 This file records what was found and what changed, so the reasoning does not get
 lost between releases.
 
@@ -562,3 +564,51 @@ bottom pills and sticks need.
   that the full-screen handlers are in `app.js`.
 - The headless DOM/canvas smoke run boots the page with the new binding and
   exercises the settings sheet without a real browser.
+
+## Browser input wake-up (1.6.6)
+
+### Symptom
+
+The browser pad felt noticeably laggier than the Android app even on the same
+Wi-Fi, although both feed the same `Server._submit_input` path and the same
+virtual pad. The browser's ~60 Hz send cadence explained part of the gap but
+not a delay that could be felt while moving a stick.
+
+### Measurement
+
+`measure_flush.py` timed each browser frame from `WebSocket.send()` to the
+moment `Server._flush_inputs()` applied it. Every sample landed at about
+**245 ms** (min 224.6, avg 243.6, max 245.6) — suspiciously close to
+`SOCKET_TIMEOUT = 0.25`.
+
+### Cause
+
+`Server.run()` blocked in `select([self.sock], ..., 0.25)`, watching only the
+phone's UDP socket. Browser frames arrive on the HTTP/WebSocket threads, which
+queue the state in `self._pending` and return. Nothing woke the select loop, so
+the queued state waited for the next 250 ms timeout or an unrelated phone
+packet. The browser UI was effectively flushing at **~4 Hz**, not 60 Hz.
+
+### Fix
+
+- `Server.__init__` creates a non-blocking `socket.socketpair()`.
+- `run()` selects on both the UDP socket and the wake socket and drains the
+  wake side when it fires.
+- `_web_input()` calls `_wake_loop()` after `_submit_input()`.
+- `shutdown()` sends a final wake and closes both ends.
+
+Coalescing is preserved: `_submit_input` still overwrites `_pending[token]`,
+and one wake-up applies only the newest state. A burst of browser frames still
+becomes a single pad update, so this does not add work under load.
+
+### Result
+
+The same measurement now reports **0.3–9.5 ms** (avg about 1.6 ms). The
+remaining latency is the browser's own ~60 Hz sampling and main-thread timer
+scheduling; the server is no longer the bottleneck.
+
+### Tests
+
+- `pc/test_web.py::test_browser_input_wakes_loop` sends one browser frame after
+  the loop has parked in `select()` and asserts the flush arrives in under
+  180 ms. Before the fix it waited the full timeout.
