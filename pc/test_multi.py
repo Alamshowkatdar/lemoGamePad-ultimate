@@ -103,6 +103,22 @@ class Phone:
         self.sock.sendto(packet, self.addr)
         self.seq += 1
 
+    def request_slot(self, target: int):
+        packet = HEADER.pack(
+            MAGIC, srv.VERSION, srv.MSG_SLOT_REQUEST, self.seq & 0xFFFF,
+            self.token,
+        ) + bytes([target & 0xFF])
+        self.sock.sendto(packet, self.addr)
+        self.seq += 1
+
+    def vote(self, request_id: int, accept: bool):
+        packet = HEADER.pack(
+            MAGIC, srv.VERSION, srv.MSG_SLOT_VOTE, self.seq & 0xFFFF,
+            self.token,
+        ) + struct.pack("<IB", request_id & 0xFFFFFFFF, 1 if accept else 0)
+        self.sock.sendto(packet, self.addr)
+        self.seq += 1
+
     def drain(self, timeout=0.35):
         packets = []
         old = self.sock.gettimeout()
@@ -123,6 +139,27 @@ class Phone:
             for data, _ in self.drain(timeout)
             if HEADER.unpack_from(data)[2] == srv.MSG_RUMBLE
         ]
+
+    def swap_packets(self, timeout=0.6):
+        """Printed swap asks/results received by this fake phone."""
+        out = []
+        for data, _ in self.drain(timeout):
+            if len(data) < HEADER.size:
+                continue
+            magic, _ver, mtype, _seq, _tok = HEADER.unpack_from(data)
+            if magic != MAGIC:
+                continue
+            if mtype == srv.MSG_SLOT_ASK and len(data) >= HEADER.size + 5:
+                request_id, from_slot = struct.unpack_from(
+                    "<IB", data, HEADER.size
+                )
+                out.append(("ask", request_id, from_slot))
+            elif mtype == srv.MSG_SLOT_RESULT and len(data) >= HEADER.size + 6:
+                request_id, code, slot = struct.unpack_from(
+                    "<IBB", data, HEADER.size
+                )
+                out.append(("result", request_id, code, slot))
+        return out
 
     def close(self):
         try:
@@ -549,6 +586,209 @@ def test_requested_slot():
         thread.join(timeout=3)
 
 
+def test_swap_accept():
+    """Two players must agree before the PC trades their pads."""
+    server, port, thread, first, second = two_phone_server()
+    try:
+        first.request_slot(2)
+        wait_for(lambda: bool(server._swaps), message="swap request was not registered")
+        request_id = next(iter(server._swaps))
+        asks = second.swap_packets(0.8)
+        assert ("ask", request_id, 1) in asks, asks
+
+        # Input keeps flowing while the other player decides.
+        first.input(buttons=1 << CROSS, want_slot=1)
+        second.input(buttons=1 << CIRCLE, want_slot=2)
+        wait_for(
+            lambda: pad_buttons(server, server.peers[first.token]) == 1 << CROSS,
+            message="requester input stalled during the swap ask",
+        )
+        wait_for(
+            lambda: pad_buttons(server, server.peers[second.token]) == 1 << CIRCLE,
+            message="target input stalled during the swap ask",
+        )
+        assert server.peers[first.token].slot == 0
+        assert server.peers[second.token].slot == 1
+
+        second.vote(request_id, True)
+        wait_for(
+            lambda: server.peers[first.token].slot == 1
+            and server.peers[second.token].slot == 0,
+            message="pads were not swapped after ACCEPT",
+        )
+        results = first.swap_packets(1.0)
+        assert any(
+            kind == "result" and rid == request_id
+            and code == srv.SLOT_ACCEPTED and slot == 2
+            for kind, rid, code, slot in results
+        ), results
+
+        # Stale input naming the old pad must not bounce the player back: the
+        # server briefly ignores slot requests after a swap.
+        first.input(buttons=1 << CROSS, want_slot=1)
+        time.sleep(0.25)
+        assert server.peers[first.token].slot == 1, "stale request moved the player back"
+
+        # Both players keep playing on their new pads.
+        first.input(buttons=1 << CROSS, want_slot=2)
+        second.input(buttons=1 << CIRCLE, want_slot=1)
+        wait_for(
+            lambda: pad_buttons(server, server.peers[first.token]) == 1 << CROSS
+            and pad_buttons(server, server.peers[second.token]) == 1 << CIRCLE,
+            message="swapped pads did not receive input",
+        )
+        print("  swap accept ok: consent needed, input keeps running, pads trade")
+    finally:
+        stop_phones(server, thread, first, second)
+
+
+def test_swap_decline():
+    server, port, thread, first, second = two_phone_server()
+    try:
+        first.request_slot(2)
+        wait_for(lambda: bool(server._swaps), message="swap request was not registered")
+        request_id = next(iter(server._swaps))
+        second.vote(request_id, False)
+        results = first.swap_packets(1.0)
+        assert any(
+            kind == "result" and rid == request_id
+            and code == srv.SLOT_DECLINED and slot == 1
+            for kind, rid, code, slot in results
+        ), results
+        assert server.peers[first.token].slot == 0
+        assert server.peers[second.token].slot == 1
+
+        # A retry arriving just after DECLINE must not reopen the popup.
+        first.request_slot(2)
+        wait_for(lambda: not server._swaps, message="a declined swap was reopened")
+        again = first.swap_packets(0.6)
+        assert any(
+            kind == "result" and code == srv.SLOT_DECLINED
+            for kind, _rid, code, _slot in again
+        ), again
+        print("  swap decline ok: stays put and honours the cooldown")
+    finally:
+        stop_phones(server, thread, first, second)
+
+
+def test_swap_cancel():
+    """Picking another slot withdraws the ask still on the target's screen."""
+    server, port, thread, first, second = two_phone_server()
+    try:
+        first.request_slot(2)
+        wait_for(lambda: bool(server._swaps), message="swap request was not registered")
+        request_id = next(iter(server._swaps))
+        first.swap_packets(0.4)
+        second.swap_packets(0.4)
+
+        first.request_slot(0)
+        wait_for(lambda: not server._swaps, message="cancelled swap stayed pending")
+        cancelled = second.swap_packets(0.8)
+        assert any(
+            kind == "result" and rid == request_id
+            and code == srv.SLOT_CANCELLED
+            for kind, rid, code, _slot in cancelled
+        ), cancelled
+        assert server.peers[first.token].slot == 0
+        assert server.peers[second.token].slot == 1
+
+        # A cancellation must not start a cooldown: the same pair can ask again.
+        first.request_slot(2)
+        wait_for(lambda: bool(server._swaps), message="a cancelled swap could not be retried")
+        assert any(
+            packet[0] == "ask" for packet in second.swap_packets(0.8)
+        )
+        print("  swap cancel ok: target card closes and the pair can ask again")
+    finally:
+        stop_phones(server, thread, first, second)
+
+
+def test_swap_timeout():
+    server, port, thread, first, second = two_phone_server()
+    try:
+        server.SWAP_TIMEOUT = 0.6
+        server.SWAP_ASK_INTERVAL = 0.2
+        first.request_slot(2)
+        wait_for(lambda: bool(server._swaps), message="swap request was not registered")
+        request_id = next(iter(server._swaps))
+        results = first.swap_packets(2.5)
+        assert any(
+            kind == "result" and rid == request_id
+            and code == srv.SLOT_TIMEOUT
+            for kind, rid, code, _slot in results
+        ), results
+        assert not server._swaps
+        assert server.peers[first.token].slot == 0
+        assert server.peers[second.token].slot == 1
+        print("  swap timeout ok: unanswered requests expire without moving")
+    finally:
+        stop_phones(server, thread, first, second)
+
+
+def test_free_slot_request():
+    """A free pad needs no consent: the request is an ordinary move."""
+    server, port, thread, first, second = two_phone_server()
+    try:
+        first.request_slot(3)
+        wait_for(
+            lambda: server.peers[first.token].slot == 2,
+            message="free slot request did not move the player",
+        )
+        wait_for(
+            lambda: server.slots[2].pad is not None,
+            timeout=20.0,
+            message="the never-used pad was not created",
+        )
+        results = first.swap_packets(2.0)
+        assert any(
+            kind == "result" and code == srv.SLOT_ACCEPTED and slot == 3
+            for kind, _rid, code, slot in results
+        ), results
+        assert server.peers[second.token].slot == 1
+
+        # The input frame written before the result still names P1.
+        first.input(buttons=1 << CROSS, want_slot=1)
+        time.sleep(0.25)
+        assert server.peers[first.token].slot == 2, "stale request moved the player back"
+        print("  free slot ok: immediate move, no ask, stale input ignored")
+    finally:
+        stop_phones(server, thread, first, second)
+
+
+def two_phone_server(max_phones=4):
+    server, port, thread = start_isolated_server(max_phones=max_phones)
+    first = Phone(port)
+    second = Phone(port)
+    first.token = first.discover(0)[0]
+    second.token = second.discover(0)[0]
+    first.input()
+    wait_for(
+        lambda: first.token in server.peers,
+        timeout=10.0,
+        message="first phone did not register",
+    )
+    second.input()
+    wait_for(
+        lambda: second.token in server.peers,
+        timeout=10.0,
+        message="second phone did not register",
+    )
+    wait_for(
+        lambda: all(server.slots[index].pad is not None for index in (0, 1)),
+        timeout=20.0,
+        message="the first two pads were never created",
+    )
+    return server, port, thread, first, second
+
+
+def stop_phones(server, thread, *phones):
+    for phone in phones:
+        phone.close()
+    server.running = False
+    server._wake_loop()
+    thread.join(timeout=3.0)
+
+
 def main() -> int:
     port = free_udp_port()
     server = srv.Server(
@@ -578,6 +818,11 @@ def main() -> int:
         test_max_phones_cap()
         test_pad_creation_order()
         test_requested_slot()
+        test_swap_accept()
+        test_swap_decline()
+        test_swap_cancel()
+        test_swap_timeout()
+        test_free_slot_request()
         test_discovery(server, port)
         phones = list(test_two_pads(server, port))
         phones = test_slot_limit(server, port, phones)

@@ -1671,7 +1671,7 @@
   });
 
   // ------------------------------------------------------------------ network
-  const VERSION = "1.6.8";
+  const VERSION = "1.6.9";
   let socket = null;
   let connected = false;
   let manualOffline = false;
@@ -1686,6 +1686,16 @@
   let lastPingAt = 0;
   let lastRtt = -1;
   let rttHistory = [];
+  // Pad swap: pendingSwap is the pad we asked for, swapPromptId the request
+  // currently on screen, lastSwapResultId dedupes redundant result packets.
+  let pendingSwap = 0;
+  let pendingSwapTimer = 0;
+  let swapPromptId = 0;
+  let swapPromptFrom = 0;
+  let swapPromptTimer = 0;
+  let answeredSwapId = 0;
+  let lastAskId = 0;
+  let lastSwapResultId = 0;
 
   function socketUrl(path) {
     const scheme = location.protocol === "https:" ? "wss:" : "ws:";
@@ -1775,6 +1785,10 @@
         syncStatus();
       } else if (message.t === "r") {
         vibrateRumble(Number(message.s) || 0, Number(message.l) || 0);
+      } else if (message.t === "ask") {
+        showSwapPrompt(Number(message.id) || 0, Number(message.f) || 0);
+      } else if (message.t === "sr") {
+        handleSwapResult(message);
       }
     });
 
@@ -1784,6 +1798,7 @@
       connected = false;
       assignedSlot = 0;
       lastSnapshot = "";
+      resetSwapState();
       updateStatus();
       refreshSlotChips();
       syncSheet();
@@ -1801,6 +1816,7 @@
     connected = false;
     assignedSlot = 0;
     lastSnapshot = "";
+    resetSwapState();
     if (ws) {
       ws.onclose = null;
       try {
@@ -1900,6 +1916,10 @@
   const pipHint = $("#pip-hint");
   const pipBadge = $("#pip-badge");
   const pipCanvas = $("#screen-canvas");
+  const swapCard = $("#swap-card");
+  const swapText = $("#swap-text");
+  const swapAccept = $("#swap-accept");
+  const swapDecline = $("#swap-decline");
 
   let sheetOpen = false;
   let sheetCloseTimer = 0;
@@ -2017,6 +2037,137 @@
     syncFullscreen();
   }
 
+  // ----------------------------------------------------------------- pad swap
+  function clearPendingSwap() {
+    pendingSwap = 0;
+    clearTimeout(pendingSwapTimer);
+    pendingSwapTimer = 0;
+  }
+
+  function requestSwap(target) {
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      toast("Connect before changing another player's pad");
+      return;
+    }
+    if (pendingSwap === target) {
+      refreshSlotChips();
+      syncSlotChips();
+      return;
+    }
+    pendingSwap = target;
+    clearTimeout(pendingSwapTimer);
+    // The PC stops waiting after 10 s. This local guard only covers a lost
+    // socket or a page that never hears back, and never pauses input.
+    pendingSwapTimer = setTimeout(() => {
+      if (pendingSwap !== target) return;
+      clearPendingSwap();
+      refreshSlotChips();
+      syncSlotChips();
+      toast(`P${target} did not answer \u2014 staying on P${assignedSlot}`);
+    }, 12000);
+    try {
+      socket.send(JSON.stringify({ t: "swap", w: target }));
+    } catch (_error) {
+      /* the close handler reconnects */
+    }
+    refreshSlotChips();
+    syncSlotChips();
+    toast(`Asked P${target} to swap`);
+  }
+
+  function showSwapPrompt(id, from) {
+    if (!id || id === answeredSwapId) return;
+    // The PC resends the ask until it is answered. Request ids only grow, so a
+    // repeat (or a delayed older ask) must not rebuild or reopen the card.
+    if (id <= lastAskId) return;
+    lastAskId = id;
+    swapPromptId = id;
+    swapPromptFrom = from;
+    swapText.textContent = from > 0
+      ? `P${from} wants to swap pads with you.`
+      : "Another player wants to swap pads with you.";
+    swapCard.hidden = false;
+    requestAnimationFrame(() => swapCard.classList.add("show"));
+    clearTimeout(swapPromptTimer);
+    // Slightly longer than the PC's timeout so its own result normally wins.
+    swapPromptTimer = setTimeout(hideSwapPrompt, 11000);
+  }
+
+  function hideSwapPrompt() {
+    clearTimeout(swapPromptTimer);
+    swapPromptTimer = 0;
+    swapPromptId = 0;
+    swapPromptFrom = 0;
+    if (swapCard.hidden) return;
+    swapCard.classList.remove("show");
+    setTimeout(() => {
+      if (!swapPromptId) swapCard.hidden = true;
+    }, 180);
+  }
+
+  function answerSwap(accept) {
+    const id = swapPromptId;
+    if (!id) return;
+    answeredSwapId = id;
+    hideSwapPrompt();
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      try {
+        socket.send(JSON.stringify({ t: "vote", id, ok: accept ? 1 : 0 }));
+      } catch (_error) {
+        /* the close handler reconnects */
+      }
+    }
+    toast(accept ? "Swap accepted" : "Swap declined");
+  }
+
+  function resetSwapState() {
+    // A new connection means a fresh server, so its request ids start over.
+    // Clear the guards or a restarted PC's first ask would look "old".
+    clearPendingSwap();
+    hideSwapPrompt();
+    answeredSwapId = 0;
+    lastAskId = 0;
+    lastSwapResultId = 0;
+  }
+
+  function handleSwapResult(message) {
+    const id = Number(message.id) || 0;
+    const code = Number(message.c) || 0;
+    const slot = Math.max(0, Math.min(MAX_PLAYERS, Number(message.n) || 0));
+    // UDP results are sent three times, and a late older outcome can arrive
+    // after a newer one. Request ids only grow, so ignore anything at or below
+    // the last id: applying it would drag this tab back to an old pad.
+    if (id && id <= lastSwapResultId) return;
+    if (id) lastSwapResultId = id;
+    if (id && id === swapPromptId) hideSwapPrompt();
+    const asked = pendingSwap;
+    clearPendingSwap();
+    if (code === 1) {
+      if (slot > 0) {
+        // Keep the new seat in both the preference and the live status so the
+        // next input frame cannot claim the old pad.
+        prefs.slot = slot;
+        savePref(PREF.slot, slot);
+        assignedSlot = slot;
+        lastSnapshot = "";
+        toast(`Swapped \u2014 now P${slot}`);
+      } else {
+        toast("Swap accepted");
+      }
+    } else if (code === 2) {
+      toast(asked > 0
+        ? `P${asked} declined \u2014 staying on P${assignedSlot}`
+        : "Swap declined");
+    } else if (code === 3) {
+      toast(`No answer \u2014 staying on P${assignedSlot}`);
+    } else if (code === 4) {
+      toast(`That player left \u2014 staying on P${assignedSlot}`);
+    }
+    refreshSlotChips();
+    syncSlotChips();
+    updateStatus();
+  }
+
   // --------------------------------------------------------------- slot chips
   function buildSlotRow() {
     slotRow.textContent = "";
@@ -2037,8 +2188,10 @@
       const slot = Number(button.dataset.slot);
       const selected = slot === prefs.slot;
       const isAssigned = slot !== 0 && slot === assignedSlot;
+      const isPending = slot !== 0 && slot === pendingSwap;
       button.classList.toggle("on", selected);
       button.classList.toggle("assigned", isAssigned && !selected);
+      button.classList.toggle("pending", isPending && !selected);
       button.setAttribute("aria-pressed", selected ? "true" : "false");
     }
   }
@@ -2049,6 +2202,8 @@
       slotLine.textContent = "Waiting for the PC\u2026";
     } else if (assignedSlot <= 0) {
       slotLine.textContent = "Waiting for the PC to assign a pad\u2026";
+    } else if (pendingSwap > 0) {
+      slotLine.textContent = `Asked P${pendingSwap} \u2014 waiting for their answer\u2026`;
     } else if (prefs.slot === 0) {
       slotLine.textContent = `Using P${assignedSlot} (AUTO).`;
     } else if (prefs.slot === assignedSlot) {
@@ -2059,11 +2214,29 @@
   }
 
   function chooseSlot(slot) {
-    prefs.slot = Math.max(0, Math.min(MAX_PLAYERS, slot));
-    savePref(PREF.slot, prefs.slot);
+    const wanted = Math.max(0, Math.min(MAX_PLAYERS, slot));
+    // Moving onto another player's pad needs their consent. Do not change the
+    // preference yet: a decline must leave this tab exactly where it was.
+    if (connected && assignedSlot > 0 && wanted !== 0 && wanted !== assignedSlot) {
+      requestSwap(wanted);
+      return;
+    }
+    if (pendingSwap) {
+      clearPendingSwap();
+      if (socket && socket.readyState === WebSocket.OPEN) {
+        try {
+          socket.send(JSON.stringify({ t: "swap", w: 0 }));
+        } catch (_error) {
+          /* the close handler reconnects */
+        }
+      }
+    }
+    prefs.slot = wanted;
+    savePref(PREF.slot, wanted);
     lastSnapshot = "";
+    refreshSlotChips();
     syncSlotChips();
-    toast(prefs.slot === 0 ? "Player slot: automatic" : `Requesting P${prefs.slot}`);
+    toast(wanted === 0 ? "Player slot: automatic" : `Requesting P${wanted}`);
   }
 
   // ------------------------------------------------------------------ themes
@@ -2758,6 +2931,15 @@
       setPipVisible(false);
       syncScreen();
       toast("Screen preview off \u2014 re-enable it in settings");
+    });
+
+    swapAccept.addEventListener("click", (event) => {
+      event.stopPropagation();
+      answerSwap(true);
+    });
+    swapDecline.addEventListener("click", (event) => {
+      event.stopPropagation();
+      answerSwap(false);
     });
 
     pip.addEventListener("pointerdown", (event) => {

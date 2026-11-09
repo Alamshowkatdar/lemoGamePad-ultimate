@@ -1397,28 +1397,55 @@ class SettingsPanel(
     // ------------------------------------------------------------- player slot
     private fun chooseSlot(slot: Int) {
         val wanted = slot.coerceIn(0, Proto.MAX_PLAYERS)
+        // Moving onto another player's pad needs their consent. Do not change
+        // the preference yet: a decline must leave this phone exactly where it
+        // was, and the server only swaps after the other player accepts. A new
+        // request also replaces any older ask on the server.
+        if (link.connected && link.assignedSlot > 0 && wanted != 0 &&
+            wanted != link.assignedSlot
+        ) {
+            link.requestSwap(wanted)
+            lastSlotSignature = Int.MIN_VALUE
+            refreshSlotChips()
+            callbacks.toast("Asked P$wanted to swap")
+            return
+        }
+        // Choosing AUTO or the pad we already own does not send a new request,
+        // so explicitly withdraw any ask still on the other player's screen.
+        if (link.swapPending()) link.cancelSwap()
         link.wantSlot = wanted
         prefs.edit().putInt(PrefsKeys.PLAYER_SLOT, wanted).apply()
         lastSlotSignature = Int.MIN_VALUE
         refreshSlotChips()
-        callbacks.toast(if (wanted == 0) "Player slot: automatic" else "Requesting P$wanted")
+        callbacks.toast(
+            when {
+                wanted == 0 -> "Player slot: automatic"
+                wanted == link.assignedSlot -> "Player slot: P$wanted"
+                else -> "Requesting P$wanted"
+            },
+        )
     }
 
     private fun refreshSlotChips() {
         val t = pad.selectedTheme
         val want = link.wantSlot
         val assigned = link.assignedSlot
+        val pending = link.pendingSwapTarget()
         var signature = ((want + 1) * 37 + (assigned + 1)) * 31 + t.accent
         signature = signature * 31 + t.ok
+        signature = signature * 31 + (pending + 1)
         if (signature != lastSlotSignature) {
             lastSlotSignature = signature
             for ((slot, chipView) in slotViews) {
                 val selected = slot == want
                 val isAssigned = slot != 0 && slot == assigned
-                chipView.alpha = if (!selected && want != 0 && !isAssigned) 0.72f else 1f
+                val isPending = slot != 0 && slot == pending
+                chipView.alpha =
+                    if (!selected && want != 0 && !isAssigned && !isPending) 0.72f else 1f
                 chipView.setTextColor(
                     when {
                         selected -> onColor(t.accent)
+                        isPending -> t.accent
                         isAssigned -> t.text
                         else -> t.textDim
                     },
@@ -1431,11 +1458,13 @@ class SettingsPanel(
                         withAlpha(
                             when {
                                 selected -> t.accent
+                                isPending -> t.accent
                                 isAssigned -> t.ok
                                 else -> t.text
                             },
                             when {
                                 selected -> 255
+                                isPending -> 200
                                 isAssigned -> 220
                                 else -> 34
                             },
@@ -1449,6 +1478,7 @@ class SettingsPanel(
             link.host == null -> "AUTO takes the next free pad."
             !link.connected -> "Waiting for the PC…"
             assigned <= 0 -> "Waiting for the PC to assign a pad…"
+            pending > 0 -> "Asked P$pending — waiting for their answer…"
             want == 0 -> "Using P$assigned (AUTO)."
             want == assigned -> "Using P$assigned."
             else -> "P$want is busy — using P$assigned until it frees up."

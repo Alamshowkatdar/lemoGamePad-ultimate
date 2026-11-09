@@ -49,6 +49,14 @@ PC serves a page on TCP control port + 2 and accepts a WebSocket at `/ws?k=<key>
 - Ping: `{"t":"p","c":<client clock>}` → `{"t":"q","c":<echo>,"n":<assigned pad>}`,
   which also gives the page an RTT figure.
 - Slot changes are pushed as `{"t":"s","n":<assigned pad>}`.
+- Pad swap: the page sends `{"t":"swap","w":<pad>}` to request another player's
+  pad, receives `{"t":"ask","id":<request>,"f":<from pad>}` when someone asks
+  for its pad, answers `{"t":"vote","id":<request>,"ok":1|0}`, and gets
+  `{"t":"sr","id":<request>,"c":<code>,"n":<pad>}` with the result. `w:0`
+  withdraws a pending request and closes the other player's card. Result codes
+  are `1 ACCEPTED`, `2 DECLINED`, `3 TIMEOUT`, `4 UNAVAILABLE`,
+  `5 CANCELLED`. A free pad moves immediately without an ask; duplicate asks
+  and results are ignored by id.
 - Rumble: `{"t":"r","s":<small>,"l":<large>}` replaces the type-7 UDP packet for
   that peer; it is routed to the browser tab instead of an address.
 - The server assigns each WebSocket a fresh token and feeds it through the same
@@ -69,7 +77,15 @@ type 5 PING    : header + client_clock u32
 type 6 PONG    : echo of PING + loss_permille u16 (1.4+)
                  + assigned_pad u8 (1.5+)
 type 7 RUMBLE  : header + small u8 + large u8
+type 8 SLOT_REQUEST : header + target pad u8 (1..8)            (1.6.9+)
+type 9 SLOT_ASK     : header + request_id u32 + requester pad u8
+type 10 SLOT_VOTE   : header + request_id u32 + accept u8
+type 11 SLOT_RESULT : header + request_id u32 + result u8 + pad u8
 ```
+
+Types 8–11 are additive. `VERSION` stays 1: an older app ignores the new types,
+and a request to one simply times out. Result codes are `1 ACCEPTED`,
+`2 DECLINED`, `3 TIMEOUT`, `4 UNAVAILABLE`, `5 CANCELLED`.
 
 Button bits: Select 0, L3 1, R3 2, Start 3, Up 4, Right 5, Down 6, Left 7,
 L2 8, R2 9, L1 10, R1 11, Triangle 12, Circle 13, Cross 14, Square 15, PS 16.

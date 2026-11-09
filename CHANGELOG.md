@@ -2,6 +2,45 @@
 
 Newest first. The reasoning behind each release is in [`docs/REVIEW.md`](docs/REVIEW.md).
 
+## 1.6.9
+
+- **Swapping onto another player's pad now needs their consent** — choosing an
+  occupied **PLAYER SLOT** used to be a request the server retried until the
+  pad happened to free up, so the other player could simply be displaced.
+  The PC now asks that player with a small non-blocking **Accept / Decline**
+  card on their phone or browser tab. The swap only happens on **Accept**. A
+  **Decline**, a player leaving, or no answer within **10 seconds** leaves both
+  players on their current pads. The requester shows a pending chip and a
+  waiting line until the answer arrives, then a short toast with the result.
+  Choosing AUTO, the current pad, or a different chip withdraws the pending ask
+  and closes the target's card (the server also replaces it when a new pad is
+  requested).
+- **The game never pauses for the popup** — the card has no backdrop, touches
+  outside it fall through to the pad, and both players keep sending input while
+  it is visible. On Android the card is dismissed when the app is paused.
+- **Free pads still move immediately** — an unoccupied target is an ordinary
+  move, with an `ACCEPTED` result rather than an ask. If two players request
+  each other's pads at the same time, that is already consent and both swap
+  immediately. A declined pair is not asked again for 2 seconds, and duplicate
+  asks/results are ignored by request id.
+- **No stale-slot bounce** — after a server-driven move or accepted swap the
+  phone's next input frames still name the old pad. The server remembers the
+  slot it moved the player away from (and briefly guards all moves) so those
+  frames cannot undo the swap; browser tabs also adopt the result's pad as
+  their live slot immediately.
+- **The browser pad matches the app** — WebSocket messages
+  `{"t":"swap","w":n}`, `{"t":"ask","id":…,"f":from}`,
+  `{"t":"vote","id":…,"ok":1|0}` and `{"t":"sr","id":…,"c":code,"n":slot}` drive
+  the same card and pending state. `{"t":"swap","w":0}` withdraws a pending ask.
+  Rumble is unaffected, and a disconnected tab leaves no pending prompt behind.
+- **Wire-compatible** — protocol `VERSION` stays **1**. New UDP types 8–11 are
+  ignored by older apps, and a request to an older app simply times out, so
+  1.3+ phones and servers still work together. `versionCode` is 23.
+- `pc/test_multi.py` gained accept, decline/cooldown, cancel, timeout and
+  free-slot swap tests that also assert input keeps flowing and stale input
+  cannot move a player back. `pc/test_web.py` gained a browser
+  ask/vote/accept/cancel/decline test.
+
 ## 1.6.8
 
 - **The player slot now matches the game's controller number** — pads were

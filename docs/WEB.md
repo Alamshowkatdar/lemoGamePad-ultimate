@@ -62,11 +62,13 @@ Tap the status pill to open **CONTROL CENTRE**:
 - **Status** — connected/offline state, assigned pad, latency graph with
   average/min/max/jitter, and CONNECT / RECONNECT / DISCONNECT.
 - **Connection** — the server name, `--max-phones` limit and **PLAYER SLOT**:
-  **AUTO** (next free pad) or **P1**–**P8**. A busy pad falls back to the next
-  free one and is retried until it frees up; the sheet shows which pad is
-  actually in use. The number matches the controller the game sees, because
-  the server creates every lower pad first; a move to an unused slot creates
-  that pad too.
+  **AUTO** (next free pad) or **P1**–**P8**. A free pad is assigned immediately;
+  an occupied pad now sends the other player an **Accept / Decline** card
+  instead of stealing it. The requester shows a pending chip and line until the
+  answer arrives, then a short result toast. The game keeps running on both
+  sides while the card is open, and the sheet shows which pad is actually in
+  use. The number matches the controller the game sees, because the server
+  creates every lower pad first; a move to an unused slot creates that pad too.
 - **Appearance** — the eight themes (Neon, Midnight, Violet, Crimson, Solar,
   Retro, Arctic, Mono) with a cross-fade when switching, PlayStation or
   Xbox face-button labels, and the **FULL SCREEN** toggle.
@@ -192,7 +194,8 @@ See [SECURITY.md](../SECURITY.md) for the full threat model.
 | `Pairing link is not valid` | The server restarted (new random key) or the `?k=` part was dropped. Copy the current URL or rescan the web QR. |
 | Page loads but the dot stays red | The WebSocket is blocked. Some guest / AP-isolation Wi-Fi networks block device-to-device traffic; use a normal network or USB tethering. |
 | No controller appears | All `--max-phones` slots are busy. Disconnect an idle phone or raise the limit (maximum eight). |
-| P1–P8 request is ignored | Another device already has that pad; the page falls back to the next free pad until it frees up. A free requested slot is honoured in order, so P5 is the game's fifth controller. |
+| P1–P8 request is ignored | Another device already has that pad, and that player has not accepted the swap (or declined / did not answer within 10 s). The page stays on its current pad; a free requested slot is honoured in order, so P5 is the game's fifth controller. |
+| No Accept/Decline card appears | The card only appears for the player who owns the requested pad. Make sure their tab is connected and in the foreground; the PC resends the ask for 10 s, then reports a timeout to the requester. |
 | Controls feel delayed | Prefer 5 GHz Wi-Fi and close background downloads. Try TURBO, and keep the tab in the foreground. |
 | Theme or layout did not persist | Private/incognito windows may block `localStorage`; the session still works. |
 | No vibration | iOS Safari has no Vibration API. On Android, check that the browser is allowed to vibrate. |

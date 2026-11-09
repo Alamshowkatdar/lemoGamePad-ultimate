@@ -41,6 +41,19 @@ def wait_for(predicate, timeout=4.0, message="condition not met"):
     raise AssertionError(message)
 
 
+def recv_until(client, kind: str, timeout: float = 3.0) -> dict:
+    """Next WebSocket JSON message of [kind], skipping status updates."""
+    end = time.time() + timeout
+    while time.time() < end:
+        try:
+            message = client.recv(timeout=max(0.05, end - time.time()))
+        except socket.timeout:
+            continue
+        if message.get("t") == kind:
+            return message
+    raise AssertionError(f"no {kind} message arrived")
+
+
 def start_server(max_phones: int = 2):
     udp_port = free_port()
     web_port = free_port()
@@ -384,6 +397,76 @@ def test_want_slot(server, port):
         client.close()
 
 
+def test_swap(server, port):
+    """A browser can ask, be asked, vote, and receive the result."""
+    wait_for(lambda: not server.peers, message="previous tabs did not release")
+    first = WebSocket(port, f"/ws?k={KEY}")
+    second = WebSocket(port, f"/ws?k={KEY}")
+    try:
+        assert first.recv()["t"] == "h"
+        assert second.recv()["t"] == "h"
+        first.send({"t": "i", "b": 0, "lx": 0, "ly": 0, "rx": 0, "ry": 0,
+                    "l2": 0, "r2": 0})
+        wait_for(lambda: len(server.peers) == 1, message="first tab did not register")
+        recv_until(first, "s")
+        second.send({"t": "i", "b": 0, "lx": 0, "ly": 0, "rx": 0, "ry": 0,
+                     "l2": 0, "r2": 0})
+        wait_for(lambda: len(server.peers) == 2, message="second tab did not register")
+        recv_until(second, "s")
+
+        first_peer, second_peer = list(server.peers.values())
+        assert first_peer.slot == 0 and second_peer.slot == 1
+
+        first.send({"t": "swap", "w": 2})
+        ask = recv_until(second, "ask")
+        assert ask["f"] == 1, ask
+        request_id = ask["id"]
+        assert request_id != 0
+
+        # Input keeps flowing to the pad while the popup waits for an answer.
+        first.send({"t": "i", "b": 1 << 14, "lx": 1234, "ly": 0,
+                    "rx": 0, "ry": 0, "l2": 0, "r2": 0})
+        wait_for(
+            lambda: first_peer.token in server._pending,
+            message="input stalled while a swap was pending",
+        )
+        assert first_peer.slot == 0, "the requester moved before consent"
+
+        second.send({"t": "vote", "id": request_id, "ok": 1})
+        result = recv_until(first, "sr")
+        assert result["id"] == request_id and result["c"] == 1, result
+        assert result["n"] == 2, result
+        target_result = recv_until(second, "sr")
+        assert target_result["id"] == request_id and target_result["c"] == 1
+        assert target_result["n"] == 1, target_result
+        wait_for(
+            lambda: first_peer.slot == 1 and second_peer.slot == 0,
+            message="browser pads were not swapped",
+        )
+
+        # Asking for AUTO withdraws the ask and closes the other tab's card.
+        first.send({"t": "swap", "w": 1})
+        ask = recv_until(second, "ask")
+        first.send({"t": "swap", "w": 0})
+        cancelled = recv_until(second, "sr")
+        assert cancelled["id"] == ask["id"] and cancelled["c"] == 5, cancelled
+        assert first_peer.slot == 1 and second_peer.slot == 0
+
+        # The other tab can decline a fresh request without moving either tab.
+        first.send({"t": "swap", "w": 1})
+        ask = recv_until(second, "ask")
+        assert ask["id"] != cancelled["id"]
+        second.send({"t": "vote", "id": ask["id"], "ok": 0})
+        declined = recv_until(first, "sr")
+        assert declined["c"] == 2, declined
+        assert first_peer.slot == 1 and second_peer.slot == 0
+        print("  swap ok: browser ask/vote swaps pads, decline keeps them")
+    finally:
+        first.close()
+        second.close()
+        wait_for(lambda: not server.peers, message="swap tabs were not released")
+
+
 def test_screen_unavailable(server, port):
     client = WebSocket(port, f"/screen?k={KEY}")
     try:
@@ -519,6 +602,7 @@ def main() -> int:
         test_clamp(server, port)
         test_wrong_key_and_origin(server, port)
         test_want_slot(server, port)
+        test_swap(server, port)
         test_screen_unavailable(server, port)
         test_screen_auth(server, port)
     finally:

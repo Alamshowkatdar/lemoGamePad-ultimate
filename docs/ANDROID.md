@@ -147,9 +147,15 @@ Install the APK on the other phones and pair them the same way.
 - Each phone gets **its own virtual controller**. With the default **AUTO**
   setting, XInput slot order is the order the phones first connected.
 - **Choose your player** — settings → **PLAYER SLOT** lets a phone ask for
-  **P1**…**P8**. A free pad is assigned immediately; a busy one falls back to the
-  next free pad and the phone moves over as soon as that pad frees up. The
-  status pill and the slot line show the pad the PC actually assigned.
+  **P1**…**P8**. A free pad is assigned immediately. A pad another player is
+  using sends that player a small **Accept / Decline** card instead of taking
+  the pad; the requester sees a pending slot and line until the answer arrives.
+  The status pill and the slot line show the pad the PC actually assigned.
+- **Swaps ask first** — the other player's card sits at the top of the pad with
+  no backdrop, and play continues on both phones while they decide. **Accept**
+  trades both pads; **Decline**, no answer within 10 s, or a player leaving
+  leaves everyone where they were. Free pads and two players asking for each
+  other at once apply immediately. A declined pair is not asked again for 2 s.
 - The chosen number matches the game's controller number: the server creates
   every pad from P1 up to the requested slot first, so one phone asking for
   **P5** still appears as the fifth controller rather than the first. A move to

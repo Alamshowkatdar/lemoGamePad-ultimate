@@ -7,6 +7,7 @@ import android.graphics.Color
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.SharedPreferences
+import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
@@ -38,6 +39,12 @@ class MainActivity : Activity() {
     private var editBar: LinearLayout? = null
     private var settingsPanel: SettingsPanel? = null
     private var wifiGuide: View? = null
+
+    /** Small non-blocking Accept/Decline card shown when another player asks to swap. */
+    private var swapPrompt: View? = null
+    private var swapPromptId = 0
+    private var answeredSwapId = 0
+    private val swapPromptTimeout = Runnable { dismissSwapPrompt() }
 
     /** Small draggable window that mirrors the PC screen. */
     private var screenView: ScreenView? = null
@@ -139,6 +146,8 @@ class MainActivity : Activity() {
         link.inputRate = InputRate.fromId(prefs.getString(PrefsKeys.INPUT_RATE, null))
         link.wantSlot = prefs.getInt(PrefsKeys.PLAYER_SLOT, 0)
         link.onRumble = { small, large -> handleRumble(small, large) }
+        link.onSlotAsk = { ask -> handler.post { showSwapPrompt(ask) } }
+        link.onSlotResult = { result -> handler.post { handleSlotResult(result) } }
 
         screenEnabled = prefs.getBoolean(PrefsKeys.SCREEN, false)
         screenSmall = prefs.getBoolean(PrefsKeys.SCREEN_SMALL, true)
@@ -174,6 +183,7 @@ class MainActivity : Activity() {
         // sure it cannot restart the ticker after this method clears it.
         resumed = false
         LayoutDialogs.dismissAll(this)
+        dismissSwapPrompt()
         settingsPanel?.dismiss(animate = false)
         if (view.editMode) exitEditing(save = true)
         handler.removeCallbacks(ticker)
@@ -858,6 +868,172 @@ class MainActivity : Activity() {
                     or View.SYSTEM_UI_FLAG_FULLSCREEN
                 )
         }
+    }
+
+    // --------------------------------------------------------------- pad swap
+    /**
+     * Another player wants this pad. The card is deliberately small and has no
+     * scrim: it sits above the pad without pausing input or blocking the rest
+     * of the screen, so a game in progress keeps running underneath it.
+     */
+    private fun showSwapPrompt(ask: SlotAsk) {
+        if (isFinishing || !resumed) return
+        // The PC resends the ask until it is answered. Do not rebuild the
+        // card (or reopen it after a decision) for the same request.
+        if (ask.id == answeredSwapId) return
+        // A repeated ask must not rebuild the card or reopen it after a
+        // decision; ordering across reconnects is handled per socket in Link.
+        if (swapPrompt != null && ask.id == swapPromptId) return
+        dismissSwapPrompt()
+        swapPromptId = ask.id
+        val t = view.theme
+
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(px(16), px(12), px(16), px(12))
+            background = GradientDrawable().apply {
+                cornerRadius = px(16).toFloat()
+                setColor(withAlpha(t.surface, 248))
+                setStroke(px(1), withAlpha(t.accent, 190))
+            }
+            elevation = px(12).toFloat()
+        }
+        card.addView(
+            TextView(this).apply {
+                text = "PLAYER SWAP"
+                textSize = 9.5f
+                letterSpacing = 0.14f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(t.accent)
+            },
+        )
+        card.addView(
+            TextView(this).apply {
+                text = "P${ask.fromSlot} wants to swap pads with you."
+                textSize = 13.5f
+                setTextColor(t.text)
+                setPadding(0, px(5), 0, px(2))
+            },
+        )
+        card.addView(
+            TextView(this).apply {
+                text = "Your game keeps running. Accept to trade seats."
+                textSize = 10.5f
+                setTextColor(t.textDim)
+            },
+        )
+
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.END
+            setPadding(0, px(10), 0, 0)
+        }
+        row.addView(
+            swapButton("DECLINE", t, primary = false) { answerSwap(false) },
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply { marginEnd = px(8) },
+        )
+        row.addView(
+            swapButton("ACCEPT", t, primary = true) { answerSwap(true) },
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ),
+        )
+        card.addView(row)
+
+        val wrap = FrameLayout(this).apply {
+            // No scrim and not clickable: touches outside the card fall through
+            // to the pad, so the other player can keep playing while deciding.
+            isClickable = false
+            isFocusable = false
+            addView(
+                card,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ),
+            )
+            alpha = 0f
+            translationY = -px(10).toFloat()
+        }
+        root.addView(
+            wrap,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP or Gravity.CENTER_HORIZONTAL,
+            ).apply { topMargin = px(60) },
+        )
+        swapPrompt = wrap
+        wrap.animate().alpha(1f).translationY(0f).setDuration(160).start()
+        handler.postDelayed(swapPromptTimeout, 11_000L)
+    }
+
+    private fun swapButton(
+        label: String,
+        theme: PadTheme,
+        primary: Boolean,
+        onClick: () -> Unit,
+    ): TextView = TextView(this).apply {
+        text = label
+        textSize = 11f
+        letterSpacing = 0.06f
+        gravity = Gravity.CENTER
+        typeface = Typeface.DEFAULT_BOLD
+        setTextColor(if (primary) onColor(theme.accent) else theme.text)
+        setPadding(px(14), px(8), px(14), px(8))
+        background = GradientDrawable().apply {
+            cornerRadius = px(10).toFloat()
+            setColor(if (primary) theme.accent else withAlpha(theme.surfaceAlt, 240))
+            setStroke(
+                px(1),
+                withAlpha(if (primary) theme.accent else theme.text, if (primary) 255 else 50),
+            )
+        }
+        isClickable = true
+        isFocusable = true
+        setOnClickListener { onClick() }
+    }
+
+    private fun answerSwap(accept: Boolean) {
+        val id = swapPromptId
+        dismissSwapPrompt()
+        if (id == 0) return
+        answeredSwapId = id
+        link.respondSwap(id, accept)
+        toast(if (accept) "Swap accepted" else "Swap declined")
+    }
+
+    private fun handleSlotResult(result: SlotResult) {
+        dismissSwapPrompt()
+        when (result.code) {
+            Proto.SLOT_ACCEPTED -> {
+                if (result.slot > 0) {
+                    prefs.edit().putInt(PrefsKeys.PLAYER_SLOT, result.slot).apply()
+                    toast("Swapped — now P${result.slot}")
+                }
+            }
+            Proto.SLOT_DECLINED ->
+                toast("Swap declined — staying on P${link.assignedSlot}")
+            Proto.SLOT_TIMEOUT ->
+                toast("No answer — staying on P${link.assignedSlot}")
+            Proto.SLOT_UNAVAILABLE ->
+                toast("That player left — staying on P${link.assignedSlot}")
+            else -> Unit
+        }
+    }
+
+    private fun dismissSwapPrompt() {
+        handler.removeCallbacks(swapPromptTimeout)
+        val view = swapPrompt ?: return
+        swapPrompt = null
+        swapPromptId = 0
+        view.animate().alpha(0f).translationY(-px(8).toFloat()).setDuration(120)
+            .withEndAction { root.removeView(view) }
+            .start()
     }
 
     // ------------------------------------------------------------------- misc

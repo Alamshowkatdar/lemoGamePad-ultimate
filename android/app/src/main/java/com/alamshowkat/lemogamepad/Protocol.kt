@@ -21,6 +21,20 @@ object Proto {
     const val MSG_PONG = 6
     const val MSG_RUMBLE = 7
 
+    // 1.6.9: ask the player who owns a pad before swapping seats with them.
+    // Older apps and servers ignore unknown types, so the protocol stays
+    // wire-compatible; a request to an old client simply times out.
+    const val MSG_SLOT_REQUEST = 8
+    const val MSG_SLOT_ASK = 9
+    const val MSG_SLOT_VOTE = 10
+    const val MSG_SLOT_RESULT = 11
+
+    const val SLOT_ACCEPTED = 1
+    const val SLOT_DECLINED = 2
+    const val SLOT_TIMEOUT = 3
+    const val SLOT_UNAVAILABLE = 4
+    const val SLOT_CANCELLED = 5
+
     const val HEADER_SIZE = 12
     /**
      * 28 bytes of pad state plus one optional byte requesting a pad number
@@ -73,6 +87,16 @@ object Proto {
             putInt(token)
         }.array()
 }
+
+/**
+ * A player asking to swap pads. [fromSlot] is the requester's current pad, so
+ * the popup can say "P2 wants to swap with you" without trusting a free-form
+ * name from the network.
+ */
+data class SlotAsk(val id: Int, val fromSlot: Int)
+
+/** Outcome of a swap request, including the pad the receiver now owns. */
+data class SlotResult(val id: Int, val code: Int, val slot: Int)
 
 /** Mutable controller state shared between the view and the network thread. */
 class PadState {

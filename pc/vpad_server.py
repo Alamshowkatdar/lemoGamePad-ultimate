@@ -20,6 +20,14 @@ header (12 bytes):  magic "VPAD" | ver u8 | type u8 | seq u16 | token u32
   type 5 PING    : header + client_clock u32 (ms)
   type 6 PONG    : header + same u32 echoed back
   type 7 RUMBLE  : header + small_motor u8 + large_motor u8
+  type 8 SLOT_REQUEST: header + target pad u8 (1..8)
+  type 9 SLOT_ASK   : header + request_id u32 + requester pad u8
+  type 10 SLOT_VOTE : header + request_id u32 + accept u8
+  type 11 SLOT_RESULT: header + request_id u32 + code u8 + pad u8
+
+1.6.9 adds types 8-11. They are optional: an old app ignores them, and a
+request to a client that cannot answer simply times out, so the protocol stays
+backward compatible.
 
 Button bits (PS3 naming) are defined in BUTTON_BITS below.
 """
@@ -59,6 +67,16 @@ MSG_OFFER = 3
 MSG_PING = 5
 MSG_PONG = 6
 MSG_RUMBLE = 7
+MSG_SLOT_REQUEST = 8
+MSG_SLOT_ASK = 9
+MSG_SLOT_VOTE = 10
+MSG_SLOT_RESULT = 11
+
+SLOT_ACCEPTED = 1
+SLOT_DECLINED = 2
+SLOT_TIMEOUT = 3
+SLOT_UNAVAILABLE = 4
+SLOT_CANCELLED = 5
 
 HEADER = struct.Struct("<4sBBHI")
 INPUT = struct.Struct("<4sBBHIIhhhhBBBB")  # 28 bytes
@@ -138,9 +156,35 @@ class Peer:
     # players feel as a one-frame "snap back".
     applied_seq: Optional[int] = None
     last_apply: float = 0.0
+    # After the PC moves a player by accepting a swap (or an immediate move to
+    # a free pad), the phone's next input packet still names the old pad. The
+    # old pad is now empty, so honouring that stale request would bounce the
+    # player straight back. Ignore slot requests for a moment until the result
+    # has reached the client.
+    move_guard: float = 0.0
+    # The pad this player was just moved away from. The first input frames
+    # written before the result arrived still name it; ignore those until the
+    # client asks for a different slot (or this short guard expires, so an
+    # older client that only speaks input can still deliberately move back).
+    stale_slot: int = 0
+    stale_until: float = 0.0
 
     def describe(self) -> str:
         return f"{self.name} @ {self.addr[0]}"
+
+
+@dataclass
+class SwapRequest:
+    """One player asking another for their pad; both must agree."""
+
+    id: int
+    requester: "Peer"
+    target: "Peer"
+    from_slot: int
+    to_slot: int
+    created_at: float
+    last_ask: float = 0.0
+    asks: int = 0
 
 
 class WindowsVirtualPad:
@@ -1102,6 +1146,16 @@ class Server:
     PEER_TIMEOUT = 8.0
     STATUS_INTERVAL = 0.5
     HOUSEKEEPING_INTERVAL = 0.2
+    # How long a player has to answer a swap popup before it expires.
+    SWAP_TIMEOUT = 10.0
+    # The ask is resent until answered; UDP may drop one or two datagrams.
+    SWAP_ASK_INTERVAL = 1.5
+    # Late request retries must not reopen a popup the player just declined.
+    SWAP_COOLDOWN = 2.0
+    # Input frames written before a move result got back still name the old
+    # pad. Ignore that exact request for this long; it comfortably outlives a
+    # LAN round trip without blocking a deliberate move back for long.
+    STALE_SLOT_GUARD = 5.0
     # How long select() waits with no traffic before housekeeping runs again.
     SOCKET_TIMEOUT = 0.25
     # Upper bound on datagrams handled in one wakeup. A bounded drain keeps a
@@ -1182,6 +1236,8 @@ class Server:
                 on_ping=self._web_ping,
                 on_close=self._drop_web_peer,
                 on_token=self._new_web_token,
+                on_swap=self._web_swap,
+                on_vote=self._web_vote,
                 log=self._log,
                 server_name=socket.gethostname()[:32],
                 max_players=self.max_phones,
@@ -1252,6 +1308,15 @@ class Server:
         # there can block for seconds in a Windows console with QuickEdit
         # selection active. The status thread drains this queue instead.
         self._log_queue: "queue.Queue[str]" = queue.Queue(maxsize=256)
+        # Pad swaps waiting for the other player's answer, keyed by request id.
+        # Requests are only created after the requester's own pad is known, so
+        # a swap never has to guess which seat either player is in.
+        self._swaps: dict[int, SwapRequest] = {}
+        self._swap_seq = 0
+        # (requester token, target token) -> time until which the target must
+        # not be asked again. Retries already in flight must not reopen a
+        # popup that was just declined.
+        self._swap_cooldown: dict[tuple[int, int], float] = {}
 
     @staticmethod
     def _pack_addresses(addresses) -> list:
@@ -1394,17 +1459,29 @@ class Server:
                 # A phone can ask for a different pad from the settings sheet
                 # while it is already connected. Move it only when the wanted
                 # slot is free; otherwise it stays where it is and retries.
+                # The stale-slot guard only needs to outlive the result packet;
+                # after that a deliberate request for the old pad is valid.
+                if now >= peer.stale_until:
+                    peer.stale_slot = 0
                 if 1 <= want_slot <= self.max_phones:
-                    target = self.slots[want_slot - 1]
-                    if target.peer is None:
-                        old = self._slot_of(peer)
-                        if old is not None:
-                            old.reset()
-                            moved_from = old.index
-                        target.peer = peer
-                        peer.slot = target.index
-                        peer.name = f"{peer.label} {target.index + 1}"
-                        ensure_index = target.index
+                    if want_slot == peer.stale_slot:
+                        # Frame written before the swap result reached the
+                        # phone; honouring it would undo the move.
+                        pass
+                    elif now < peer.move_guard:
+                        pass
+                    else:
+                        peer.stale_slot = 0
+                        target = self.slots[want_slot - 1]
+                        if target.peer is None:
+                            old = self._slot_of(peer)
+                            if old is not None:
+                                old.reset()
+                                moved_from = old.index
+                            target.peer = peer
+                            peer.slot = target.index
+                            peer.name = f"{peer.label} {target.index + 1}"
+                            ensure_index = target.index
             else:
                 if len(self.peers) >= self.max_phones:
                     return None, False, "full"
@@ -1449,12 +1526,25 @@ class Server:
         return peer, is_new, ""
 
     def _drop_peer(self, peer: Peer) -> None:
+        cancelled: list[tuple[Peer, int, int, int]] = []
         with self.lock:
             self.peers.pop(peer.token, None)
             slot = self._slot_of(peer)
             if slot is not None:
                 slot.reset()
             peer.released = True
+            for swap in list(self._swaps.values()):
+                if swap.requester is not peer and swap.target is not peer:
+                    continue
+                self._swaps.pop(swap.id, None)
+                other = swap.target if swap.requester is peer else swap.requester
+                other_slot = self._slot_of(other) if other is not peer else None
+                if other_slot is None:
+                    continue
+                code = SLOT_UNAVAILABLE if swap.target is peer else SLOT_CANCELLED
+                cancelled.append((other, swap.id, code, other_slot.index + 1))
+        for other, rid, code, slot_index in cancelled:
+            self._swap_result(other, rid, code, slot_index)
         self._log(f"controller disconnected: {peer.describe()}")
 
     # --------------------------------------------------------------- browser pad
@@ -1520,6 +1610,402 @@ class Server:
             if peer is None or peer.web_send is None:
                 return
         self._drop_peer(peer)
+
+    # ----------------------------------------------------------------- pad swap
+    #
+    # Changing to a pad another player owns needs their consent. The request
+    # lives on the server so it works the same for phones (UDP) and browser
+    # tabs (WebSocket), and so neither player's input path ever waits for the
+    # other: requests are handled by the existing receive/housekeeping loops.
+    def _next_swap_id(self) -> int:
+        with self.lock:
+            self._swap_seq = (self._swap_seq + 1) & 0xFFFFFFFF
+            if self._swap_seq == 0:  # 0 is reserved for unrelated status packets
+                self._swap_seq = 1
+            return self._swap_seq
+
+    def _send_udp(self, peer: Peer, mtype: int, payload: bytes = b"") -> None:
+        if peer is None or peer.web_send is not None:
+            return
+        packet = HEADER.pack(MAGIC, VERSION, mtype, 0, peer.token) + payload
+        try:
+            self.sock.sendto(packet, peer.addr)
+        except OSError:
+            pass
+
+    def _web_event(self, token: int, message: dict) -> None:
+        web = self.web
+        if web is None:
+            return
+        try:
+            web.send_event(token, message)
+        except Exception:
+            pass
+
+    def _send_slot_ask(self, swap: SwapRequest) -> None:
+        if swap.target.web_send is not None:
+            self._web_event(
+                swap.target.token,
+                {"t": "ask", "id": swap.id, "f": swap.from_slot},
+            )
+            return
+        self._send_udp(
+            swap.target,
+            MSG_SLOT_ASK,
+            struct.pack("<IB", swap.id & 0xFFFFFFFF, swap.from_slot & 0xFF),
+        )
+
+    def _swap_result(self, peer: Optional[Peer], request_id: int, code: int,
+                     slot: int) -> None:
+        if peer is None:
+            return
+        if peer.web_send is not None:
+            self._web_event(
+                peer.token,
+                {"t": "sr", "id": request_id, "c": code, "n": slot},
+            )
+            return
+        packet = HEADER.pack(MAGIC, VERSION, MSG_SLOT_RESULT, 0, peer.token)
+        packet += struct.pack("<IBB", request_id & 0xFFFFFFFF, code & 0xFF,
+                              slot & 0xFF)
+        # Three copies (plus the phone's own retries) make a lost result much
+        # less likely to leave the requester waiting for the full timeout.
+        for _ in range(3):
+            try:
+                self.sock.sendto(packet, peer.addr)
+            except OSError:
+                break
+
+    def _move_peer_locked(self, peer: Peer, index: int) -> bool:
+        """Move [peer] to a free slot; caller holds the lock."""
+        index = max(0, min(int(index), len(self.slots) - 1))
+        current = self._slot_of(peer)
+        target = self.slots[index]
+        if current is target:
+            return False
+        if target.peer is not None and target.peer is not peer:
+            return False
+        if current is not None:
+            peer.stale_slot = current.index + 1
+            peer.stale_until = time.time() + self.STALE_SLOT_GUARD
+            current.reset()
+        target.peer = peer
+        peer.slot = index
+        peer.name = f"{peer.label} {index + 1}"
+        peer.applied_seq = None
+        peer.move_guard = max(peer.move_guard, time.time() + 1.5)
+        self._pending.pop(peer.token, None)
+        return True
+
+    def _apply_swap_locked(self, swap: SwapRequest):
+        """Swap both players' pads; caller holds the lock. None on a race."""
+        requester = self.peers.get(swap.requester.token)
+        target = self.peers.get(swap.target.token)
+        if requester is not swap.requester or target is not swap.target:
+            return None
+        first = self._slot_of(requester)
+        second = self._slot_of(target)
+        if first is None or second is None or first is second:
+            return None
+        if first.index != swap.from_slot - 1 or second.index != swap.to_slot - 1:
+            return None
+
+        # Release both pads first: whatever the game last saw must not linger
+        # on the pad that is about to belong to the other player.
+        requester.stale_slot = first.index + 1
+        target.stale_slot = second.index + 1
+        stale_until = time.time() + self.STALE_SLOT_GUARD
+        requester.stale_until = stale_until
+        target.stale_until = stale_until
+        first.reset()
+        second.reset()
+        first.peer = target
+        target.slot = first.index
+        target.name = f"{target.label} {first.index + 1}"
+        second.peer = requester
+        requester.slot = second.index
+        requester.name = f"{requester.label} {second.index + 1}"
+        for peer in (requester, target):
+            peer.applied_seq = None
+            peer.released = False
+            peer.move_guard = max(peer.move_guard, time.time() + 1.5)
+            self._pending.pop(peer.token, None)
+        return requester.slot + 1, target.slot + 1
+
+    def _cancel_pending(self, requester: Peer) -> None:
+        """Withdraw this player's pending ask and close the target's card."""
+        results: list[tuple[Peer, int, int, int]] = []
+        with self.lock:
+            existing = next(
+                (s for s in self._swaps.values() if s.requester is requester),
+                None,
+            )
+            if existing is not None:
+                self._swaps.pop(existing.id, None)
+                results.append((existing.target, existing.id, SLOT_CANCELLED,
+                                existing.target.slot + 1))
+        for peer, request_id, code, slot in results:
+            self._swap_result(peer, request_id, code, slot)
+
+    def _begin_swap(self, requester: Peer, target_slot: int, now: float) -> None:
+        """Handle one request from a phone or browser, then send the answers."""
+        # AUTO, an out-of-range pad, and a plain withdrawal all mean "drop any
+        # ask this player still has pending". Do that before taking the lock
+        # for the rest, so replying to a slow browser never stalls input.
+        if not (1 <= target_slot <= self.max_phones):
+            self._cancel_pending(requester)
+            return
+        asks: list[SwapRequest] = []
+        results: list[tuple[Peer, int, int, int]] = []
+        ensure_index = None
+        with self.lock:
+            if self.peers.get(requester.token) is not requester:
+                return
+            current = self._slot_of(requester)
+            if current is None:
+                return
+            from_slot = current.index + 1
+            existing = next(
+                (s for s in self._swaps.values() if s.requester is requester),
+                None,
+            )
+
+            def cancel_existing() -> None:
+                """Drop this player's pending ask and close the target's card.
+
+                The requester withdrew it (or asked for a different pad), so it
+                already cleared its own pending UI; echoing a result here would
+                race with the new request's pending state.
+                """
+                if existing is None:
+                    return
+                self._swaps.pop(existing.id, None)
+                results.append((existing.target, existing.id, SLOT_CANCELLED,
+                                existing.target.slot + 1))
+
+            # Any pending ask from this player must be withdrawn when the new
+            # request is handled, so only one card can ever be on screen.
+            requester.stale_slot = 0
+            if target_slot == from_slot:
+                cancel_existing()
+                results.append((requester, self._next_swap_id(), SLOT_ACCEPTED,
+                                from_slot))
+            else:
+                target_index = target_slot - 1
+                target = self.slots[target_index].peer
+                key = (requester.token, target.token if target else 0)
+
+                if target is None:
+                    # The pad is free: this is an ordinary move, not a swap.
+                    cancel_existing()
+                    if self._move_peer_locked(requester, target_index):
+                        ensure_index = target_index
+                    results.append((requester, self._next_swap_id(),
+                                    SLOT_ACCEPTED, target_slot))
+                elif target is requester:
+                    cancel_existing()
+                    results.append((requester, self._next_swap_id(),
+                                    SLOT_ACCEPTED, from_slot))
+                else:
+                    mutual = next(
+                        (s for s in self._swaps.values()
+                         if s.requester is target and s.target is requester),
+                        None,
+                    )
+                    if mutual is not None:
+                        # Both players asked for each other's pad at the same
+                        # time. That is already consent: swap immediately.
+                        self._swaps.pop(mutual.id, None)
+                        if existing is not None and existing is not mutual:
+                            self._swaps.pop(existing.id, None)
+                            results.append((existing.target, existing.id,
+                                            SLOT_CANCELLED,
+                                            existing.target.slot + 1))
+                        applied = self._apply_swap_locked(mutual)
+                        if applied is None:
+                            results.append((requester, mutual.id,
+                                            SLOT_UNAVAILABLE, from_slot))
+                            results.append((target, mutual.id,
+                                            SLOT_UNAVAILABLE,
+                                            target.slot + 1))
+                        else:
+                            requester_new, target_new = applied
+                            results.append((requester, mutual.id,
+                                            SLOT_ACCEPTED, requester_new))
+                            results.append((target, mutual.id, SLOT_ACCEPTED,
+                                            target_new))
+                    elif self._swap_cooldown.get(key, 0.0) > now:
+                        results.append((requester, self._next_swap_id(),
+                                        SLOT_DECLINED, from_slot))
+                    elif existing is not None and existing.target is target:
+                        # A retry of a request that is already on screen. Do
+                        # not create a second popup; just refresh the ask.
+                        if now - existing.last_ask >= self.SWAP_ASK_INTERVAL:
+                            existing.last_ask = now
+                            existing.asks += 1
+                            asks.append(existing)
+                    elif any(
+                        s is not existing
+                        and (
+                            s.requester in (requester, target)
+                            or s.target in (requester, target)
+                        )
+                        for s in self._swaps.values()
+                    ):
+                        # One player cannot be in two swaps at once. The
+                        # existing same-pair ask was handled above, and a
+                        # mutual pair was applied above, so this is a genuine
+                        # conflict rather than a retry.
+                        results.append((requester, self._next_swap_id(),
+                                        SLOT_UNAVAILABLE, from_slot))
+                    else:
+                        cancel_existing()
+                        request_id = self._next_swap_id()
+                        swap = SwapRequest(
+                            id=request_id,
+                            requester=requester,
+                            target=target,
+                            from_slot=from_slot,
+                            to_slot=target_slot,
+                            created_at=now,
+                            last_ask=now,
+                            asks=1,
+                        )
+                        self._swaps[request_id] = swap
+                        asks.append(swap)
+
+        if ensure_index is not None:
+            self._ensure_pads_through(ensure_index)
+        for swap in asks:
+            self._send_slot_ask(swap)
+        for peer, request_id, code, slot in results:
+            self._swap_result(peer, request_id, code, slot)
+
+    def _resolve_swap(self, voter: Peer, request_id: int, accept: bool,
+                      now: float) -> None:
+        """Record the target player's answer and, on accept, trade pads."""
+        results: list[tuple[Peer, int, int, int]] = []
+        with self.lock:
+            swap = self._swaps.get(request_id)
+            if swap is None or swap.target is not voter:
+                return
+            self._swaps.pop(request_id, None)
+            if accept:
+                applied = self._apply_swap_locked(swap)
+                if applied is None:
+                    results.append((swap.requester, request_id,
+                                    SLOT_UNAVAILABLE,
+                                    swap.requester.slot + 1))
+                    results.append((voter, request_id, SLOT_UNAVAILABLE,
+                                    voter.slot + 1))
+                else:
+                    requester_new, target_new = applied
+                    results.append((swap.requester, request_id, SLOT_ACCEPTED,
+                                    requester_new))
+                    results.append((voter, request_id, SLOT_ACCEPTED,
+                                    target_new))
+            else:
+                self._swap_cooldown[(swap.requester.token, voter.token)] = (
+                    now + self.SWAP_COOLDOWN
+                )
+                results.append((swap.requester, request_id, SLOT_DECLINED,
+                                swap.requester.slot + 1))
+
+        for peer, rid, code, slot in results:
+            self._swap_result(peer, rid, code, slot)
+
+    def _service_swaps(self, now: float) -> None:
+        """Resend unanswered asks and expire requests whose players left."""
+        asks: list[SwapRequest] = []
+        results: list[tuple[Peer, int, int, int]] = []
+        with self.lock:
+            for swap in list(self._swaps.values()):
+                requester = self.peers.get(swap.requester.token)
+                target = self.peers.get(swap.target.token)
+                first = self._slot_of(swap.requester) if requester else None
+                second = self._slot_of(swap.target) if target else None
+                if (
+                    requester is not swap.requester
+                    or target is not swap.target
+                    or first is None
+                    or second is None
+                    or first.index != swap.from_slot - 1
+                    or second.index != swap.to_slot - 1
+                ):
+                    self._swaps.pop(swap.id, None)
+                    if first is not None:
+                        results.append((requester, swap.id, SLOT_UNAVAILABLE,
+                                        first.index + 1))
+                    if second is not None:
+                        results.append((target, swap.id, SLOT_CANCELLED,
+                                        second.index + 1))
+                    continue
+
+                if now - swap.created_at >= self.SWAP_TIMEOUT:
+                    self._swaps.pop(swap.id, None)
+                    self._swap_cooldown[(requester.token, target.token)] = (
+                        now + self.SWAP_COOLDOWN
+                    )
+                    results.append((requester, swap.id, SLOT_TIMEOUT,
+                                    first.index + 1))
+                    results.append((target, swap.id, SLOT_CANCELLED,
+                                    second.index + 1))
+                    continue
+
+                if now - swap.last_ask >= self.SWAP_ASK_INTERVAL:
+                    swap.last_ask = now
+                    swap.asks += 1
+                    asks.append(swap)
+
+            for key, until in list(self._swap_cooldown.items()):
+                if until <= now:
+                    self._swap_cooldown.pop(key, None)
+
+        for swap in asks:
+            self._send_slot_ask(swap)
+        for peer, rid, code, slot in results:
+            self._swap_result(peer, rid, code, slot)
+
+    def _handle_slot_request(self, data: bytes, addr: tuple, now: float) -> None:
+        if len(data) < HEADER.size + 1:
+            return
+        token = HEADER.unpack_from(data)[4]
+        target_slot = data[HEADER.size]
+        with self.lock:
+            peer = self.peers.get(token)
+            if peer is None or peer.web_send is not None or peer.addr != addr:
+                return
+        self._begin_swap(peer, target_slot, now)
+
+    def _handle_slot_vote(self, data: bytes, addr: tuple, now: float) -> None:
+        if len(data) < HEADER.size + 5:
+            return
+        token = HEADER.unpack_from(data)[4]
+        request_id, accept = struct.unpack_from("<IB", data, HEADER.size)
+        with self.lock:
+            voter = self.peers.get(token)
+            if voter is None or voter.web_send is not None or voter.addr != addr:
+                return
+        self._resolve_swap(voter, request_id, bool(accept), now)
+
+    def _web_swap(self, token: int, wanted: int) -> None:
+        with self.lock:
+            peer = self.peers.get(token)
+        if peer is None:
+            self._web_event(
+                token,
+                {"t": "sr", "id": self._next_swap_id(),
+                 "c": SLOT_UNAVAILABLE, "n": 0},
+            )
+            return
+        self._begin_swap(peer, int(wanted), time.time())
+
+    def _web_vote(self, token: int, request_id: int, accept: bool) -> None:
+        with self.lock:
+            voter = self.peers.get(token)
+        if voter is None:
+            return
+        self._resolve_swap(voter, int(request_id), bool(accept), time.time())
 
     # ------------------------------------------------------------------- rumble
     def _slot_rumble(self, slot: PadSlot, small: int, large: int) -> None:
@@ -1722,6 +2208,10 @@ class Server:
         for peer in gone:
             self._drop_peer(peer)
 
+        # Swap requests are serviced here so the receive thread never sleeps
+        # waiting for an answer; resends and timeouts ride on housekeeping.
+        self._service_swaps(now)
+
     # --------------------------------------------------------------------- main
     def run(self) -> None:
         _begin_high_res_timer()
@@ -1774,6 +2264,12 @@ class Server:
             return
         if mtype == MSG_INPUT and len(data) >= INPUT_SIZE:
             self._handle_input(data, addr, now)
+            return
+        if mtype == MSG_SLOT_REQUEST:
+            self._handle_slot_request(data, addr, now)
+            return
+        if mtype == MSG_SLOT_VOTE:
+            self._handle_slot_vote(data, addr, now)
 
     def _drain(self, now: float) -> None:
         """

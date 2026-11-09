@@ -21,7 +21,8 @@
 | Windows marks the tether network "Public" | The server's rules cover every profile; if you added them manually, run `pc\allow_firewall.ps1` again. |
 | Another phone connects but does nothing | The server is at its limit (default 8); check the console line `ignored <ip>: all N controller slots are in use`. Raise `--max-phones` if it was lowered. |
 | Eight phones connect but the game shows only four | Windows' XInput API exposes at most four pads, so XInput-only games cannot show eight. Pads 5–8 are DualShock 4/HID devices for DirectInput/Raw Input games and emulators; `--pad ds4` makes all eight DirectInput devices. On Linux all eight are normal Xbox 360 pads. |
-| A phone always becomes the wrong player number | Open settings → **PLAYER SLOT** and pick **P1**…**P8**. The number now matches the game's controller because lower pads are created first. A busy pad is not stolen: the phone uses the next free one and moves to the chosen pad as soon as it frees up. |
+| A phone always becomes the wrong player number | Open settings → **PLAYER SLOT** and pick **P1**…**P8**. The number now matches the game's controller because lower pads are created first. A free pad is assigned immediately; an occupied pad sends that player an **Accept / Decline** card instead of stealing it. |
+| Choosing another player's pad does nothing | That player has not accepted yet, declined, or did not answer within 10 s. The requester stays on its current pad and gets a result toast; try again, or pick a free pad. |
 | Two phones rumble each other | Fixed: rumble is routed per slot and duplicate reports are filtered. |
 | "Another copy of lemoGamePad-server may already be running" | Only one instance can own UDP 9876. Close the old one (Task Manager). |
 | Buttons stuck down | The server releases everything after 1.5 s without packets, and on exit. |

@@ -17,6 +17,7 @@ import java.net.NetworkInterface
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.security.SecureRandom
+import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.locks.LockSupport
 import kotlin.concurrent.thread
 import kotlin.math.abs
@@ -107,6 +108,24 @@ class Link(private val state: PadState, context: Context? = null) {
     /** Pad the PC actually assigned, reported in PONG. 0 = not assigned yet. */
     @Volatile var assignedSlot: Int = 0
 
+    /** A player is asking to swap pads; the UI shows a small Accept/Decline card. */
+    var onSlotAsk: ((SlotAsk) -> Unit)? = null
+
+    /** Result of this phone's own swap request (or of a swap it accepted). */
+    var onSlotResult: ((SlotResult) -> Unit)? = null
+
+    /**
+     * Target of an outgoing swap request, 0 when idle. The request is retried
+     * until the PC answers, so a dropped datagram cannot leave the UI waiting.
+     */
+    @Volatile private var swapTarget: Int = 0
+    @Volatile private var swapStartedAt: Long = 0L
+    @Volatile private var swapNextSendAt: Long = 0L
+    @Volatile private var swapCancelPending: Boolean = false
+
+    /** Votes queued by the UI; the sender thread writes them to the socket. */
+    private val pendingVotes = ConcurrentLinkedQueue<Pair<Int, Boolean>>()
+
     /** Sender policy; changing it wakes the sender so the new rate applies now. */
     @Volatile var inputRate: InputRate = InputRate.STANDARD
         set(value) {
@@ -196,6 +215,9 @@ class Link(private val state: PadState, context: Context? = null) {
         updateWifiLock(false)
         connected = false
         lastPongAt = 0
+        swapTarget = 0
+        swapCancelPending = false
+        pendingVotes.clear()
         resetStats()
     }
 
@@ -220,6 +242,49 @@ class Link(private val state: PadState, context: Context? = null) {
         if (running) rebind()
     }
 
+    /**
+     * Ask the player who owns [target] to swap pads. The request does not
+     * change [wantSlot] until the PC reports that it was accepted, so a
+     * decline leaves this phone exactly where it was.
+     */
+    fun requestSwap(target: Int) {
+        val wanted = target.coerceIn(1, Proto.MAX_PLAYERS)
+        if (!connected || assignedSlot <= 0 || wanted == assignedSlot) {
+            // No live pad to trade, or the user picked their own pad.
+            if (wanted == assignedSlot) wantSlot = wanted
+            return
+        }
+        swapTarget = wanted
+        swapStartedAt = SystemClock.uptimeMillis()
+        swapNextSendAt = 0L
+        wakeSender()
+    }
+
+    /**
+     * Withdraw an outgoing swap request, e.g. when the player picks AUTO or a
+     * free pad instead. The PC closes the other player's card instead of
+     * leaving it open until the timeout.
+     */
+    fun cancelSwap() {
+        if (swapTarget == 0 && !swapCancelPending) return
+        swapTarget = 0
+        swapCancelPending = true
+        wakeSender()
+    }
+
+    /** Answer a [SlotAsk]; safe to call from the UI thread. */
+    fun respondSwap(id: Int, accept: Boolean) {
+        if (id == 0) return
+        pendingVotes.add(id to accept)
+        wakeSender()
+    }
+
+    /** True while this phone is waiting for the other player's answer. */
+    fun swapPending(): Boolean = swapTarget != 0
+
+    /** The pad this phone is waiting for, or 0. */
+    fun pendingSwapTarget(): Int = swapTarget
+
     private fun resetConnection() {
         connected = false
         lastPongAt = 0
@@ -229,6 +294,9 @@ class Link(private val state: PadState, context: Context? = null) {
         cachedTransport = null
         serverName = ""
         assignedSlot = 0
+        swapTarget = 0
+        swapCancelPending = false
+        pendingVotes.clear()
         resetStats()
     }
 
@@ -463,6 +531,46 @@ class Link(private val state: PadState, context: Context? = null) {
                             s.send(DatagramPacket(sendBuffer, n, addr, port))
                             lastPingAt = now
                         }
+
+                        // Votes are answers to another player's request. A
+                        // pair of extra copies costs almost nothing and makes
+                        // a lost UDP packet much less likely to leave the
+                        // requester waiting for the full timeout.
+                        while (true) {
+                            val vote = pendingVotes.poll() ?: break
+                            val n = buildSlotVote(vote.first, vote.second)
+                            repeat(3) {
+                                s.send(DatagramPacket(sendBuffer, n, addr, port))
+                            }
+                        }
+
+                        // A withdrawn request is sent as pad 0, which the PC
+                        // treats as a cancellation of this player's pending
+                        // ask. Three copies make a lost datagram harmless.
+                        if (swapCancelPending) {
+                            swapCancelPending = false
+                            val n = buildSwapRequest(0)
+                            repeat(3) {
+                                s.send(DatagramPacket(sendBuffer, n, addr, port))
+                            }
+                        }
+
+                        // An outgoing swap request is retried until the PC
+                        // reports an outcome. Input keeps streaming from the
+                        // same loop the whole time, so the game is untouched.
+                        val target = swapTarget
+                        if (target != 0) {
+                            if (now - swapStartedAt > SWAP_LOCAL_TIMEOUT_MS) {
+                                swapTarget = 0
+                                onSlotResult?.invoke(
+                                    SlotResult(0, Proto.SLOT_TIMEOUT, assignedSlot),
+                                )
+                            } else if (now >= swapNextSendAt) {
+                                val n = buildSwapRequest(target)
+                                s.send(DatagramPacket(sendBuffer, n, addr, port))
+                                swapNextSendAt = now + SWAP_REQUEST_INTERVAL_MS
+                            }
+                        }
                     } catch (_: Exception) {
                         // Link hiccup - the watchdog below rebuilds the socket.
                     }
@@ -485,7 +593,12 @@ class Link(private val state: PadState, context: Context? = null) {
             } else {
                 val pingIn = lastPingAt + PING_INTERVAL_MS - SystemClock.uptimeMillis()
                 val keepIn = lastInputAt + keepaliveMs(rate) - SystemClock.uptimeMillis()
-                min(min(pingIn, keepIn), IDLE_PARK_MS).coerceAtLeast(1L)
+                val swapIn = if (swapTarget != 0) {
+                    (swapNextSendAt - SystemClock.uptimeMillis()).coerceAtLeast(1L)
+                } else {
+                    Long.MAX_VALUE
+                }
+                min(min(pingIn, keepIn), min(swapIn, IDLE_PARK_MS)).coerceAtLeast(1L)
             }
             LockSupport.parkNanos(wakeIn * 1_000_000L)
         }
@@ -554,10 +667,25 @@ class Link(private val state: PadState, context: Context? = null) {
         return Proto.HEADER_SIZE + 4
     }
 
+    private fun buildSwapRequest(target: Int): Int {
+        val b = begin(Proto.MSG_SLOT_REQUEST)
+        b.put(target.toByte())
+        return Proto.HEADER_SIZE + 1
+    }
+
+    private fun buildSlotVote(id: Int, accept: Boolean): Int {
+        val b = begin(Proto.MSG_SLOT_VOTE)
+        b.putInt(id)
+        b.put(if (accept) 1 else 0)
+        return Proto.HEADER_SIZE + 5
+    }
+
     // ---------------------------------------------------------------- receiver
     private fun receiveLoop(gen: Int) {
         raisePriority()
         val buf = ByteArray(512)
+        var lastResultId = 0
+        var lastAskId = 0
 
         while (running && generation == gen) {
             val s = sock
@@ -616,6 +744,43 @@ class Link(private val state: PadState, context: Context? = null) {
                         val small = b.get().toInt() and 0xFF
                         val large = b.get().toInt() and 0xFF
                         onRumble?.invoke(small, large)
+                    }
+                }
+                Proto.MSG_SLOT_ASK -> {
+                    if (len >= Proto.HEADER_SIZE + 5) {
+                        val id = b.int
+                        val from = b.get().toInt() and 0xFF
+                        // Resends repeat an id, and a delayed older ask can
+                        // arrive after a newer one. Ids grow within a session,
+                        // and both counters restart with the socket.
+                        if (id != 0 && from in 1..Proto.MAX_PLAYERS &&
+                            id > lastAskId
+                        ) {
+                            lastAskId = id
+                            onSlotAsk?.invoke(SlotAsk(id, from))
+                        }
+                    }
+                }
+                Proto.MSG_SLOT_RESULT -> {
+                    if (len >= Proto.HEADER_SIZE + 6) {
+                        val id = b.int
+                        // Results are sent three times, and an older outcome
+                        // can arrive after a newer one. Request ids only grow,
+                        // so drop anything at or below the last one: applying
+                        // it would drag the phone back to an old pad.
+                        if (id != 0 && id <= lastResultId) continue
+                        val code = b.get().toInt() and 0xFF
+                        val slot = b.get().toInt() and 0xFF
+                        val assigned = if (slot in 1..Proto.MAX_PLAYERS) slot else 0
+                        if (code == Proto.SLOT_ACCEPTED && assigned > 0) {
+                            // Both players keep the pad they ended up on, so
+                            // the next input packets cannot move them back.
+                            assignedSlot = assigned
+                            wantSlot = assigned
+                        }
+                        swapTarget = 0
+                        if (id != 0) lastResultId = id
+                        onSlotResult?.invoke(SlotResult(id, code, assigned))
                     }
                 }
             }
@@ -1184,6 +1349,16 @@ class Link(private val state: PadState, context: Context? = null) {
 
         /** TURBO frame spacing: 4 ms ≈ 250 Hz. */
         const val TURBO_PERIOD_MS = 4L
+
+        /** How often an unanswered swap request is retried. */
+        const val SWAP_REQUEST_INTERVAL_MS = 800L
+
+        /**
+         * Local give-up point. The server stops asking after its own timeout;
+         * this only stops the phone from retrying forever when the request or
+         * every answer was lost.
+         */
+        const val SWAP_LOCAL_TIMEOUT_MS = 12_000L
 
         /** Which token this install keeps for good; see [token]. */
         fun loadToken(context: Context?): Int {

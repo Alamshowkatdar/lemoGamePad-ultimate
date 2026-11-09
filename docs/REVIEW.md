@@ -1,4 +1,4 @@
-# Review notes — 1.3.6 / 1.3.7 / 1.4.0 / 1.5.0 / 1.6.0 / 1.6.1 / 1.6.2 / 1.6.3 / 1.6.4 / 1.6.5 / 1.6.6 / 1.6.7 / 1.6.8
+# Review notes — 1.3.6 / 1.3.7 / 1.4.0 / 1.5.0 / 1.6.0 / 1.6.1 / 1.6.2 / 1.6.3 / 1.6.4 / 1.6.5 / 1.6.6 / 1.6.7 / 1.6.8 / 1.6.9
 
 A pass over the whole app (Kotlin sources, manifest, Gradle files, CI) focused on
 bugs, UI smoothness, and making the phone-to-phone Bluetooth gamepad honest.
@@ -23,7 +23,9 @@ full-screen toggle to the browser CONTROL CENTRE (see
 CONTROL CENTRE closing on the tap that opened it (see
 [Control Centre tap-through (1.6.7)](#control-centre-tap-through-167)); 1.6.8
 makes a requested slot match the game's controller number and fixes moves to
-never-used pads (see [Player slot order (1.6.8)](#player-slot-order-168)).
+never-used pads (see [Player slot order (1.6.8)](#player-slot-order-168));
+1.6.9 makes changing to an occupied pad a consent-based swap that never pauses
+input (see [Player swap consent (1.6.9)](#player-swap-consent-169)).
 This file records what was found and what changed, so the reasoning does not get
 lost between releases.
 
@@ -728,3 +730,107 @@ enumeration order cannot change when a phone leaves or reconnects.
 - `test_requested_slot` now waits for the moved-to pad and sends a button
   press, so a move that leaves `pad is None` fails instead of silently
   dropping input.
+
+## Player swap consent (1.6.9)
+
+### Symptom
+
+Selecting a pad that another player was already using looked like it worked,
+but the display could disagree with the game. The old path treated a busy pad
+as a request to move "as soon as it frees up" and retried it on every input
+packet. Two players could therefore fight over the same seat, and a player who
+had deliberately settled on P2 could be displaced the moment they stopped
+pressing buttons.
+
+### Design
+
+Changing pads is a social action, so the other player now has to agree. The
+request lives on the PC rather than in either client, for three reasons:
+
+- phones and browser tabs use different transports (UDP and WebSocket) but must
+  behave identically;
+- the receive and housekeeping loops already run without blocking input, so a
+  request can wait for an answer without pausing either pad;
+- the PC knows both players' real slots, so a request cannot be applied to a
+  seat that changed while the popup was open.
+
+New UDP types keep `VERSION` at 1:
+
+```
+type 8  SLOT_REQUEST : header + target pad u8 (1..8)
+type 9  SLOT_ASK     : header + request_id u32 + requester pad u8
+type 10 SLOT_VOTE    : header + request_id u32 + accept u8
+type 11 SLOT_RESULT  : header + request_id u32 + code u8 + pad u8
+```
+
+Result codes are `ACCEPTED=1`, `DECLINED=2`, `TIMEOUT=3`, `UNAVAILABLE=4` and
+`CANCELLED=5`. An older app ignores the unknown types, and an older app that is
+asked cannot answer, so the request expires. That is why protocol compatibility
+does not need a version bump.
+
+### Server
+
+- `_begin_swap` runs on the receive thread (UDP) or the WebSocket thread and
+  validates that the requester still owns its recorded slot. A free target is
+  an immediate `_move_peer_locked`, not a swap. The requester's preferred slot
+  is not changed until the answer is `ACCEPTED`.
+- Occupied targets get one `SwapRequest` and an ask. The ask is resent every
+  **1.5 s** because UDP may drop it; a duplicate request for the same pair
+  refreshes the existing ask instead of opening a second popup.
+- `_service_swaps` runs from housekeeping, resends asks, expires a request after
+  **10 s**, and cancels it when either player disconnects or changes pads. A
+  declined pair is put on a **2 s** cooldown so late retries cannot reopen the
+  card. Results are sent three times over UDP.
+- On accept, `_apply_swap_locked` re-checks both slot indexes and peer
+  identities before trading them, then resets both pads so stale game state
+  cannot leak across. Mutual simultaneous requests count as consent and swap
+  at once.
+- Duplicate asks and results are ignored by request id on both clients, and ids
+  only grow within a connection, so a delayed older ask or result cannot reopen
+  a card or drag a player back to an old pad. Both counters restart with the
+  socket, so a restarted PC (whose ids start over) is not mistaken for stale
+  traffic.
+
+### Stale-slot protection
+
+After the PC moves a player, the next input datagrams were already written with
+the *old* pad number. The old pad is now free, so the normal "move to a free
+requested slot" path would immediately move the player back. `Peer.stale_slot`
+remembers the pad the server moved the player away from and ignores that exact
+request until the client asks for a different slot. A short `move_guard` also
+suppresses immediate moves while the result is in flight; this matters most for
+browser frames, which can be queued before the result reaches the page. The
+old-slot guard expires after `STALE_SLOT_GUARD` (5 s), so an older client that
+only speaks input packets can still deliberately move back, while a result on a
+LAN has long since arrived.
+
+### Clients
+
+- Android: `Link` sends requests and retries them, surfaces `SlotAsk` and
+  `SlotResult`, filters duplicates and has a local timeout. `MainActivity`
+  shows a small card at the top of the pad. It has no scrim and dismisses on
+  pause; `SettingsPanel` shows the pending slot and line.
+- Browser: `{"t":"swap","w":n}`, `{"t":"ask","id":…,"f":from}`,
+  `{"t":"vote","id":…,"ok":1|0}` and `{"t":"sr","id":…,"c":code,"n":slot}`.
+  The card and actions share the same `pointer-events` rules as the rest of the
+  overlay: the card itself ignores touches except its two buttons, so the pad
+  underneath still receives play. The tab adopts the accepted slot as both
+  `assignedSlot` and its saved preference so its next frame cannot claim the old
+  pad.
+- Both clients keep the other player's input path untouched: no modal, no input
+  lock, no pause.
+
+### Tests
+
+- `pc/test_multi.py::test_swap_accept` asserts the ask arrives, both pads keep
+  receiving input while it is open, the swap happens only after `ACCEPT`, and a
+  stale input packet naming the old pad does not move the player back.
+- `test_swap_decline` checks the decline result and that a retry during the
+  cooldown does not reopen the request. `test_swap_cancel` withdraws an ask and
+  asserts the target gets `CANCELLED`, nobody moves, and the pair can ask again
+  immediately. `test_swap_timeout` shortens the timeout and asserts nobody
+  moves. `test_free_slot_request` covers the immediate-move path and stale
+  input.
+- `pc/test_web.py::test_swap` drives two WebSocket tabs through ask, input while
+  pending, accept with both results, a cancellation via `w:0`, and a subsequent
+  decline.

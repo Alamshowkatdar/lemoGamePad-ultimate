@@ -95,6 +95,8 @@ class WebGamepadServer:
         server_name: str = "lemoGamePad",
         max_players: int = 8,
         screen_info: Optional[Callable[[], Optional[dict]]] = None,
+        on_swap: Optional[Callable] = None,
+        on_vote: Optional[Callable] = None,
     ):
         self.port = port
         self.key = key
@@ -102,6 +104,8 @@ class WebGamepadServer:
         self.on_ping = on_ping
         self.on_close = on_close
         self.on_token = on_token
+        self.on_swap = on_swap
+        self.on_vote = on_vote
         self.log = log or print
         self.server_name = server_name or "lemoGamePad"
         self.max_players = max(1, int(max_players))
@@ -113,6 +117,9 @@ class WebGamepadServer:
         self._thread: Optional[threading.Thread] = None
         self._connections: set = set()
         self._connections_lock = threading.Lock()
+        # Pad-mode connections by token, so the server can push a swap ask or
+        # result to the tab that owns a pad.
+        self._tokens: dict[int, "_Connection"] = {}
 
     # ---------------------------------------------------------------- lifecycle
     def start(self) -> None:
@@ -177,6 +184,37 @@ class WebGamepadServer:
     def _untrack(self, connection: "_Connection") -> None:
         with self._connections_lock:
             self._connections.discard(connection)
+            if self._tokens.get(connection.token) is connection:
+                self._tokens.pop(connection.token, None)
+
+    def _bind_token(self, connection: "_Connection") -> None:
+        with self._connections_lock:
+            self._tokens[connection.token] = connection
+
+    def send_event(self, token: int, message: dict) -> bool:
+        """Push one JSON event to the pad tab that owns [token]."""
+        with self._connections_lock:
+            connection = self._tokens.get(int(token))
+        if connection is None or connection.closed:
+            return False
+        connection.send_json(message)
+        return True
+
+    def swap(self, connection: "_Connection", wanted: int) -> None:
+        if self.on_swap is None:
+            return
+        try:
+            self.on_swap(connection.token, int(wanted))
+        except Exception as exc:
+            self.log(f"browser swap failed: {exc}")
+
+    def vote(self, connection: "_Connection", request_id: int, accept: bool) -> None:
+        if self.on_vote is None:
+            return
+        try:
+            self.on_vote(connection.token, int(request_id), bool(accept))
+        except Exception as exc:
+            self.log(f"browser swap vote failed: {exc}")
 
     def submit(self, connection: "_Connection", state: dict, want_slot: int) -> int:
         try:
@@ -485,6 +523,16 @@ class _Connection:
             self.send_json({"t": "q", "c": message.get("c"), "n": slot})
             return
 
+        if kind == "swap":
+            self.web.swap(self, _clamp(message.get("w"), 0, 8))
+            return
+
+        if kind == "vote":
+            request_id = _clamp(message.get("id"), 0, 0xFFFFFFFF)
+            accept = bool(_clamp(message.get("ok"), 0, 1))
+            self.web.vote(self, request_id, accept)
+            return
+
         # Anything else is controller state. Unknown fields are ignored, so an
         # older page keeps working against a newer server and vice versa.
         self.seq = (self.seq + 1) & 0xFFFF
@@ -544,6 +592,7 @@ class _Connection:
             self._start_screen()
         else:
             self.web.log(f"browser connected: {self.ip}")
+            self.web._bind_token(self)
             self.send_json(
                 {
                     "t": "h",

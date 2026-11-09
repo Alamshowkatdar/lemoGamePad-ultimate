@@ -13,7 +13,7 @@ by **Alam showkat**
 
 [**Download the latest release →**](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) · [Report an issue](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/issues)
 
-**App source version:** 1.6.8. Download the signed APK and the Windows/Linux server from the [latest release](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) — use **1.3.7.2 or newer** on Linux, which fixes the swapped X/Y face buttons. The release workflow also publishes a `SHA256SUMS.txt` so you can verify your download.
+**App source version:** 1.6.9. Download the signed APK and the Windows/Linux server from the [latest release](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) — use **1.3.7.2 or newer** on Linux, which fixes the swapped X/Y face buttons. The release workflow also publishes a `SHA256SUMS.txt` so you can verify your download.
 
 ---
 
@@ -44,19 +44,26 @@ either, only access to `/dev/uinput`.
 > **lemoGamePad ultimate™** — trademark of **Alam showkat**.
 > App package: `com.alamshowkat.lemogamepad`.
 
-### What's new in 1.6.8
+### What's new in 1.6.9
 
-- **PLAYER SLOT now really picks that player** — a request for **P5** used to
-  create the game's *first* virtual pad if P1–P4 had never connected, so the
-  slot chips did not match the controller number in the game. Pads are now
-  created from P1 upward in slot order, and a live move to a never-used slot
-  also creates its pad instead of dropping input.
-- **Eight controllers** — eight phones or browser tabs now take P1–P8 on Linux
-  with eight distinct real pads. Windows games that read only XInput still see
-  four (a Windows API limit); pads 5–8 are DualShock 4/HID for
-  DirectInput/Raw Input games, and `--pad ds4` makes all eight DirectInput.
-- **Everything from 1.6.7** — CONTROL CENTRE opens on a normal tap, browser
-  input applies in 1–2 ms, plus full screen and the rebuilt pad.
+- **Player swaps now ask first** — selecting a pad another player is using no
+  longer steals it. That player gets a small **Accept / Decline** card on their
+  phone or browser tab, and the game keeps running while they decide. The swap
+  happens only on **Accept**; **Decline**, no answer after 10 seconds, or a
+  player leaving leaves both players exactly where they were. A free pad still
+  moves immediately, and if two players ask for each other at the same time the
+  swap is already mutual and applies at once.
+- **The popup never pauses the game** — there is no backdrop and input keeps
+  flowing from both pads. The requester sees a pending chip and line, and the
+  result arrives as a short toast. Requests are retried over UDP, duplicate
+  asks/results are ignored by id, and a briefly stale input frame can no longer
+  bounce a player back to the old pad after a move.
+- **Browser and Android stay in step** — the same consent flow works in the
+  browser pad, including result toasts and the pending chip. Wire-compatible:
+  older apps simply ignore the new packets and an unanswered request times out.
+- **Everything from 1.6.8** — requested slots match the game's controller
+  number, moves to never-used pads create them, and eight controllers work on
+  Linux.
 - Wire-compatible with 1.3 and later apps and servers.
 
 ### Highlights from 1.6.4
@@ -175,4 +182,4 @@ licenses are listed in [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md).
 
 ---
 
-**lemoGamePad ultimate™ © Alam showkat** · v1.6.8
+**lemoGamePad ultimate™ © Alam showkat** · v1.6.9
