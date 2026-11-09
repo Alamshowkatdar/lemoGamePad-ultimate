@@ -13,7 +13,7 @@ by **Alam showkat**
 
 [**Download the latest release →**](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) · [Report an issue](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/issues)
 
-**App source version:** 1.6.0. Download the signed APK and the Windows/Linux server from the [latest release](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) — use **1.3.7.2 or newer** on Linux, which fixes the swapped X/Y face buttons. The release workflow also publishes a `SHA256SUMS.txt` so you can verify your download.
+**App source version:** 1.6.1. Download the signed APK and the Windows/Linux server from the [latest release](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) — use **1.3.7.2 or newer** on Linux, which fixes the swapped X/Y face buttons. The release workflow also publishes a `SHA256SUMS.txt` so you can verify your download.
 
 ---
 
@@ -44,30 +44,18 @@ either, only access to `/dev/uinput`.
 > **lemoGamePad ultimate™** — trademark of **Alam showkat**.
 > App package: `com.alamshowkat.lemogamepad`.
 
-### What's new in 1.6.0
+### What's new in 1.6.1
 
-- **Saved layouts** — name and keep several control arrangements. Settings →
-  **LAYOUTS** switches between them instantly; **SAVE AS…** stores the current
-  positions, sizes and hidden controls; **DEFAULT** restores the built-in pad.
-  Editing an active layout updates it in place, so the pad and its saved copy
-  never drift apart.
-- **Eight phones by default** — `--max-phones 1`…`8`, now defaulting to 8, so
-  the fifth phone is no longer rejected. On Windows pads 1–4 are Xbox
-  360/XInput and pads 5–8 automatically use DualShock 4/HID; XInput-only games
-  still see four pads, while DirectInput/Raw Input games, emulators and Linux
-  can use all eight.
-- **Choose your player** — the Android settings sheet has **PLAYER SLOT**: AUTO
-  or P1–P8. A connected phone moves to the chosen pad without reconnecting; a
-  busy pad falls back to the next free one and is retried until it frees up.
-  The status pill shows the pad the PC actually assigned.
-- **PC hardening** — partial video writes are framed safely, a silent viewer no
-  longer stalls others, token moves need the old address to go quiet, and the
-  log, IP cache and timer stay off the receive path.
-- **Safer helpers** — the ViGEm installer is re-hashed before UAC, the firewall
-  helper runs from System32, and ghost-pad cleanup only touches ViGEm devices.
-- **Android fixes** — screen preview, QR scanner and rumble shut down cleanly,
-  identity tokens use `SecureRandom`, rebinds are synchronized, and ports are
-  clamped so the video stream cannot target an invalid port.
+- **Browser gamepad** — any phone, tablet or laptop on the same Wi-Fi can now
+  play, with no app and no internet. The PC hosts a PS3-style touch pad on
+  TCP 9878 (control port + 2) with multi-touch sticks, D-pad, face buttons,
+  shoulders, triggers and a keyboard mapping. Rumble is forwarded through the
+  browser's Vibration API where supported. The page is served entirely by the
+  PC, uses a random per-run pairing key, and rejects cross-site WebSocket
+  upgrades. New flags: `--web-port`, `--web-key`, `--no-web`.
+- **Everything from 1.6.0** — saved layout presets, eight phones by default,
+  per-phone player-slot selection (P1–P8), PC hardening, safer helper
+  elevation and the Android lifecycle fixes.
 - Wire-compatible with 1.3 and later apps and servers.
 
 See the [changelog](CHANGELOG.md) for older releases and
@@ -153,4 +141,4 @@ licenses are listed in [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md).
 
 ---
 
-**lemoGamePad ultimate™ © Alam showkat** · v1.6.0
+**lemoGamePad ultimate™ © Alam showkat** · v1.6.1

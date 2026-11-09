@@ -1,4 +1,4 @@
-# Review notes — 1.3.6 / 1.3.7 / 1.4.0 / 1.5.0 / 1.6.0
+# Review notes — 1.3.6 / 1.3.7 / 1.4.0 / 1.5.0 / 1.6.0 / 1.6.1
 
 A pass over the whole app (Kotlin sources, manifest, Gradle files, CI) focused on
 bugs, UI smoothness, and making the phone-to-phone Bluetooth gamepad honest.
@@ -10,7 +10,9 @@ takes a latency pass over both halves (see
 per-phone slot selection (see [Player slots (1.5.0)](#player-slots-150)); 1.6.0
 adds saved layouts and makes the eight slots the default (see
 [Layout presets (1.6.0)](#layout-presets-160) and
-[Eight phones by default (1.6.0)](#eight-phones-by-default-160)).
+[Eight phones by default (1.6.0)](#eight-phones-by-default-160)); 1.6.1 adds a
+browser gamepad served by the PC (see
+[Browser pad (1.6.1)](#browser-pad-161)).
 This file records what was found and what changed, so the reasoning does not get
 lost between releases.
 
@@ -448,3 +450,33 @@ devices is possible in ViGEm, but the game can never open more than four.
   slots.
 - The existing multi-phone, slot-selection, rumble, idle and reconnect tests
   still pass.
+
+## Browser pad (1.6.1)
+
+The remaining gap was the device itself: an iPhone, a laptop or a phone without
+the APK could not join. WebRTC and a hosted page would add dependencies and an
+internet requirement, so the page is served by the same Python process.
+
+### Design
+
+- **Stdlib only.** `pc/web_ui.py` implements the HTTP server and WebSocket
+  framing directly. The page is plain HTML/CSS/JS in `pc/web/`; there is no
+  framework, bundler, CDN or new Python package.
+- **One input path.** Browser messages are converted to `InputState` and sent
+  through `_submit_input`, the same function UDP packets use. Slots,
+  coalescing, sequence handling, idle release and the eight-pad limit therefore
+  cannot drift between transports.
+- **Pairing key.** Every run generates `secrets.token_urlsafe(6)` unless
+  `--web-key` pins one. The page and all assets require `?k=`, and WebSocket
+  upgrades additionally require a same-host `Origin`. CSP blocks remote loads.
+- **Rumble routing.** A `Peer.web_send` callback sends motor speeds down the
+  tab's WebSocket instead of to a UDP address. Phones keep the existing path.
+- **Packaging.** Both PyInstaller builds pass `--add-data` for `pc/web`, so the
+  single-file EXE and Linux binary still serve the page.
+
+### Tests
+
+- `pc/test_web.py` drives a real server over loopback: page and asset auth,
+  wrong key (`401`), cross-site origin (`403`), input and clamping, requested
+  P2, ping/RTT response, rumble delivery and disconnect release. CI runs it.
+- All existing PC suites still pass.

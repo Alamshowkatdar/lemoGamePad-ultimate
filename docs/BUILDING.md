@@ -49,7 +49,7 @@ android/
     Protocol.kt             wire format constants + shared state
   keystore/                 your local signing key (git-ignored, never pushed)
 docs/
-  REVIEW.md                 what changed in 1.3.6–1.6.0 and why (bug list + notes)
+  REVIEW.md                 what changed in 1.3.6–1.6.1 and why (bug list + notes)
   INSTALL-WINDOWS.md        Windows install and manual setup
   INSTALL-LINUX.md          Linux release binary, source setup, capture notes
   ANDROID.md                app install, transports, pairing, usage, settings

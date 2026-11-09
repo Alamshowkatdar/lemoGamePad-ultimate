@@ -113,7 +113,7 @@ jobs:
       - name: Build standalone server
         working-directory: pc
         run: |
-          python -m PyInstaller --noconfirm --onefile --console --name lemoGamePad-server --collect-all vgamepad --collect-all mss --collect-all PIL --collect-all qrcode --exclude-module linux_pad --exclude-module evdev --distpath dist --workpath build vpad_server.py
+          python -m PyInstaller --noconfirm --onefile --console --name lemoGamePad-server --collect-all vgamepad --collect-all mss --collect-all PIL --collect-all qrcode --add-data "web;web" --exclude-module linux_pad --exclude-module evdev --distpath dist --workpath build vpad_server.py
 
       - name: Attach Windows server to release
         env:
@@ -145,7 +145,7 @@ jobs:
       - name: Build standalone server
         working-directory: pc
         run: |
-          python -m PyInstaller --noconfirm --onefile --console --name lemoGamePad-server --hidden-import linux_pad --collect-submodules evdev --collect-all mss --collect-all PIL --collect-all qrcode --distpath dist --workpath build vpad_server.py
+          python -m PyInstaller --noconfirm --onefile --console --name lemoGamePad-server --hidden-import linux_pad --collect-submodules evdev --collect-all mss --collect-all PIL --collect-all qrcode --add-data web:web --distpath dist --workpath build vpad_server.py
 
       - name: Attach Linux server to release
         env:

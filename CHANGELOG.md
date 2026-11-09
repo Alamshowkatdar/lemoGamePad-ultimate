@@ -2,7 +2,7 @@
 
 Newest first. The reasoning behind each release is in [`docs/REVIEW.md`](docs/REVIEW.md).
 
-## Unreleased
+## 1.6.1
 
 - **Browser gamepad** — the PC now hosts a gamepad page on TCP `9878`
   (control port + 2) so any phone, tablet or laptop browser on the same Wi-Fi
