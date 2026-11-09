@@ -739,7 +739,14 @@ def test_free_slot_request():
             timeout=20.0,
             message="the never-used pad was not created",
         )
-        results = first.swap_packets(2.0)
+        # The second phone is idle throughout these waits; refresh its lease so
+        # the drain below cannot outlive PEER_TIMEOUT on a slow machine.
+        second.input()
+        wait_for(
+            lambda: second.token in server.peers,
+            message="second phone was dropped before the check",
+        )
+        results = first.swap_packets(1.5)
         assert any(
             kind == "result" and code == srv.SLOT_ACCEPTED and slot == 3
             for kind, _rid, code, slot in results
