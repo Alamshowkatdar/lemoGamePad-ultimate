@@ -2,6 +2,20 @@
 
 Newest first. The reasoning behind each release is in [`docs/REVIEW.md`](docs/REVIEW.md).
 
+## Unreleased
+
+- **Browser gamepad** — the PC now hosts a gamepad page on TCP `9878`
+  (control port + 2) so any phone, tablet or laptop browser on the same Wi-Fi
+  can play. It is a full PS3-style touch pad with multi-touch sticks, D-pad,
+  face buttons, shoulders and triggers, plus a keyboard mapping (`WASD`/`IJKL`,
+  arrow keys, numpad face buttons). Rumble reaches the browser through the
+  Vibration API where supported. The page is served entirely by the PC — no
+  internet, CDN, fonts or accounts. Each run gets a random pairing key that the
+  page and WebSocket require, WebSocket upgrades are `Origin`-checked, and the
+  assets are bundled in the EXE/binary. New flags: `--web-port`, `--web-key`,
+  `--no-web`. See [Browser pad](docs/WEB.md). This is a local-network feature:
+  never expose the port to the internet.
+
 ## 1.6.0
 
 - **Eight phones works out of the box** — `--max-phones` now defaults to `8`

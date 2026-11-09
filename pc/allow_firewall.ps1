@@ -14,7 +14,10 @@ param(
     [int]$Port = 9876,
     # Control port + 1 by default; pass -VideoPort 0 to skip the screen rule.
     [ValidateRange(0, 65535)]
-    [int]$VideoPort = 0
+    [int]$VideoPort = 0,
+    # Control port + 2 by default; pass -WebPort 0 to skip the browser pad rule.
+    [ValidateRange(0, 65535)]
+    [int]$WebPort = 0
 )
 
 if ($Port -lt 1 -or $Port -gt 65534) {
@@ -68,6 +71,18 @@ if ($VideoPort -gt 0) {
     $withVideo = $true
 }
 
+$withWeb = $false
+if ($WebPort -eq 0 -and $Port -le 65533) {
+    $WebPort = $Port + 2
+}
+if ($WebPort -gt 0) {
+    if ($WebPort -lt 1 -or $WebPort -gt 65535 -or $WebPort -eq $Port -or $WebPort -eq $VideoPort) {
+        Write-Host "Invalid -WebPort $WebPort." -ForegroundColor Red
+        exit 1
+    }
+    $withWeb = $true
+}
+
 function Add-Rule {
     param([string]$Name, [string]$Protocol, [int]$LocalPort)
 
@@ -87,6 +102,10 @@ Add-Rule "lemoGamePad ultimate (UDP $Port)" "UDP" $Port
 if ($withVideo) {
     Add-Rule "lemoGamePad ultimate (TCP $VideoPort)" "TCP" $VideoPort
 }
+# The browser pad uses TCP on the control port + 2.
+if ($withWeb) {
+    Add-Rule "lemoGamePad ultimate (TCP $WebPort)" "TCP" $WebPort
+}
 
 Write-Host "Firewall rules added for:" -ForegroundColor Green
 Write-Host "  $Program"
@@ -94,5 +113,8 @@ if ($withVideo) {
     Write-Host "  UDP $Port (controller)  +  TCP $VideoPort (PC screen preview)"
 } else {
     Write-Host "  UDP $Port (controller)"
+}
+if ($withWeb) {
+    Write-Host "  TCP $WebPort (browser pad)"
 }
 Write-Host "  Profile: Any (Wi-Fi, Bluetooth PAN and USB tethering)"

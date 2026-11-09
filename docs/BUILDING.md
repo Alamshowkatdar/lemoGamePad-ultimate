@@ -13,8 +13,15 @@ pc/
   test_linux_pad.py         Linux pad + force-feedback test (no phone/game needed)
   test_video.py             screen stream (incl. multi-viewer) + QR smoke test
   test_capture.py           screen-capture backend selection (fake Wayland tools)
+  test_web.py               browser pad: HTTP, WebSocket, pairing, slots, rumble
   test_rumble.py            end-to-end rumble check through Windows XInput
   test_frozen.py            same checks against a running .exe
+  web_ui.py                 local HTTP + WebSocket server for the browser pad
+  web/
+    index.html              browser pad markup
+    style.css               responsive pad styling
+    app.js                  touch/keyboard input, WebSocket client, rumble
+    favicon.svg             page icon
   build_exe.ps1             rebuilds release/lemoGamePad-server.exe
   build_linux.sh            rebuilds dist/lemoGamePad-server (PyInstaller)
   linux/
@@ -90,7 +97,8 @@ pip install -r requirements.txt pyinstaller
 
 `build_linux.sh` produces `dist/lemoGamePad-server`. It needs the one-time
 `pc/linux/install-linux.sh` setup at runtime, and never installs packages for
-you.
+you. Both build scripts bundle `pc/web/` through PyInstaller's `--add-data`, so
+the browser pad keeps working from the single-file binary.
 
 ### Android app (needs JDK 17–21 + Android SDK platform 34 / build-tools 34)
 
@@ -137,6 +145,7 @@ For a public release, sign with your own key and keep it on a machine you contro
 python pc\test_multi.py     # multi-phone: discovery, slots, rumble routing, reconnect
 python pc\test_latency.py   # burst coalescing, ordering, PONG loss stats
 python pc\test_video.py     # streamed frames (two viewers), QR PNG
+python pc\test_web.py       # browser pad HTTP/WebSocket, pairing, slots, rumble
 python pc\test_rumble.py    # virtual pad + rumble through Windows XInput
 python pc\test_frozen.py    # same slot/viewer checks against a running .exe
 ```
@@ -150,6 +159,7 @@ python3 test_latency.py     # receive path, no driver or display needed
 python3 test_linux_pad.py   # real uinput pad, buttons/axes, force feedback
 python3 test_video.py       # needs a desktop session for screen capture
 python3 test_capture.py     # Wayland/X11 capture backend selection, no desktop needed
+python3 test_web.py         # browser pad HTTP/WebSocket, no browser needed
 ```
 
 ### Publish a change

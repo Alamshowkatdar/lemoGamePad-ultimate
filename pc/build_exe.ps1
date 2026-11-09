@@ -22,6 +22,7 @@ try {
         --collect-all mss `
         --collect-all PIL `
         --collect-all qrcode `
+        --add-data "web;web" `
         --exclude-module linux_pad `
         --exclude-module evdev `
         --distpath dist `

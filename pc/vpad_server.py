@@ -48,6 +48,8 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Optional
 
+from web_ui import WebGamepadServer
+
 MAGIC = b"VPAD"
 VERSION = 1
 
@@ -116,6 +118,7 @@ class Peer:
     token: int = 0
     addr: tuple = ("", 0)
     name: str = "phone"
+    label: str = "phone"
     slot: int = -1
     last_packet: float = 0.0
     last_seen: float = 0.0
@@ -127,6 +130,9 @@ class Peer:
     released: bool = False
     rate_mark: int = 0
     rate_mark_time: float = 0.0
+    # Browser pads do not have a UDP address to send rumble to; this callback
+    # pushes the motor speeds down their WebSocket instead. None for phones.
+    web_send: Optional[object] = None
     # Last input sequence actually pushed into the virtual pad. UDP can deliver
     # packets late or twice; applying an older state after a newer one is what
     # players feel as a one-frame "snap back".
@@ -1042,6 +1048,25 @@ def print_qr(ip: str, port: int, name: str, out_dir: str) -> None:
     print(f"  Pairing link: {payload}")
 
 
+def save_qr_png(payload: str, path: str) -> bool:
+    """Write one QR PNG; returns False when qrcode/Pillow is unavailable."""
+    try:
+        import qrcode
+
+        qr = qrcode.QRCode(
+            version=None,
+            error_correction=qrcode.constants.ERROR_CORRECT_M,
+            box_size=8,
+            border=2,
+        )
+        qr.add_data(payload)
+        qr.make(fit=True)
+        qr.make_image(fill_color="black", back_color="white").save(path)
+        return True
+    except Exception:  # pragma: no cover - optional dependency
+        return False
+
+
 class Server:
     """
     UDP control server for up to eight phones at once.
@@ -1111,6 +1136,9 @@ class Server:
         video_enabled: bool = True,
         qr_enabled: bool = True,
         max_phones: int = 8,
+        web_port: Optional[int] = None,
+        web_enabled: bool = True,
+        web_key: str = "",
     ):
         self.port = port
         self.pad_kind = pad_kind
@@ -1128,6 +1156,19 @@ class Server:
         self.slots[0].ensure_pad()
 
         self.qr_enabled = qr_enabled
+        self.web_port = int(web_port) if web_port else port + 2
+        self.web_key = web_key or secrets.token_urlsafe(6)
+        self.web: Optional[WebGamepadServer] = None
+        if web_enabled:
+            self.web = WebGamepadServer(
+                self.web_port,
+                self.web_key,
+                on_input=self._web_input,
+                on_ping=self._web_ping,
+                on_close=self._drop_web_peer,
+                on_token=self._new_web_token,
+                log=self._log,
+            )
         self.video = None
         if video_enabled:
             # The phone assumes "control port + 1" unless the user overrides it.
@@ -1266,14 +1307,17 @@ class Server:
             return True
         return now - peer.last_seen >= self.ADDRESS_GRACE
 
-    def _register_peer(self, token: int, addr: tuple, now: float, want_slot: int = 0):
+    def _register_peer(self, token: int, addr: tuple, now: float, want_slot: int = 0,
+                       label: str = "phone", web_send=None):
         """
         Finds or creates the peer for a token.
 
         [want_slot] is the 1-based pad number the phone asked for (0 = auto).
         A free requested slot is honoured; when it is taken the phone keeps its
         current pad (or takes the next free one) and tries again on the next
-        packet, so a slot frees up without reconnecting.
+        packet, so a slot frees up without reconnecting. [label] names the
+        source in logs ("phone" or "browser"). [web_send] installs a callback
+        so rumble reaches a browser tab instead of a UDP address.
 
         Returns (peer, is_new, reason). peer is None when the PC already serves
         [max_phones] controllers ("full") or when the token tried to move from
@@ -1294,6 +1338,8 @@ class Server:
                     peer.applied_seq = None
                     peer.seq = 0
                     self._pending.pop(token, None)
+                if web_send is not None:
+                    peer.web_send = web_send
                 peer.last_seen = now
                 # A phone can ask for a different pad from the settings sheet
                 # while it is already connected. Move it only when the wanted
@@ -1307,7 +1353,7 @@ class Server:
                             moved_from = old.index
                         target.peer = peer
                         peer.slot = target.index
-                        peer.name = f"phone {target.index + 1}"
+                        peer.name = f"{peer.label} {target.index + 1}"
                         ensure = target
                 return peer, False, ""
 
@@ -1327,11 +1373,13 @@ class Server:
             peer = Peer(
                 token=token,
                 addr=addr,
-                name=f"phone {slot.index + 1}",
+                name=f"{label} {slot.index + 1}",
+                label=label,
                 slot=slot.index,
                 last_seen=now,
                 rate_mark=0,
                 rate_mark_time=now,
+                web_send=web_send,
             )
             slot.peer = peer
             self.peers[token] = peer
@@ -1358,6 +1406,54 @@ class Server:
             peer.released = True
         self._log(f"controller disconnected: {peer.describe()}")
 
+    # --------------------------------------------------------------- browser pad
+    def _new_web_token(self) -> int:
+        """A fresh token for one browser connection, never colliding with a peer."""
+        with self.lock:
+            while True:
+                token = secrets.randbits(32)
+                if token and token not in self.peers:
+                    return token
+
+    def _web_input(self, token: int, ip: str, state: dict, want_slot: int, send_rumble):
+        """Adapt a browser message to the same path UDP phone input uses."""
+        frame = InputState(
+            buttons=int(state.get("buttons", 0)),
+            lx=int(state.get("lx", 0)),
+            ly=int(state.get("ly", 0)),
+            rx=int(state.get("rx", 0)),
+            ry=int(state.get("ry", 0)),
+            l2=int(state.get("l2", 0)),
+            r2=int(state.get("r2", 0)),
+            battery=int(state.get("battery", 100)),
+            seq=int(state.get("seq", 0)),
+        )
+        peer = self._submit_input(
+            token,
+            (ip, 0),
+            time.time(),
+            frame,
+            want_slot,
+            label="browser",
+            web_send=send_rumble,
+        )
+        return peer.slot + 1 if peer is not None else 0
+
+    def _web_ping(self, token: int) -> int:
+        with self.lock:
+            peer = self.peers.get(token)
+            if peer is None:
+                return 0
+            peer.last_seen = time.time()
+            return peer.slot + 1
+
+    def _drop_web_peer(self, token: int) -> None:
+        with self.lock:
+            peer = self.peers.get(token)
+            if peer is None or peer.web_send is None:
+                return
+        self._drop_peer(peer)
+
     # ------------------------------------------------------------------- rumble
     def _slot_rumble(self, slot: PadSlot, small: int, large: int) -> None:
         if not self.rumble_enabled:
@@ -1373,6 +1469,13 @@ class Server:
                 return
             addr = peer.addr
             token = peer.token
+            web_send = peer.web_send
+        if web_send is not None:
+            try:
+                web_send(small, large)
+            except Exception:
+                pass
+            return
         packet = HEADER.pack(MAGIC, VERSION, MSG_RUMBLE, 0, token)
         packet += bytes([small, large])
         try:
@@ -1394,8 +1497,26 @@ class Server:
         # 1.5 adds an optional trailing byte: the 1-based pad number the phone
         # would like. Old phones omit it (auto), old servers ignore it.
         want_slot = data[INPUT_SIZE] if len(data) > INPUT_SIZE else 0
+        state = InputState(
+            buttons=buttons, lx=lx, ly=ly, rx=rx, ry=ry,
+            l2=l2, r2=r2, battery=batt, seq=seq,
+        )
+        self._submit_input(token, addr, now, state, want_slot)
 
-        peer, fresh, reason = self._register_peer(token, addr, now, want_slot)
+    def _submit_input(self, token: int, addr: tuple, now: float, state: InputState,
+                      want_slot: int = 0, label: str = "phone",
+                      web_send=None):
+        """
+        Apply one already-parsed input frame from a phone or a browser tab.
+
+        Both transports share this path so slot assignment, sequence handling,
+        idle release and coalescing stay identical.
+        """
+        if token == 0:
+            return None
+        peer, fresh, reason = self._register_peer(
+            token, addr, now, want_slot, label=label, web_send=web_send
+        )
         if peer is None:
             if now - self._full_logged_at > 10.0:
                 self._full_logged_at = now
@@ -1407,14 +1528,16 @@ class Server:
                     self._log(
                         f"ignored {addr[0]}: all {self.max_phones} controller slots are in use"
                     )
-            return
+            return None
 
         with self.lock:
             gap = now - peer.last_packet if peer.last_packet else 0.0
             peer.last_packet = now
             peer.last_seen = now
             peer.packet_count += 1
-            peer.battery = batt
+            peer.battery = state.battery
+            if web_send is not None:
+                peer.web_send = web_send
             prev = peer.seq
             if peer.released:
                 peer.released = False
@@ -1423,14 +1546,14 @@ class Server:
             # mistaken for an out-of-order duplicate.
             if gap > 2.0:
                 peer.applied_seq = None
-                peer.seq = seq
-            elif prev == 0 or _seq_newer(seq, prev):
+                peer.seq = state.seq
+            elif prev == 0 or _seq_newer(state.seq, prev):
                 # Only advance the metric counter for packets that are actually
                 # newer. A late duplicate must not make the next forward gap
                 # look like a huge loss on the settings sparkline.
-                if prev and 0 < seq - prev < 300:
-                    peer.lost += seq - prev - 1
-                peer.seq = seq
+                if prev and 0 < state.seq - prev < 300:
+                    peer.lost += state.seq - prev - 1
+                peer.seq = state.seq
 
         if fresh:
             self._log(
@@ -1438,16 +1561,13 @@ class Server:
                 f"(pad {peer.slot + 1}/{self.max_phones})"
             )
 
-        state = InputState(
-            buttons=buttons, lx=lx, ly=ly, rx=rx, ry=ry,
-            l2=l2, r2=r2, battery=batt, seq=seq,
-        )
-        # Keep only the newest state for this phone until the next flush. A
+        # Keep only the newest state for this peer until the next flush. A
         # burst of queued datagrams then costs one pad update, not one per
         # packet, and the game always sees the freshest input.
         queued = self._pending.get(token)
-        if queued is None or _seq_newer(seq, queued[1].seq):
+        if queued is None or _seq_newer(state.seq, queued[1].seq):
             self._pending[token] = (peer, state)
+        return peer
 
     def _flush_inputs(self, now: float) -> None:
         """
@@ -1522,6 +1642,8 @@ class Server:
         _raise_thread_priority()
         if self.video is not None:
             self.video.start()
+        if self.web is not None:
+            self.web.start()
         self._print_banner()
         self._status_thread = threading.Thread(
             target=self._status_loop, name="lemo-status", daemon=True
@@ -1651,6 +1773,11 @@ class Server:
             slot = self._slot_of(peer)
             if slot is not None:
                 slot.reset()
+        if self.web is not None:
+            try:
+                self.web.stop()
+            except Exception:
+                pass
         self.release_pads()
         if self.video is not None:
             try:
@@ -1693,6 +1820,10 @@ class Server:
             lines.append(f"  Screen stream: {self.video.port} (TCP)")
         else:
             lines.append("  Screen stream: disabled")
+        if self.web is not None:
+            lines.append(f"  Browser pad  : {self.web.port} (TCP, Wi-Fi only)")
+        else:
+            lines.append("  Browser pad  : disabled")
         lines.append(f"  Controllers  : up to {self.max_phones} phones at once")
         if mixed:
             lines.append(
@@ -1709,13 +1840,20 @@ class Server:
             lines.append(f"  uinput       : {status}")
         for ip in ips:
             lines.append(f"  PC IP        : {ip}")
+        if self.web is not None:
+            for ip in ips:
+                lines.append(f"  Web pad      : {self.web_url(ip)}")
         checks = [("UDP", self.port)]
         if self.video is not None:
             checks.append(("TCP", self.video.port))
+        if self.web is not None:
+            checks.append(("TCP", self.web.port))
         lines.extend(_firewall_lines(checks))
         lines.append("")
         lines.append("  Phone: open lemoGamePad ultimate, tap the status pill,")
         lines.append("         then tap 'Scan QR' and point the camera at the code below.")
+        if self.web is not None:
+            lines.append("  Browser: open the Web pad URL on any device on the same Wi-Fi.")
         lines.append("  " + "-" * 58)
         return lines
 
@@ -1734,6 +1872,10 @@ class Server:
                 errors.append(message)
         return errors
 
+    def web_url(self, ip: str) -> str:
+        key = urllib.parse.quote(self.web_key, safe="")
+        return f"http://{ip}:{self.web_port}/?k={key}"
+
     def _print_banner(self) -> None:
         for line in self._banner_lines():
             print(line)
@@ -1744,9 +1886,17 @@ class Server:
                 print_qr(ips[0], self.port, self.hostname, os.getcwd())
                 for extra in ips[1:]:
                     print(f"  Other address: {qr_payload(extra, self.port, self.hostname)}")
+                if self.web is not None:
+                    for ip in ips:
+                        safe = ip.replace(":", "-").replace(".", "_")
+                        name = f"lemoGamePad-web-qr-{safe}.png"
+                        if save_qr_png(self.web_url(ip), os.path.join(os.getcwd(), name)):
+                            print(f"  Browser QR   : {name}")
 
         if self.video is not None and self.video.error:
             print(f"  !! {self.video.error}")
+        if self.web is not None and self.web.error:
+            print(f"  !! {self.web.error}")
         print()
 
     def _log(self, message: str) -> None:
@@ -2329,7 +2479,7 @@ def _ensure_uinput() -> None:
     print("     Log out and back in if the new 'input' group is not active yet.")
 
 
-def _ensure_dependencies(port: int, video_port, install: bool) -> None:
+def _ensure_dependencies(port: int, video_port, web_port, install: bool) -> None:
     """Bring a fresh PC up to the point where a phone can connect."""
     _ensure_python_packages(install)
     if os.name == "nt":
@@ -2339,6 +2489,8 @@ def _ensure_dependencies(port: int, video_port, install: bool) -> None:
     checks = [("UDP", port)]
     if video_port:
         checks.append(("TCP", video_port))
+    if web_port:
+        checks.append(("TCP", web_port))
     _ensure_firewall(checks, install)
 
 
@@ -2427,6 +2579,22 @@ def main(argv=None) -> int:
         default=None,
         help="screen stream TCP port (default: control port + 1)",
     )
+    ap.add_argument(
+        "--no-web",
+        action="store_true",
+        help="disable the browser gamepad (local web page)",
+    )
+    ap.add_argument(
+        "--web-port",
+        type=int,
+        default=None,
+        help="browser gamepad HTTP/WebSocket port (default: control port + 2)",
+    )
+    ap.add_argument(
+        "--web-key",
+        default="",
+        help="fixed browser pairing key (default: random for each run)",
+    )
     ap.add_argument("--video-fps", type=int, default=20, help="screen stream frame rate (default 20)")
     ap.add_argument("--video-width", type=int, default=800, help="stream width in pixels (default 800)")
     ap.add_argument("--video-quality", type=int, default=50, help="JPEG quality 20-90 (default 50)")
@@ -2454,6 +2622,17 @@ def main(argv=None) -> int:
             "the default video port would be 65536; "
             "use a lower --port or pass --video-port"
         )
+    web_port = None
+    if not args.no_web:
+        web_port = args.web_port or args.port + 2
+        if not 1 <= web_port <= 65535:
+            ap.error("--web-port must be between 1 and 65535")
+        if web_port == video_port:
+            ap.error("--web-port must differ from the screen stream port")
+        if web_port == args.port:
+            # UDP and TCP can share a number, but using different ports keeps
+            # firewall rules and logs unambiguous.
+            ap.error("--web-port must differ from the control port")
 
     if not sys.stdout.isatty():
         try:
@@ -2466,6 +2645,7 @@ def main(argv=None) -> int:
     _ensure_dependencies(
         args.port,
         video_port,
+        web_port,
         install=not args.no_install_deps,
     )
 
@@ -2480,6 +2660,9 @@ def main(argv=None) -> int:
             video_enabled=not args.no_video,
             qr_enabled=not args.no_qr,
             max_phones=args.max_phones,
+            web_port=web_port,
+            web_enabled=not args.no_web,
+            web_key=args.web_key,
         )
     except OSError as exc:
         print(f"Could not listen on UDP {args.port}: {exc}")

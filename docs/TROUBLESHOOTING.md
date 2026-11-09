@@ -27,6 +27,12 @@
 | Buttons stuck down | The server releases everything after 1.5 s without packets, and on exit. |
 | Laggy / stuttery | Use 5 GHz Wi-Fi, stay in the same room, disable battery saver for the app, and keep the phone's Wi-Fi awake. Open settings: the sparkline shows whether latency is flat or spiking, and `% uplink loss` means packets are being dropped before the PC. Typical LAN latency is 3–15 ms. Try **Input rate → TURBO** only if the game samples the pad on its own clock; otherwise **STANDARD** is better for battery. |
 | Screen preview stays black | Allow the TCP firewall prompt, or run `pc\allow_firewall.ps1`. The TCP port is control port + 1. |
+| Browser pad page does not load | Check the full `Web pad` URL from the console (it includes `?k=`), confirm the device is on the same Wi-Fi, and allow TCP control port + 2 (default `9878`) in the firewall. |
+| Browser pad says `Pairing link is not valid` | The server restarted (new random key) or the `?k=` part was dropped. Copy the current URL or rescan `lemoGamePad-web-qr-*.png`. |
+| Browser pad loads but the dot stays red | The WebSocket is blocked. Guest / AP-isolation Wi-Fi blocks device-to-device traffic; use a normal network, Bluetooth PAN or USB tethering. |
+| Browser pad connects but no controller appears | All `--max-phones` slots are busy, or the page has not sent input yet — touch the pad or press a key. Disconnect an idle phone or raise the limit (maximum eight). |
+| Browser pad has no rumble | iOS Safari has no Vibration API; rumble is skipped there. On Android, allow the browser to vibrate. |
+| Browser pad controls feel delayed | Prefer 5 GHz Wi-Fi and close background downloads. The page sends at up to 60 Hz and the server coalesces bursts. |
 | Screen preview is black or says capture is unavailable on Linux | Native Wayland blocks `mss`. Install `grim`, `spectacle` or `gnome-screenshot` (see Linux notes), or log in with an X11 session. |
 | Game doesn't see a controller | It probably wants XInput; the virtual pad *is* XInput. For DirectInput-only games, use Steam Input. |
 | Device Manager lists greyed "Xbox 360 Controller for Windows" | Ghosts from a server that was killed instead of closed. Run `pc\clean_pads.ps1` as Administrator. |

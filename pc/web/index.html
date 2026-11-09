@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="theme-color" content="#0b0e14">
+  <meta name="color-scheme" content="dark">
+  <title>lemoGamePad &mdash; browser pad</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+    <header id="hud">
+      <span id="dot" class="dot" aria-hidden="true"></span>
+      <span id="status" role="status">Connecting&hellip;</span>
+      <span id="pad" class="badge" hidden>P1</span>
+      <span id="ping" class="ping"></span>
+      <button id="help-toggle" class="ghost" type="button" aria-expanded="false">Keys</button>
+    </header>
+
+    <section id="help" hidden>
+      <div class="help-grid">
+        <div><b>Left stick</b><span>W A S D</span></div>
+        <div><b>Right stick</b><span>I J K L</span></div>
+        <div><b>D-pad</b><span>Arrow keys</span></div>
+        <div><b>Face buttons</b><span>Numpad 8 / 6 / 2 / 4</span></div>
+        <div><b>L1 / R1</b><span>Q / E</span></div>
+        <div><b>L2 / R2</b><span>1 / 2</span></div>
+        <div><b>Start / Select / PS</b><span>Enter / Shift / `</span></div>
+        <div><b>Release sticks</b><span>let go of the key</span></div>
+      </div>
+      <p class="muted">Everything stays on your Wi-Fi. This page has no internet access.</p>
+      <label class="slot-pick">Player slot
+        <select id="slot-select">
+          <option value="0" selected>Auto</option>
+          <option value="1">P1</option>
+          <option value="2">P2</option>
+          <option value="3">P3</option>
+          <option value="4">P4</option>
+          <option value="5">P5</option>
+          <option value="6">P6</option>
+          <option value="7">P7</option>
+          <option value="8">P8</option>
+        </select>
+      </label>
+    </section>
+
+    <main id="pad-ui" aria-label="Browser gamepad">
+      <div class="top">
+        <div class="shoulders">
+          <button class="btn trigger" data-btn="l2" type="button" aria-label="L2">L2</button>
+          <button class="btn bumper" data-btn="l1" type="button" aria-label="L1">L1</button>
+        </div>
+        <div class="menu">
+          <button class="btn small" data-btn="select" type="button" aria-label="Select">SEL</button>
+          <button class="btn small ps" data-btn="ps" type="button" aria-label="PlayStation">PS</button>
+          <button class="btn small" data-btn="start" type="button" aria-label="Start">START</button>
+        </div>
+        <div class="shoulders right">
+          <button class="btn bumper" data-btn="r1" type="button" aria-label="R1">R1</button>
+          <button class="btn trigger" data-btn="r2" type="button" aria-label="R2">R2</button>
+        </div>
+      </div>
+
+      <div class="middle">
+        <div class="side left">
+          <div class="stick" id="stick-l" data-stick="l" role="application" aria-label="Left analog stick" tabindex="0">
+            <div class="ring"></div>
+            <div class="knob"></div>
+            <span class="stick-label">L3</span>
+          </div>
+          <div class="dpad" role="group" aria-label="D-pad">
+            <button class="btn dpad-btn up" data-btn="up" type="button" aria-label="Up">&#9650;</button>
+            <button class="btn dpad-btn right" data-btn="right" type="button" aria-label="Right">&#9654;</button>
+            <button class="btn dpad-btn down" data-btn="down" type="button" aria-label="Down">&#9660;</button>
+            <button class="btn dpad-btn left" data-btn="left" type="button" aria-label="Left">&#9664;</button>
+          </div>
+        </div>
+
+        <div class="side right">
+          <div class="faces" role="group" aria-label="Face buttons">
+            <button class="btn face tri" data-btn="triangle" type="button" aria-label="Triangle">&#9651;</button>
+            <button class="btn face cir" data-btn="circle" type="button" aria-label="Circle">&#9675;</button>
+            <button class="btn face cro" data-btn="cross" type="button" aria-label="Cross">&#10005;</button>
+            <button class="btn face squ" data-btn="square" type="button" aria-label="Square">&#9633;</button>
+          </div>
+          <div class="stick" id="stick-r" data-stick="r" role="application" aria-label="Right analog stick" tabindex="0">
+            <div class="ring"></div>
+            <div class="knob"></div>
+            <span class="stick-label">R3</span>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <footer>
+      <p id="hint">Hold the device in landscape. Touch the pad, or use the keyboard.</p>
+    </footer>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>

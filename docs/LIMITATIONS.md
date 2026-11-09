@@ -7,6 +7,10 @@
 - LAN/local-link only, plain UDP and TCP, no encryption. The QR code is a
   convenience, not an encrypted pairing protocol. Do not forward these ports to
   the internet.
+- The browser pad is served over plain HTTP with a per-run key, and its rumble
+  reaches the page only where the browser supports the Vibration API (Android
+  yes, iOS Safari no). It cannot show the PC screen preview; use the Android app
+  for that.
 - Up to **8 phones per PC** (one virtual pad each; `--max-phones`, default 8).
   Two phones cannot both be player 1. Windows games that read only XInput still
   see at most four pads (a Windows API limit); with the default `x360` backend

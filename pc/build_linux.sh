@@ -24,6 +24,7 @@ fi
     --name lemoGamePad-server \
     --hidden-import linux_pad \
     --collect-submodules evdev \
+    --add-data "web:web" \
     vpad_server.py
 
 echo

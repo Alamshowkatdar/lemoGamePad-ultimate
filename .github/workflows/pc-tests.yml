@@ -58,6 +58,10 @@ jobs:
         working-directory: pc
         run: python test_capture.py
 
+      - name: Browser pad (HTTP, WebSocket, pairing, rumble)
+        working-directory: pc
+        run: python test_web.py
+
       - name: Virtual pad and force feedback
         working-directory: pc
         run: |

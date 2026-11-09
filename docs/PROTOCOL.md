@@ -34,6 +34,27 @@
 - QR pairing payload: `vpad://connect?h=<ip>&p=<port>&n=<hostname>`. The app also
   accepts plain `1.2.3.4:9876` text.
 
+### Browser pad transport
+
+The browser gamepad is a second transport in front of the same slot logic. The
+PC serves a page on TCP control port + 2 and accepts a WebSocket at `/ws?k=<key>`:
+
+- The page and every asset require the per-run pairing key in `?k=`; missing or
+  wrong keys return `401`. WebSocket upgrades are additionally rejected with
+  `403` when the `Origin` header does not match the `Host`.
+- Input frames are JSON text messages. The browser sends
+  `{"t":"i","b":<button bits>,"lx":…,"ly":…,"rx":…,"ry":…,"l2":…,"r2":…,"w":<slot>}`;
+  the field names mirror the UDP packet (button bits, signed 16-bit axes,
+  0–255 triggers, `w` = requested pad). The server clamps every value.
+- Ping: `{"t":"p","c":<client clock>}` → `{"t":"q","c":<echo>,"n":<assigned pad>}`,
+  which also gives the page an RTT figure.
+- Slot changes are pushed as `{"t":"s","n":<assigned pad>}`.
+- Rumble: `{"t":"r","s":<small>,"l":<large>}` replaces the type-7 UDP packet for
+  that peer; it is routed to the browser tab instead of an address.
+- The server assigns each WebSocket a fresh token and feeds it through the same
+  `_submit_input` path as UDP, so sequence handling, coalescing, idle release
+  and the eight-slot limit behave identically.
+
 Protocol (little endian):
 
 ```

@@ -41,15 +41,20 @@ By design:
 - The control protocol (UDP 9876) and video stream (TCP 9877) are
   **unauthenticated and unencrypted**. Anyone who can reach those ports on the
   PC can inject controller input or watch the screen preview.
+- The browser pad (TCP 9878) is also LAN-only. It is protected by a random
+  per-run pairing key in the URL and by an `Origin` check on the WebSocket, but
+  it runs over plain HTTP, so a device that can sniff the LAN or obtain the URL
+  can use it. Treat the key like a temporary password and restart the server to
+  rotate it.
 - The pairing token is an identity hint for controller-slot reuse, **not** a
   secret or an authentication mechanism.
 - The QR payload contains the PC's LAN address and port only.
 
 Consequences:
 
-- **Do not forward ports 9876/9877 to the internet** and do not run the server
-  on an untrusted network (public Wi-Fi, guest networks with client isolation
-  disabled, shared hosting).
+- **Do not forward ports 9876/9877/9878 to the internet** and do not run the
+  server on an untrusted network (public Wi-Fi, guest networks with client
+  isolation disabled, shared hosting).
 - This is documented in [Limitations](docs/LIMITATIONS.md). A report that input
   can be spoofed by another device on the same LAN is expected behaviour, not a
   vulnerability.
@@ -58,6 +63,8 @@ Reports that **are** in scope include, for example:
 
 - Memory-safety or denial-of-service bugs reachable from a malformed UDP/TCP
   packet (crash, unbounded allocation, resource exhaustion) on the server.
+- A bypass of the browser pad pairing key or `Origin` check that lets a web page
+  on another origin drive the pad without the URL key.
 - Remote code execution through the protocol, QR payload, server name, or
   screen-stream metadata.
 - Privilege escalation in the install scripts, the ViGEmBus download/verify
