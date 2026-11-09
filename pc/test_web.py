@@ -271,7 +271,14 @@ def test_page_and_key(server, port):
     status, _body = http_get(port, "/")
     assert status == 401, status
 
-    for marker in ("theme-grid", "slot-row", "screen-pip", "data-faces", "dialog-scrim"):
+    for marker in (
+        "theme-grid",
+        "slot-row",
+        "screen-pip",
+        "data-faces",
+        "fullscreen-toggle",
+        "dialog-scrim",
+    ):
         assert marker in body, f"page is missing {marker}"
 
     # The browser requests relative assets without the page's query string, so
@@ -282,6 +289,7 @@ def test_page_and_key(server, port):
     status, script = http_get(port, "/app.js")
     assert status == 200 and "WebSocket" in script, status
     assert "createImageBitmap" in script and "lmgb.layouts" in script
+    assert "requestFullscreen" in script and "fullscreenchange" in script
     status, icon = http_get(port, "/favicon.svg")
     assert status == 200 and "<svg" in icon, status
     print("  page/key ok: page needs the key, relative assets load")

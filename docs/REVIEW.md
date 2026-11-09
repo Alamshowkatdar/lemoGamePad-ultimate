@@ -1,4 +1,4 @@
-# Review notes — 1.3.6 / 1.3.7 / 1.4.0 / 1.5.0 / 1.6.0 / 1.6.1 / 1.6.2 / 1.6.3 / 1.6.4
+# Review notes — 1.3.6 / 1.3.7 / 1.4.0 / 1.5.0 / 1.6.0 / 1.6.1 / 1.6.2 / 1.6.3 / 1.6.4 / 1.6.5
 
 A pass over the whole app (Kotlin sources, manifest, Gradle files, CI) focused on
 bugs, UI smoothness, and making the phone-to-phone Bluetooth gamepad honest.
@@ -15,7 +15,9 @@ browser gamepad served by the PC (see
 [Browser pad (1.6.1)](#browser-pad-161)); 1.6.2 adds a scannable browser QR in
 the console; 1.6.3 fixes asset loading so the page is styled and connects;
 1.6.4 rebuilds the page to match the Android pad and adds the screen preview
-(see [Browser pad parity (1.6.4)](#browser-pad-parity-164)).
+(see [Browser pad parity (1.6.4)](#browser-pad-parity-164)); 1.6.5 adds a
+full-screen toggle to the browser CONTROL CENTRE (see
+[Browser full screen (1.6.5)](#browser-full-screen-165)).
 This file records what was found and what changed, so the reasoning does not get
 lost between releases.
 
@@ -532,3 +534,31 @@ two halves should not feel like different products.
 - A headless DOM/canvas smoke run covers boot, theme and slot cycling, HUD
   settings, a layout drag and save, and the screen toggle without a real browser.
 - All existing PC suites still pass.
+
+## Browser full screen (1.6.5)
+
+The rebuilt browser pad still ran inside the browser's chrome. On a phone the
+address bar and navigation buttons eat vertical space — exactly the space the
+bottom pills and sticks need.
+
+### Design
+
+- **One button in the CONTROL CENTRE.** APPEARANCE gained a **FULL SCREEN**
+  row. It calls `document.documentElement.requestFullscreen()` (with the
+  WebKit-prefixed fallbacks) and exits with the matching `exitFullscreen()`.
+- **State comes from the browser.** `fullscreenchange` and
+  `webkitfullscreenchange` drive the label, so the button is correct after
+  `Esc`, a system gesture or any browser-initiated exit.
+- **No dead controls.** If the API is missing the button is disabled and reads
+  **N/A** with a short hint; iPhone Safari is the notable case. A denied
+  request restores the label instead of leaving it on ON.
+- **Relayout on change.** The canvas pad and the screen preview are re-measured
+  after the viewport changes, so controls do not keep their pre-fullscreen
+  positions.
+
+### Tests
+
+- `pc/test_web.py` checks that the control is present in the served page and
+  that the full-screen handlers are in `app.js`.
+- The headless DOM/canvas smoke run boots the page with the new binding and
+  exercises the settings sheet without a real browser.

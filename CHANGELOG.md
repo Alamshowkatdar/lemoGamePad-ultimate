@@ -2,6 +2,17 @@
 
 Newest first. The reasoning behind each release is in [`docs/REVIEW.md`](docs/REVIEW.md).
 
+## 1.6.5
+
+- **Full-screen toggle in the browser pad** — the CONTROL CENTRE now has a
+  **FULL SCREEN** button in APPEARANCE. It enters/exits the browser's
+  full-screen mode, updates on `fullscreenchange`, re-lays out the pad and the
+  screen preview when the viewport changes, and restores the button label if a
+  request is denied. Browsers without the Fullscreen API (notably iPhone
+  Safari) show **N/A** with a short explanation instead of a dead button.
+- `pc/test_web.py` now checks that the control is served and that the
+  full-screen handlers shipped with the page.
+
 ## 1.6.4
 
 - **Browser pad rebuilt to match the Android app** — the page now uses the same

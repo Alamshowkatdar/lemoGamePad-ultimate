@@ -1671,7 +1671,7 @@
   });
 
   // ------------------------------------------------------------------ network
-  const VERSION = "1.6.4";
+  const VERSION = "1.6.5";
   let socket = null;
   let connected = false;
   let manualOffline = false;
@@ -1893,6 +1893,8 @@
   const layoutSummary = $("#layout-summary");
   const screenToggle = $("#screen-toggle");
   const screenHint = $("#screen-hint");
+  const fullscreenToggle = $("#fullscreen-toggle");
+  const fullscreenHint = $("#fullscreen-hint");
   const rateHint = $("#rate-hint");
   const pip = $("#screen-pip");
   const pipHint = $("#pip-hint");
@@ -2012,6 +2014,7 @@
     syncControls();
     syncLayouts();
     syncScreen();
+    syncFullscreen();
   }
 
   // --------------------------------------------------------------- slot chips
@@ -2645,6 +2648,80 @@
     syncScreen();
   }
 
+  // --------------------------------------------------------------- fullscreen
+  function fullscreenElement() {
+    return document.fullscreenElement || document.webkitFullscreenElement || null;
+  }
+
+  function fullscreenSupported() {
+    const root = document.documentElement;
+    return Boolean(
+      document.fullscreenEnabled
+      || document.webkitFullscreenEnabled
+      || (root && (root.requestFullscreen || root.webkitRequestFullscreen)),
+    );
+  }
+
+  function syncFullscreen() {
+    if (!fullscreenToggle) return;
+    const supported = fullscreenSupported();
+    const active = Boolean(fullscreenElement());
+    fullscreenToggle.disabled = !supported;
+    fullscreenToggle.textContent = supported ? (active ? "ON" : "OFF") : "N/A";
+    fullscreenToggle.classList.toggle("on", active);
+    fullscreenToggle.setAttribute("aria-pressed", active ? "true" : "false");
+    if (fullscreenHint) {
+      fullscreenHint.textContent = !supported
+        ? "This browser does not allow full screen. On iPhone, add the page to the Home Screen first."
+        : active
+          ? "Tap OFF to show the browser bars again."
+          : "Hide the browser bars and use the whole display.";
+    }
+  }
+
+  function toggleFullscreen() {
+    if (!fullscreenSupported()) {
+      toast("Full screen is not available in this browser");
+      return;
+    }
+    const root = document.documentElement;
+    try {
+      let result = null;
+      if (fullscreenElement()) {
+        const exit = document.exitFullscreen || document.webkitExitFullscreen;
+        if (exit) result = exit.call(document);
+      } else {
+        const enter = root.requestFullscreen || root.webkitRequestFullscreen;
+        if (enter) result = enter.call(root);
+      }
+      if (result && typeof result.catch === "function") {
+        result.catch(() => {
+          toast("The browser blocked full screen");
+          syncFullscreen();
+        });
+      }
+    } catch (_error) {
+      toast("The browser blocked full screen");
+    }
+    // A denied request may not fire fullscreenchange; never leave a stale label.
+    setTimeout(syncFullscreen, 150);
+  }
+
+  function bindFullscreen() {
+    if (!fullscreenToggle) return;
+    fullscreenToggle.addEventListener("click", toggleFullscreen);
+    for (const name of ["fullscreenchange", "webkitfullscreenchange"]) {
+      document.addEventListener(name, () => {
+        syncFullscreen();
+        requestAnimationFrame(() => {
+          resize();
+          if (!pip.hidden) placePip();
+        });
+      });
+    }
+    syncFullscreen();
+  }
+
   let pipDrag = null;
 
   function bindScreen() {
@@ -2914,6 +2991,7 @@
     bindControls();
     bindLayouts();
     bindScreen();
+    bindFullscreen();
     bindDialogs();
     applyCssTheme(themeNow);
     resize();

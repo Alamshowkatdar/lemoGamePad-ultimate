@@ -13,7 +13,7 @@ by **Alam showkat**
 
 [**Download the latest release →**](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) · [Report an issue](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/issues)
 
-**App source version:** 1.6.4. Download the signed APK and the Windows/Linux server from the [latest release](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) — use **1.3.7.2 or newer** on Linux, which fixes the swapped X/Y face buttons. The release workflow also publishes a `SHA256SUMS.txt` so you can verify your download.
+**App source version:** 1.6.5. Download the signed APK and the Windows/Linux server from the [latest release](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) — use **1.3.7.2 or newer** on Linux, which fixes the swapped X/Y face buttons. The release workflow also publishes a `SHA256SUMS.txt` so you can verify your download.
 
 ---
 
@@ -44,7 +44,20 @@ either, only access to `/dev/uinput`.
 > **lemoGamePad ultimate™** — trademark of **Alam showkat**.
 > App package: `com.alamshowkat.lemogamepad`.
 
-### What's new in 1.6.4
+### What's new in 1.6.5
+
+- **Full screen in the browser pad** — the CONTROL CENTRE now has a
+  **FULL SCREEN** toggle that hides the browser bars and uses the whole
+  display. It follows the browser's real full-screen state, never leaves a
+  stale label when a request is denied, and shows **N/A** where the API does
+  not exist (notably iPhone Safari, where the page must be added to the Home
+  Screen first).
+- **Everything from 1.6.4** — the rebuilt browser pad with eight themes,
+  PS/Xbox labels, player slots, latency graph, layout editing and the PC screen
+  preview.
+- Wire-compatible with 1.3 and later apps and servers.
+
+### Highlights from 1.6.4
 
 - **Browser pad rebuilt to match the Android app** — the page now has the same
   eight themes, PS/Xbox face labels, settings sheet, player-slot chips, status
@@ -118,6 +131,8 @@ http://192.168.1.20:9878/?k=<pairing-key>
   browser's `localStorage`.
 - A draggable PC screen preview with LOW/BALANCED/HIGH quality and small/large
   sizes, fed by the same JPEG stream as the Android app.
+- **Full screen** from the settings sheet, so the browser bars get out of the
+  way on a phone, tablet or laptop.
 - On a laptop, the keyboard works too (`WASD` left stick, `IJKL` right stick,
   arrows D-pad, `Q`/`E` L1/R1, `1`/`2` L2/R2, numpad face buttons).
 - Rumble is forwarded to the browser with the Vibration API where supported.
@@ -158,4 +173,4 @@ licenses are listed in [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md).
 
 ---
 
-**lemoGamePad ultimate™ © Alam showkat** · v1.6.4
+**lemoGamePad ultimate™ © Alam showkat** · v1.6.5

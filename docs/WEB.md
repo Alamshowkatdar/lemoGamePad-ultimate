@@ -66,8 +66,8 @@ Tap the status pill to open **CONTROL CENTRE**:
   free one and is retried until it frees up; the sheet shows which pad is
   actually in use.
 - **Appearance** — the eight themes (Neon, Midnight, Violet, Crimson, Solar,
-  Retro, Arctic, Mono) with a cross-fade when switching, and PlayStation or
-  Xbox face-button labels.
+  Retro, Arctic, Mono) with a cross-fade when switching, PlayStation or
+  Xbox face-button labels, and the **FULL SCREEN** toggle.
 - **Controls** — stick deadzone, stick curve, vibration on/off and strength,
   and the input-rate mode.
 - **Layouts** — customize the pad and save named arrangements (see below).
@@ -75,6 +75,15 @@ Tap the status pill to open **CONTROL CENTRE**:
 
 Settings are stored in the browser's `localStorage` on that device. They are
 not shared with other browsers, other devices or the Android app.
+
+## Full screen
+
+**APPEARANCE → FULL SCREEN** hides the browser bars and gives the pad the whole
+display. The button follows the browser's real state, so leaving full screen
+with `Esc` or a system gesture updates it too. If the browser refuses the
+request the label returns to **OFF**; where the Fullscreen API is missing
+(notably iPhone Safari) it shows **N/A**. On iPhone, add the page to the Home
+Screen to run it without browser bars.
 
 ## Input rate
 
