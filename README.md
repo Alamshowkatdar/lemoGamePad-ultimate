@@ -13,7 +13,7 @@ by **Alam showkat**
 
 [**Download the latest release →**](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) · [Report an issue](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/issues)
 
-**App source version:** 1.6.1. Download the signed APK and the Windows/Linux server from the [latest release](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) — use **1.3.7.2 or newer** on Linux, which fixes the swapped X/Y face buttons. The release workflow also publishes a `SHA256SUMS.txt` so you can verify your download.
+**App source version:** 1.6.2. Download the signed APK and the Windows/Linux server from the [latest release](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) — use **1.3.7.2 or newer** on Linux, which fixes the swapped X/Y face buttons. The release workflow also publishes a `SHA256SUMS.txt` so you can verify your download.
 
 ---
 
@@ -44,17 +44,20 @@ either, only access to `/dev/uinput`.
 > **lemoGamePad ultimate™** — trademark of **Alam showkat**.
 > App package: `com.alamshowkat.lemogamepad`.
 
-### What's new in 1.6.1
+### What's new in 1.6.2
 
-- **Browser gamepad** — any phone, tablet or laptop on the same Wi-Fi can now
-  play, with no app and no internet. The PC hosts a PS3-style touch pad on
-  TCP 9878 (control port + 2) with multi-touch sticks, D-pad, face buttons,
-  shoulders, triggers and a keyboard mapping. Rumble is forwarded through the
-  browser's Vibration API where supported. The page is served entirely by the
-  PC, uses a random per-run pairing key, and rejects cross-site WebSocket
-  upgrades. New flags: `--web-port`, `--web-key`, `--no-web`.
-- **Everything from 1.6.0** — saved layout presets, eight phones by default,
-  per-phone player-slot selection (P1–P8), PC hardening, safer helper
+- **Scannable browser QR** — the server now draws the browser pad URL as a QR
+  directly in the console, next to the phone pairing QR. Point any phone or
+  laptop camera at it and the gamepad page opens; a
+  `lemoGamePad-web-qr-<ip>.png` copy is still saved for printing or sharing.
+- **Browser gamepad** — any phone, tablet or laptop on the same Wi-Fi can play,
+  with no app and no internet. The PC hosts a PS3-style touch pad on TCP 9878
+  (control port + 2) with multi-touch sticks, D-pad, face buttons, shoulders,
+  triggers and a keyboard mapping. Rumble is forwarded through the browser's
+  Vibration API where supported. New flags: `--web-port`, `--web-key`,
+  `--no-web`.
+- **Everything from 1.6.0/1.6.1** — saved layout presets, eight phones by
+  default, per-phone player-slot selection (P1–P8), PC hardening, safer helper
   elevation and the Android lifecycle fixes.
 - Wire-compatible with 1.3 and later apps and servers.
 
@@ -92,8 +95,9 @@ See [Browser pad](docs/WEB.md).
 ## Browser pad
 
 The server also hosts a small gamepad page on **TCP 9878** (control port + 2).
-Open the URL printed in the console, or scan the `lemoGamePad-web-qr-*.png`
-image saved next to the server:
+Open the URL printed in the console, or scan the browser QR that the server
+draws in the console (a `lemoGamePad-web-qr-*.png` copy is also saved next to
+the server):
 
 ```
 http://192.168.1.20:9878/?k=<pairing-key>
@@ -141,4 +145,4 @@ licenses are listed in [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md).
 
 ---
 
-**lemoGamePad ultimate™ © Alam showkat** · v1.6.1
+**lemoGamePad ultimate™ © Alam showkat** · v1.6.2

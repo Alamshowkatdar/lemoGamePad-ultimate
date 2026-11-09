@@ -2,6 +2,13 @@
 
 Newest first. The reasoning behind each release is in [`docs/REVIEW.md`](docs/REVIEW.md).
 
+## 1.6.2
+
+- **Scannable browser QR** — the console now draws the browser pad URL as a QR
+  next to the phone pairing QR, so any camera can open the page without typing
+  the IP, port and key. The `lemoGamePad-web-qr-<ip>.png` copy is still saved
+  for printing or sharing.
+
 ## 1.6.1
 
 - **Browser gamepad** — the PC now hosts a gamepad page on TCP `9878`

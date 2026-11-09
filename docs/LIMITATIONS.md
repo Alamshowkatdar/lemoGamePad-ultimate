@@ -33,4 +33,4 @@
 
 ---
 
-**lemoGamePad ultimate™ © Alam showkat** · v1.6.1
+**lemoGamePad ultimate™ © Alam showkat** · v1.6.2

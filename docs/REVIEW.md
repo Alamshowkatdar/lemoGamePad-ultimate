@@ -1,4 +1,4 @@
-# Review notes — 1.3.6 / 1.3.7 / 1.4.0 / 1.5.0 / 1.6.0 / 1.6.1
+# Review notes — 1.3.6 / 1.3.7 / 1.4.0 / 1.5.0 / 1.6.0 / 1.6.1 / 1.6.2
 
 A pass over the whole app (Kotlin sources, manifest, Gradle files, CI) focused on
 bugs, UI smoothness, and making the phone-to-phone Bluetooth gamepad honest.
@@ -12,7 +12,8 @@ adds saved layouts and makes the eight slots the default (see
 [Layout presets (1.6.0)](#layout-presets-160) and
 [Eight phones by default (1.6.0)](#eight-phones-by-default-160)); 1.6.1 adds a
 browser gamepad served by the PC (see
-[Browser pad (1.6.1)](#browser-pad-161)).
+[Browser pad (1.6.1)](#browser-pad-161)); 1.6.2 adds a scannable browser QR in
+the console.
 This file records what was found and what changed, so the reasoning does not get
 lost between releases.
 
@@ -480,3 +481,5 @@ internet requirement, so the page is served by the same Python process.
   wrong key (`401`), cross-site origin (`403`), input and clamping, requested
   P2, ping/RTT response, rumble delivery and disconnect release. CI runs it.
 - All existing PC suites still pass.
+- 1.6.2 prints the browser URL as a console QR through the same helper the
+  phone pairing QR uses; the saved web PNGs still cover every LAN address.

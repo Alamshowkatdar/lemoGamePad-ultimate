@@ -17,8 +17,10 @@ analytics service or any other remote resource.
    ```
    Web pad      : http://192.168.1.20:9878/?k=AbCdEf12
    ```
-3. Open that URL on the device. Typing the URL works; the server also saves a
-   `lemoGamePad-web-qr-<ip>.png` next to itself, which you can scan.
+3. Open that URL on the device. Typing the URL works, and the server also draws
+   a **scannable browser QR** right in the console: point any phone camera at it
+   and the page opens. A `lemoGamePad-web-qr-<ip>.png` copy is saved next to the
+   server for printing or sharing.
 
 The default port is **TCP 9878** (the control port + 2). The `k` value is a
 random pairing key generated for each run. Keep the full URL: without the key

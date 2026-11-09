@@ -1012,15 +1012,10 @@ def qr_payload(ip: str, port: int, name: str) -> str:
     return f"vpad://connect?{query}"
 
 
-def print_qr(ip: str, port: int, name: str, out_dir: str) -> None:
-    """Draws a scannable QR in the console and saves a PNG for each address."""
-    try:
-        import qrcode
-    except Exception as exc:  # pragma: no cover
-        print(f"  QR code unavailable ({exc}). Install with: pip install qrcode pillow")
-        return
+def _make_qr(payload: str):
+    """Build a QR object, raising ImportError when qrcode is missing."""
+    import qrcode
 
-    payload = qr_payload(ip, port, name)
     qr = qrcode.QRCode(
         version=None,
         error_correction=qrcode.constants.ERROR_CORRECT_M,
@@ -1029,6 +1024,20 @@ def print_qr(ip: str, port: int, name: str, out_dir: str) -> None:
     )
     qr.add_data(payload)
     qr.make(fit=True)
+    return qr
+
+
+def print_qr_block(payload: str, out_dir: str, filename: str,
+                   link_label: str = "Pairing link") -> bool:
+    """
+    Draw [payload] as a QR in the console, save it as [filename], and print the
+    link. Returns False when the optional qrcode/Pillow packages are missing.
+    """
+    try:
+        qr = _make_qr(payload)
+    except Exception as exc:  # pragma: no cover - optional dependency
+        print(f"  QR code unavailable ({exc}). Install with: pip install qrcode pillow")
+        return False
 
     print()
     try:
@@ -1038,29 +1047,31 @@ def print_qr(ip: str, port: int, name: str, out_dir: str) -> None:
 
     try:
         img = qr.make_image(fill_color="black", back_color="white")
-        safe = ip.replace(":", "-").replace(".", "_")
-        png = os.path.join(out_dir, f"lemoGamePad-qr-{safe}.png")
+        png = os.path.join(out_dir, filename)
         img.save(png)
         print(f"  QR image saved: {png}")
     except Exception as exc:  # pragma: no cover
         print(f"  could not save QR image: {exc}")
 
-    print(f"  Pairing link: {payload}")
+    print(f"  {link_label}: {payload}")
+    return True
+
+
+def print_qr(ip: str, port: int, name: str, out_dir: str) -> bool:
+    """Draws a scannable QR in the console and saves a PNG for each address."""
+    safe = ip.replace(":", "-").replace(".", "_")
+    return print_qr_block(
+        qr_payload(ip, port, name),
+        out_dir,
+        f"lemoGamePad-qr-{safe}.png",
+        "Pairing link",
+    )
 
 
 def save_qr_png(payload: str, path: str) -> bool:
     """Write one QR PNG; returns False when qrcode/Pillow is unavailable."""
     try:
-        import qrcode
-
-        qr = qrcode.QRCode(
-            version=None,
-            error_correction=qrcode.constants.ERROR_CORRECT_M,
-            box_size=8,
-            border=2,
-        )
-        qr.add_data(payload)
-        qr.make(fit=True)
+        qr = _make_qr(payload)
         qr.make_image(fill_color="black", back_color="white").save(path)
         return True
     except Exception:  # pragma: no cover - optional dependency
@@ -1887,10 +1898,20 @@ class Server:
                 for extra in ips[1:]:
                     print(f"  Other address: {qr_payload(extra, self.port, self.hostname)}")
                 if self.web is not None:
-                    for ip in ips:
-                        safe = ip.replace(":", "-").replace(".", "_")
+                    # The browser pad gets its own scannable code: point any
+                    # phone camera at it and the page opens directly.
+                    first = ips[0]
+                    safe = first.replace(":", "-").replace(".", "_")
+                    print_qr_block(
+                        self.web_url(first),
+                        os.getcwd(),
+                        f"lemoGamePad-web-qr-{safe}.png",
+                        "Browser link",
+                    )
+                    for extra in ips[1:]:
+                        safe = extra.replace(":", "-").replace(".", "_")
                         name = f"lemoGamePad-web-qr-{safe}.png"
-                        if save_qr_png(self.web_url(ip), os.path.join(os.getcwd(), name)):
+                        if save_qr_png(self.web_url(extra), os.path.join(os.getcwd(), name)):
                             print(f"  Browser QR   : {name}")
 
         if self.video is not None and self.video.error:
