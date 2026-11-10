@@ -884,12 +884,14 @@ button:focus-visible {
 :root[data-motion="step"] { --press-anim: ui-step; --press-ease: steps(4, end); }
 :root[data-motion="ripple"] { --press-anim: ui-ripple; }
 :root[data-motion="line"] { --press-anim: ui-line; }
+:root[data-motion="void"] { --press-anim: ui-void; }
 
 .action.press-anim,
 .chip.press-anim,
 .toggle.press-anim,
 .round.press-anim,
-.swatch.press-anim {
+.swatch.press-anim,
+.pip-close.press-anim {
   animation: var(--press-anim) var(--press-ms, 420ms) var(--press-ease) both;
 }
 
@@ -944,12 +946,19 @@ button:focus-visible {
   100% { transform: scale(1); box-shadow: inset 0 -2px 0 0 transparent; }
 }
 
+@keyframes ui-void {
+  0% { transform: scale(1); box-shadow: 0 0 0 1px var(--accent-line); }
+  18% { transform: scale(0.992); box-shadow: 0 0 0 1px var(--accent-line); }
+  100% { transform: scale(1); box-shadow: 0 0 0 7px transparent; }
+}
+
 .no-motion .press-anim,
 .no-motion .action,
 .no-motion .chip,
 .no-motion .toggle,
 .no-motion .round,
-.no-motion .swatch {
+.no-motion .swatch,
+.no-motion .pip-close {
   animation: none !important;
   transition: none !important;
 }

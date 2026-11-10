@@ -42,14 +42,14 @@ android/
     BluetoothPairing.kt     adapter state, discoverable mode, PAN address
     BluetoothHidGamepad.kt   standard Bluetooth gamepad for Android hosts
     GamepadView.kt          themed canvas controller, edit mode, multitouch
-    Theme.kt                eight palettes, cross-fade, branding
+    Theme.kt                nine palettes, cross-fade, branding
     Link.kt                 UDP sender, ping/rumble, discovery, transports
     ScreenView.kt           draggable PC-screen PiP client
     ScanActivity.kt         Camera1 + ZXing QR scanner
     Protocol.kt             wire format constants + shared state
   keystore/                 your local signing key (git-ignored, never pushed)
 docs/
-  REVIEW.md                 what changed in 1.3.6–1.6.10 and why (bug list + notes)
+  REVIEW.md                 what changed in 1.3.6–1.6.11 and why (bug list + notes)
   INSTALL-WINDOWS.md        Windows install and manual setup
   INSTALL-LINUX.md          Linux release binary, source setup, capture notes
   ANDROID.md                app install, transports, pairing, usage, settings

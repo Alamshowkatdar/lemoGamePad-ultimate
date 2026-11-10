@@ -31,6 +31,10 @@ data class PadTheme(
     val triangle: Int,
     /** Press animation style, resolved through [Motions]. */
     val motion: String = "pulse",
+    /** True when the palette keeps the background pure black (OLED panels). */
+    val pitchBlack: Boolean = false,
+    /** Strength of the decorative background glow; 0 removes it entirely. */
+    val glow: Float = 1f,
 ) {
     val isLight: Boolean get() = !dark
 }
@@ -76,6 +80,8 @@ fun blendThemes(a: PadTheme, b: PadTheme, t: Float): PadTheme {
         square = c(a.square, b.square),
         triangle = c(a.triangle, b.triangle),
         motion = if (k < 0.5f) a.motion else b.motion,
+        pitchBlack = if (k < 0.5f) a.pitchBlack else b.pitchBlack,
+        glow = a.glow + (b.glow - a.glow) * k,
     )
 }
 
@@ -91,6 +97,7 @@ object Motions {
     val STEP = Motion("step", 440f, 1.60f)
     val RIPPLE = Motion("ripple", 660f, 1.95f)
     val LINE = Motion("line", 380f, 1.45f)
+    val VOID = Motion("void", 300f, 1.30f)
 
     fun of(theme: PadTheme): Motion = when (theme.motion) {
         "wave" -> WAVE
@@ -100,6 +107,7 @@ object Motions {
         "step" -> STEP
         "ripple" -> RIPPLE
         "line" -> LINE
+        "void" -> VOID
         else -> PULSE
     }
 }
@@ -111,7 +119,7 @@ object Brand {
     const val AUTHOR = "Alam showkat"
 
     /** Keep in sync with `versionName` in android/app/build.gradle.kts. */
-    const val VERSION = "1.6.10"
+    const val VERSION = "1.6.11"
 }
 
 object Themes {
@@ -303,7 +311,33 @@ object Themes {
         motion = "line",
     )
 
-    val all = listOf(NEON, MIDNIGHT, VIOLET, CRIMSON, SOLAR, RETRO, ARCTIC, MONO)
+    /** Pitch-black OLED palette: the panel can switch these pixels fully off. */
+    val AMOLED = PadTheme(
+        id = "amoled",
+        name = "AMOLED",
+        dark = true,
+        bgTop = 0xFF000000.toInt(),
+        bgMid = 0xFF000000.toInt(),
+        bgBottom = 0xFF000000.toInt(),
+        surface = 0xFF050505.toInt(),
+        surfaceAlt = 0xFF0D0D0D.toInt(),
+        text = 0xFFF5F7FA.toInt(),
+        textDim = 0xFFC2C8D0.toInt(),
+        muted = 0xFF707880.toInt(),
+        accent = 0xFFFFB52E.toInt(),
+        accent2 = 0xFFFF5B45.toInt(),
+        ok = 0xFF7DFFB0.toInt(),
+        warn = 0xFFFFD166.toInt(),
+        cross = 0xFFFF6B5A.toInt(),
+        circle = 0xFFFF9F43.toInt(),
+        square = 0xFFFFD166.toInt(),
+        triangle = 0xFF8DFFC0.toInt(),
+        motion = "void",
+        pitchBlack = true,
+        glow = 0f,
+    )
+
+    val all = listOf(NEON, MIDNIGHT, VIOLET, CRIMSON, SOLAR, RETRO, ARCTIC, MONO, AMOLED)
 
     fun byId(id: String?): PadTheme = all.firstOrNull { it.id == id } ?: NEON
 }

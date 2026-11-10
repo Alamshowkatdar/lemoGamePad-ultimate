@@ -9,7 +9,7 @@ Android app, no account and no internet connection.
 The page is served by the PC, uses only local files and talks to the server
 over a WebSocket on the local network. It never loads a CDN script, web font,
 analytics service or any other remote resource. It mirrors the Android pad:
-the same eight themes, PS/Xbox face labels, player slots, layout editing and
+the same nine themes, PS/Xbox face labels, player slots, layout editing and
 saved arrangements, plus latency, status and the PC screen preview.
 
 ## Open it
@@ -69,10 +69,11 @@ Tap the status pill to open **CONTROL CENTRE**:
   sides while the card is open, and the sheet shows which pad is actually in
   use. The number matches the controller the game sees, because the server
   creates every lower pad first; a move to an unused slot creates that pad too.
-- **Appearance** — the eight themes (Neon, Midnight, Violet, Crimson, Solar,
-  Retro, Arctic, Mono) with a cross-fade when switching, PlayStation or
+- **Appearance** — the nine themes (Neon, Midnight, Violet, Crimson, Solar,
+  Retro, Arctic, Mono, AMOLED) with a cross-fade when switching, PlayStation or
   Xbox face-button labels, an **Animated buttons** toggle and the **FULL
-  SCREEN** toggle.
+  SCREEN** toggle. **AMOLED** uses a true-black background so OLED panels can
+  switch those pixels off; LCDs see no battery saving.
 - **Controls** — stick deadzone, stick curve, vibration on/off and strength,
   and the input-rate mode.
 - **Layouts** — customize the pad and save named arrangements (see below).
@@ -80,8 +81,9 @@ Tap the status pill to open **CONTROL CENTRE**:
 
 Every theme also has its own one-shot press animation, drawn on the pad and
 echoed by the settings buttons: Neon pulses, Midnight waves, Violet halos,
-Crimson shocks, Solar bursts, Retro steps, Arctic ripples and Mono draws a
-line. **APPEARANCE → Animated buttons** turns them off; it starts off when the
+Crimson shocks, Solar bursts, Retro steps, Arctic ripples, Mono draws a
+line and AMOLED snaps a single hairline `void` ring. **APPEARANCE → Animated
+buttons** turns them off; it starts off when the
 browser reports `prefers-reduced-motion: reduce`. Motion only advances while a
 press is settling, so an idle pad still draws nothing.
 

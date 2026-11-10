@@ -1,4 +1,4 @@
-# Review notes — 1.3.6 / 1.3.7 / 1.4.0 / 1.5.0 / 1.6.0 / 1.6.1 / 1.6.2 / 1.6.3 / 1.6.4 / 1.6.5 / 1.6.6 / 1.6.7 / 1.6.8 / 1.6.9 / 1.6.10
+# Review notes — 1.3.6 / 1.3.7 / 1.4.0 / 1.5.0 / 1.6.0 / 1.6.1 / 1.6.2 / 1.6.3 / 1.6.4 / 1.6.5 / 1.6.6 / 1.6.7 / 1.6.8 / 1.6.9 / 1.6.10 / 1.6.11
 
 A pass over the whole app (Kotlin sources, manifest, Gradle files, CI) focused on
 bugs, UI smoothness, and making the phone-to-phone Bluetooth gamepad honest.
@@ -27,7 +27,9 @@ never-used pads (see [Player slot order (1.6.8)](#player-slot-order-168));
 1.6.9 makes changing to an occupied pad a consent-based swap that never pauses
 input (see [Player swap consent (1.6.9)](#player-swap-consent-169)); 1.6.10 gives
 each theme its own animated button press (see
-[Animated buttons (1.6.10)](#animated-buttons-1610)).
+[Animated buttons (1.6.10)](#animated-buttons-1610)); 1.6.11 adds a true-black
+AMOLED palette and repairs the d-pad press springs (see
+[AMOLED and d-pad motion (1.6.11)](#amoled-and-d-pad-motion-1611)).
 This file records what was found and what changed, so the reasoning does not get
 lost between releases.
 
@@ -515,8 +517,9 @@ two halves should not feel like different products.
   canvas using the fractional node layout, geometry, spring press animation and
   theme colours copied from `GamepadView`. The DOM is now only the settings
   sheet, dialogs and the screen PiP.
-- **All eight themes, PS/Xbox labels.** The palette table mirrors `Theme.kt`,
-  including the light Arctic theme and the cross-fade used when switching.
+- **All nine themes, PS/Xbox labels.** The palette table mirrors `Theme.kt`,
+  including the light Arctic theme, the true-black AMOLED palette and the
+  cross-fade used when switching.
 - **Settings parity.** The sheet mirrors `SettingsPanel`: status pill and
   latency graph, CONNECT/RECONNECT/DISCONNECT, player-slot chips, deadzone,
   curve, vibration on/off and strength, and input-rate modes.
@@ -839,7 +842,7 @@ LAN has long since arrived.
 
 ## Animated buttons (1.6.10)
 
-The eight palettes already changed every colour; they now change how a press
+The nine palettes already changed every colour; they now change how a press
 feels too. A palette carries a `motion` name, and a small table maps it to a
 style, duration and spread. The pad keeps one `ripple` progress per node and
 draws the effect from the existing animation loop, so the work fits the
@@ -856,6 +859,7 @@ timeline.
 | Retro | `step` | a square that grows in four quantised steps |
 | Arctic | `ripple` | three staggered concentric rings |
 | Mono | `line` | a precise underline with end caps |
+| AMOLED | `void` | one hairline ring that snaps outward into the black |
 
 ### Where the ripple starts
 
@@ -868,9 +872,32 @@ timeline.
   early `continue` that parks a settled press spring.
 
 Sticks deliberately have no ripple: they are drag controls, and the existing
-active-ring already shows that a thumb owns them. Pills and d-pad arms now use
-`pressT` for their inset and glow, replacing the old boolean snap with the same
-slightly under-damped spring the face buttons already had.
+active-ring already shows that a thumb owns them. Pills spring back through
+`pressT`. 1.6.11 fixed the d-pad: it previously read the node's `pressT`, which
+is never set for a d-pad direction, so every arm sat at a fixed glow and
+snapped off on release. Each of the four arms now owns a `pressT`-style spring
+(`armT`/`armVel` in the browser, `armT`/`armVel` arrays on Android), so arrows
+ease in and out independently and touch plus keyboard state can share the same
+visual.
+
+## AMOLED and d-pad motion (1.6.11)
+
+**AMOLED** is the ninth palette: `#000000` for `bgTop`/`bgMid`/`bgBottom`,
+near-black surfaces, and amber/coral controls. OLED/AMOLED panels switch a
+black pixel off completely, so this palette reduces panel power compared with
+the near-black themes; LCDs still light the backlight and see no saving.
+
+Two details keep the black real:
+
+- **No decorative glow.** The renderer adds a radial accent glow at the top of
+  the pad in every other theme. AMOLED carries `pitchBlack = true` and
+  `glow = 0`; the browser skips the gradient and `rebuildShaders()` leaves the
+  Android `glowShader` null. `glow` blends numerically during the 300 ms theme
+  cross-fade, so the glow fades out instead of popping at the halfway point.
+- **A motion of its own.** `void` uses a 300 ms hairline ring (spread 1.30),
+  drawn on the pad and mirrored by the `ui-void` keyframe on browser buttons.
+  That keeps the one-motion-per-theme rule for the ninth palette.
+
 
 ### Toggle and reduced motion
 

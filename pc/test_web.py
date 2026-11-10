@@ -301,11 +301,14 @@ def test_page_and_key(server, port):
     status, css = http_get(port, "/style.css")
     assert status == 200 and "#pad-canvas" in css and ".swatch" in css, status
     assert "@keyframes ui-pulse" in css and 'data-motion="ripple"' in css
+    assert 'data-motion="void"' in css and "@keyframes ui-void" in css
     status, script = http_get(port, "/app.js")
     assert status == 200 and "WebSocket" in script, status
     assert "createImageBitmap" in script and "lmgb.layouts" in script
     # The animated-button feature ships with every palette and the toggle.
     assert "const MOTIONS" in script and "function drawPressFx" in script
+    assert 'id: "amoled"' in script and "pitchBlack" in script
+    assert 'void: { style: "void"' in script and "armT" in script
     assert "lmgb.motion" in script and "prefers-reduced-motion" in script
     assert "requestFullscreen" in script and "fullscreenchange" in script
     # The sheet opens on the pad's pointerup, so its backdrop must not close on

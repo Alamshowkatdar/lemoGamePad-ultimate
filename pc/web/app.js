@@ -123,6 +123,18 @@
       accent: "#ededed", accent2: "#9e9e9e", ok: "#8be28f", warn: "#ffc46b",
       cross: "#ededed", circle: "#bfbfbf", square: "#9e9e9e", triangle: "#dcdcdc",
     },
+    {
+      // OLED panels switch pixels fully off, so a true-black background uses
+      // less power than the near-black palettes. LCDs see no saving.
+      id: "amoled", name: "AMOLED", dark: true,
+      motion: "void",
+      pitchBlack: true, glow: 0,
+      bgTop: "#000000", bgMid: "#000000", bgBottom: "#000000",
+      surface: "#050505", surfaceAlt: "#0d0d0d",
+      text: "#f5f7fa", textDim: "#c2c8d0", muted: "#707880",
+      accent: "#ffb52e", accent2: "#ff5b45", ok: "#7dffb0", warn: "#ffd166",
+      cross: "#ff6b5a", circle: "#ff9f43", square: "#ffd166", triangle: "#8dffc0",
+    },
   ];
   // One press animation per palette. The style is drawn on the pad, while the
   // ms/spread values also pace the DOM feedback in style.css.
@@ -135,6 +147,7 @@
     step: { style: "step", ms: 440, spread: 1.60 },
     ripple: { style: "ripple", ms: 660, spread: 1.95 },
     line: { style: "line", ms: 380, spread: 1.45 },
+    void: { style: "void", ms: 300, spread: 1.30 },
   };
 
   function motionOf(theme) {
@@ -195,6 +208,8 @@
       name: t < 0.5 ? a.name : b.name,
       dark: t < 0.5 ? a.dark : b.dark,
       motion: t < 0.5 ? a.motion : b.motion,
+      pitchBlack: t < 0.5 ? !!a.pitchBlack : !!b.pitchBlack,
+      glow: (a.glow ?? 1) + ((b.glow ?? 1) - (a.glow ?? 1)) * t,
     };
     for (const key of THEME_KEYS) out[key] = blendHex(a[key], b[key], t);
     return out;
@@ -392,6 +407,9 @@
       cx: 0, cy: 0, hw: 0, hh: 0, r: 0,
       pressed: false, pointer: null, up: false, down: false, left: false, right: false,
       kx: 0, ky: 0, pressT: 0, pressVel: 0, bw: 0, bh: 0, ripple: 0,
+      // Up/down/left/right each get their own press spring so releasing one
+      // direction eases out instead of snapping while the others stay down.
+      armT: [0, 0, 0, 0], armVel: [0, 0, 0, 0],
     };
   }
 
@@ -684,6 +702,19 @@
         ctx.arc(cx, cy, r, 0, Math.PI * 2);
         ctx.stroke();
       }
+    } else if (m.style === "void") {
+      // AMOLED: one hairline ring that snaps outward and vanishes into the
+      // black, with a faint second edge so it still reads on a dark panel.
+      ctx.strokeStyle = alpha(accent, 0.78 * fade);
+      ctx.lineWidth = px(1);
+      ctx.beginPath();
+      ctx.arc(cx, cy, reach, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.strokeStyle = alpha(themeNow.text, 0.20 * fade);
+      ctx.lineWidth = px(1);
+      ctx.beginPath();
+      ctx.arc(cx, cy, reach + px(2.6), 0, Math.PI * 2);
+      ctx.stroke();
     } else {
       // mono: a precise underline that shoots out from the centre.
       const y = cy + radius * 0.86;
@@ -727,9 +758,10 @@
     drawPressFx(node, node.cx, node.cy, r, accent);
 
     const armT = r * 0.30;
-    const arm = (cx, cy, hw, hh, pressed, dx, dy) => {
-      const k = pressed ? Math.min(1, Math.max(0, node.pressT)) : 0;
-      if (pressed) {
+    const arm = (cx, cy, hw, hh, press, dx, dy) => {
+      const k = Math.min(1, Math.max(0, press));
+      const held = k > 0.01;
+      if (held) {
         ctx.fillStyle = alpha(accent, 0.10 + 0.14 * k);
         roundRectPath(cx - hw - px(4), cy - hh - px(4), (hw + px(4)) * 2, (hh + px(4)) * 2, r * 0.2);
         ctx.fill();
@@ -737,20 +769,20 @@
       const inset = 1 - 0.02 * k;
       const ahw = hw * inset;
       const ahh = hh * inset;
-      ctx.fillStyle = pressed ? blendHex(themeNow.surfaceAlt, accent, 0.35 + 0.65 * k) : themeNow.surfaceAlt;
+      ctx.fillStyle = held ? blendHex(themeNow.surfaceAlt, accent, 0.35 + 0.65 * k) : themeNow.surfaceAlt;
       roundRectPath(cx - ahw, cy - ahh, ahw * 2, ahh * 2, r * 0.16);
       ctx.fill();
-      ctx.strokeStyle = pressed ? alpha(accent, 0.45 + 0.41 * k) : alpha(themeNow.text, 0.10);
+      ctx.strokeStyle = held ? alpha(accent, 0.45 + 0.41 * k) : alpha(themeNow.text, 0.10);
       ctx.lineWidth = px(1);
       roundRectPath(cx - ahw, cy - ahh, ahw * 2, ahh * 2, r * 0.16);
       ctx.stroke();
-      drawArrow(cx, cy, r, dx, dy, pressed && k > 0.55 ? themeNow.bgBottom : pressed ? alpha(themeNow.bgBottom, 0.4 + 0.6 * k) : alpha(themeNow.text, 0.59));
+      drawArrow(cx, cy, r, dx, dy, k > 0.55 ? themeNow.bgBottom : held ? alpha(themeNow.bgBottom, 0.4 + 0.6 * k) : alpha(themeNow.text, 0.59));
     };
 
-    arm(node.cx, node.cy - r * 0.55, armT, r * 0.36, node.up, 0, -1);
-    arm(node.cx, node.cy + r * 0.55, armT, r * 0.36, node.down, 0, 1);
-    arm(node.cx - r * 0.55, node.cy, r * 0.36, armT, node.left, -1, 0);
-    arm(node.cx + r * 0.55, node.cy, r * 0.36, armT, node.right, 1, 0);
+    arm(node.cx, node.cy - r * 0.55, armT, r * 0.36, node.armT[0], 0, -1);
+    arm(node.cx, node.cy + r * 0.55, armT, r * 0.36, node.armT[1], 0, 1);
+    arm(node.cx - r * 0.55, node.cy, r * 0.36, armT, node.armT[2], -1, 0);
+    arm(node.cx + r * 0.55, node.cy, r * 0.36, armT, node.armT[3], 1, 0);
 
     ctx.fillStyle = themeNow.surfaceAlt;
     ctx.beginPath();
@@ -1125,11 +1157,16 @@
     ctx.fillStyle = bg;
     ctx.fillRect(0, 0, W, H);
 
-    const glow = ctx.createRadialGradient(W * 0.5, -H * 0.04, 0, W * 0.5, -H * 0.04, H * 1.05);
-    glow.addColorStop(0, alpha(themeNow.accent, (themeNow.dark ? 40 : 20) / 255));
-    glow.addColorStop(1, alpha(themeNow.accent2, 0));
-    ctx.fillStyle = glow;
-    ctx.fillRect(0, 0, W, H);
+    // AMOLED themes drop the decorative glow so every background pixel is
+    // genuinely black; the value blends in over the theme cross-fade.
+    const glowStrength = themeNow.glow ?? 1;
+    if (glowStrength > 0.001) {
+      const glow = ctx.createRadialGradient(W * 0.5, -H * 0.04, 0, W * 0.5, -H * 0.04, H * 1.05);
+      glow.addColorStop(0, alpha(themeNow.accent, ((themeNow.dark ? 40 : 20) / 255) * glowStrength));
+      glow.addColorStop(1, alpha(themeNow.accent2, 0));
+      ctx.fillStyle = glow;
+      ctx.fillRect(0, 0, W, H);
+    }
 
     ctx.save();
     if (enterT < 1) {
@@ -1180,6 +1217,26 @@
           active = true;
         } else {
           node.ripple = 0;
+        }
+      }
+
+      if (node.kind === K_DPAD) {
+        const armTargets = [
+          node.up || keyDpad.up ? 1 : 0,
+          node.down || keyDpad.down ? 1 : 0,
+          node.left || keyDpad.left ? 1 : 0,
+          node.right || keyDpad.right ? 1 : 0,
+        ];
+        for (let i = 0; i < 4; i++) {
+          const armDelta = armTargets[i] - node.armT[i];
+          if (Math.abs(armDelta) < 0.003 && Math.abs(node.armVel[i]) < 0.003) {
+            node.armT[i] = armTargets[i];
+            node.armVel[i] = 0;
+            continue;
+          }
+          node.armVel[i] += (armDelta * PRESS_STIFFNESS - node.armVel[i] * PRESS_DAMPING) * step;
+          node.armT[i] = Math.max(-0.02, Math.min(1.15, node.armT[i] + node.armVel[i] * step));
+          active = true;
         }
       }
 
@@ -1825,7 +1882,9 @@
     if (target) {
       event.preventDefault();
       if (target.startsWith("@dpad-")) {
-        keyDpad[target.slice(6)] = true;
+        const dir = target.slice(6);
+        if (!keyDpad[dir]) pressFx(dpadNode);
+        keyDpad[dir] = true;
         dirty = true;
         requestFrame();
       } else if (!event.repeat) {
@@ -1868,7 +1927,7 @@
   });
 
   // ------------------------------------------------------------------ network
-  const VERSION = "1.6.10";
+  const VERSION = "1.6.11";
   let socket = null;
   let connected = false;
   let manualOffline = false;
@@ -2522,7 +2581,7 @@
   }
 
   function bindMotionFeedback() {
-    const selector = ".action, .chip, .toggle, .round, .swatch";
+    const selector = ".action, .chip, .toggle, .round, .swatch, .pip-close";
     document.addEventListener("pointerdown", (event) => {
       if (!prefs.motion) return;
       const target = event.target.closest(selector);

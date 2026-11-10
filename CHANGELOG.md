@@ -2,6 +2,22 @@
 
 Newest first. The reasoning behind each release is in [`docs/REVIEW.md`](docs/REVIEW.md).
 
+## 1.6.11
+
+- **AMOLED theme** — a ninth palette with a true `#000000` background and
+  near-black surfaces. On OLED/AMOLED phone screens those pixels can switch
+  fully off, so the same pad draws less power; LCDs see no battery saving but
+  still get the look. The decorative radial background glow is removed for this
+  palette, so the background is genuinely black rather than near-black.
+- **AMOLED has its own `void` press** — one hairline ring that snaps outward and
+  vanishes into the black, mirrored by the `ui-void` animation on browser
+  chips, toggles, actions and theme tiles.
+- **D-pad press animations are fixed** — each direction now owns its own press
+  spring in the browser and on Android, so the arrow eases in *and out* instead
+  of freezing at a fixed glow or snapping off. Browser keyboard arrows use the
+  same animation and ripple.
+- **Wire-compatible** — no protocol or transport changes. `versionCode` is 25.
+
 ## 1.6.10
 
 - **Every theme now has its own animated press** — the browser pad and

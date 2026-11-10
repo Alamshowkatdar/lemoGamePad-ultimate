@@ -155,6 +155,10 @@ class GamepadView(context: Context) : View(context) {
         /** 0 = idle, otherwise 0..1 progress through the palette's press ripple. */
         var ripple = 0f
 
+        /** Per-arm press springs for up/down/left/right on the d-pad. */
+        val armT = FloatArray(4)
+        val armVel = FloatArray(4)
+
         var bw = 0f
         var bh = 0f
 
@@ -352,12 +356,23 @@ class GamepadView(context: Context) : View(context) {
             floatArrayOf(0f, 0.58f, 1f),
             Shader.TileMode.CLAMP,
         )
-        glowShader = RadialGradient(
-            W * 0.5f, -H * 0.04f, H * 1.05f,
-            intArrayOf(withAlpha(theme.accent, if (theme.dark) 40 else 20), withAlpha(theme.accent2, 0)),
-            floatArrayOf(0f, 1f),
-            Shader.TileMode.CLAMP,
-        )
+        glowShader = if (theme.glow <= 0.001f) {
+            // AMOLED: no decorative glow at all, so the background stays #000.
+            null
+        } else {
+            RadialGradient(
+                W * 0.5f, -H * 0.04f, H * 1.05f,
+                intArrayOf(
+                    withAlpha(
+                        theme.accent,
+                        ((if (theme.dark) 40 else 20) * theme.glow).toInt(),
+                    ),
+                    withAlpha(theme.accent2, 0),
+                ),
+                floatArrayOf(0f, 1f),
+                Shader.TileMode.CLAMP,
+            )
+        }
     }
 
     private fun layoutControls() {
@@ -431,9 +446,11 @@ class GamepadView(context: Context) : View(context) {
 
         bgPaint.shader = bgShader
         canvas.drawPaint(bgPaint)
-        glowPaint.shader = glowShader
-        canvas.drawPaint(glowPaint)
-        glowPaint.shader = null
+        glowShader?.let {
+            glowPaint.shader = it
+            canvas.drawPaint(glowPaint)
+            glowPaint.shader = null
+        }
 
         if (enterT < 1f) {
             val k = 1f - (1f - enterT) * (1f - enterT) * (1f - enterT)
@@ -477,6 +494,27 @@ class GamepadView(context: Context) : View(context) {
         val step = (dt / 16.667f).coerceIn(0.25f, 3f)
 
         for (n in nodes) {
+            if (n.kind == K_DPAD) {
+                val armTargets = floatArrayOf(
+                    if (n.up) 1f else 0f,
+                    if (n.down) 1f else 0f,
+                    if (n.left) 1f else 0f,
+                    if (n.right) 1f else 0f,
+                )
+                for (i in 0 until 4) {
+                    val armDelta = armTargets[i] - n.armT[i]
+                    if (abs(armDelta) < 0.003f && abs(n.armVel[i]) < 0.003f) {
+                        n.armT[i] = armTargets[i]
+                        n.armVel[i] = 0f
+                        continue
+                    }
+                    n.armVel[i] +=
+                        (armDelta * PRESS_STIFFNESS - n.armVel[i] * PRESS_DAMPING) * step
+                    n.armT[i] = (n.armT[i] + n.armVel[i] * step).coerceIn(-0.02f, 1.15f)
+                    animating = true
+                }
+            }
+
             if (n.ripple > 0f) {
                 if (motionEnabled) {
                     n.ripple += dt / Motions.of(themeNow).ms
@@ -665,6 +703,15 @@ class GamepadView(context: Context) : View(context) {
                     canvas.drawCircle(cx, cy, r, strokePaint)
                 }
             }
+            "void" -> {
+                // One hairline ring that snaps outward into the black.
+                strokePaint.color = withAlpha(accent, (199 * fade).toInt())
+                strokePaint.strokeWidth = dp(1f)
+                canvas.drawCircle(cx, cy, reach, strokePaint)
+                strokePaint.color = withAlpha(theme.text, (51 * fade).toInt())
+                strokePaint.strokeWidth = dp(1f)
+                canvas.drawCircle(cx, cy, reach + dp(2.6f), strokePaint)
+            }
             else -> {
                 val y = cy + radius * 0.86f
                 val half = radius * (0.35f + (m.spread - 0.35f) * ease)
@@ -699,9 +746,10 @@ class GamepadView(context: Context) : View(context) {
 
         val armT = r * 0.30f
 
-        fun arm(cx: Float, cy: Float, hw: Float, hh: Float, pressed: Boolean, dx: Float, dy: Float) {
-            val k = if (pressed) n.pressT.coerceIn(0f, 1f) else 0f
-            if (pressed) {
+        fun arm(cx: Float, cy: Float, hw: Float, hh: Float, press: Float, dx: Float, dy: Float) {
+            val k = press.coerceIn(0f, 1f)
+            val held = k > 0.01f
+            if (held) {
                 glowPaint.color = withAlpha(accent, (26 + 29 * k).toInt())
                 rect.set(cx - hw - dp(4f), cy - hh - dp(4f), cx + hw + dp(4f), cy + hh + dp(4f))
                 canvas.drawRoundRect(rect, r * 0.2f, r * 0.2f, glowPaint)
@@ -710,14 +758,14 @@ class GamepadView(context: Context) : View(context) {
             val ahw = hw * inset
             val ahh = hh * inset
             rect.set(cx - ahw, cy - ahh, cx + ahw, cy + ahh)
-            fillPaint.color = if (pressed) blend(theme.surfaceAlt, accent, 0.35f + 0.65f * k) else theme.surfaceAlt
+            fillPaint.color = if (held) blend(theme.surfaceAlt, accent, 0.35f + 0.65f * k) else theme.surfaceAlt
             canvas.drawRoundRect(rect, r * 0.16f, r * 0.16f, fillPaint)
-            strokePaint.color = if (pressed) withAlpha(accent, (115 + 105 * k).toInt()) else withAlpha(theme.text, 26)
+            strokePaint.color = if (held) withAlpha(accent, (115 + 105 * k).toInt()) else withAlpha(theme.text, 26)
             strokePaint.strokeWidth = dp(1f)
             canvas.drawRoundRect(rect, r * 0.16f, r * 0.16f, strokePaint)
             drawArrow(
                 canvas, cx, cy, r, dx, dy,
-                if (!pressed) {
+                if (!held) {
                     withAlpha(theme.text, 150)
                 } else if (k > 0.55f) {
                     theme.bgBottom
@@ -727,10 +775,10 @@ class GamepadView(context: Context) : View(context) {
             )
         }
 
-        arm(n.cx, n.cy - r * 0.55f, armT, r * 0.36f, n.up, 0f, -1f)
-        arm(n.cx, n.cy + r * 0.55f, armT, r * 0.36f, n.down, 0f, 1f)
-        arm(n.cx - r * 0.55f, n.cy, r * 0.36f, armT, n.left, -1f, 0f)
-        arm(n.cx + r * 0.55f, n.cy, r * 0.36f, armT, n.right, 1f, 0f)
+        arm(n.cx, n.cy - r * 0.55f, armT, r * 0.36f, n.armT[0], 0f, -1f)
+        arm(n.cx, n.cy + r * 0.55f, armT, r * 0.36f, n.armT[1], 0f, 1f)
+        arm(n.cx - r * 0.55f, n.cy, r * 0.36f, armT, n.armT[2], -1f, 0f)
+        arm(n.cx + r * 0.55f, n.cy, r * 0.36f, armT, n.armT[3], 1f, 0f)
 
         fillPaint.color = theme.surfaceAlt
         canvas.drawCircle(n.cx, n.cy, r * 0.19f, fillPaint)
@@ -1143,6 +1191,10 @@ class GamepadView(context: Context) : View(context) {
             n.kx = 0f
             n.ky = 0f
             n.ripple = 0f
+            for (i in 0 until 4) {
+                n.armT[i] = 0f
+                n.armVel[i] = 0f
+            }
         }
         hudPointer = -1
         hudPressed = false

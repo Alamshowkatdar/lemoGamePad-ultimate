@@ -13,7 +13,7 @@ by **Alam showkat**
 
 [**Download the latest release →**](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) · [Report an issue](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/issues)
 
-**App source version:** 1.6.10. Download the signed APK and the Windows/Linux server from the [latest release](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) — use **1.3.7.2 or newer** on Linux, which fixes the swapped X/Y face buttons. The release workflow also publishes a `SHA256SUMS.txt` so you can verify your download.
+**App source version:** 1.6.11. Download the signed APK and the Windows/Linux server from the [latest release](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) — use **1.3.7.2 or newer** on Linux, which fixes the swapped X/Y face buttons. The release workflow also publishes a `SHA256SUMS.txt` so you can verify your download.
 
 ---
 
@@ -44,7 +44,22 @@ either, only access to `/dev/uinput`.
 > **lemoGamePad ultimate™** — trademark of **Alam showkat**.
 > App package: `com.alamshowkat.lemogamepad`.
 
-### What's new in 1.6.10
+### What's new in 1.6.11
+
+- **AMOLED theme** — a ninth palette with a true `#000000` background and
+  near-black surfaces. On an OLED/AMOLED phone those pixels switch fully off,
+  so the same pad uses less power. LCDs see no battery saving, but the look is
+  still available. The decorative background glow is removed for AMOLED so the
+  background is genuinely black rather than near-black.
+- **A new `void` press** — AMOLED gets its own one-shot press: a single hairline
+  ring that snaps outward and disappears into the black, echoed by the
+  `ui-void` animation on the browser's chips, toggles, actions and theme tiles.
+- **D-pad animations fixed** — each d-pad direction now owns a real press
+  spring in both clients, so an arrow eases in and out instead of freezing at a
+  fixed glow or snapping off. Browser keyboard arrows animate too.
+- Wire-compatible with 1.3 and later apps and servers.
+
+### Highlights from 1.6.10
 
 - **Animated buttons, one motion per theme** — every palette now has its own
   one-shot press response on the phone and the browser pad. **Neon** pulses,
@@ -85,7 +100,7 @@ either, only access to `/dev/uinput`.
 ### Highlights from 1.6.4
 
 - **Browser pad rebuilt to match the Android app** — the page now has the same
-  eight themes, PS/Xbox face labels, settings sheet, player-slot chips, status
+  nine themes, PS/Xbox face labels, settings sheet, player-slot chips, status
   and latency graph, layout editing with named saved arrangements, and the PC
   screen preview. The pad is drawn on one canvas with the same geometry,
   spring-press animation and theme cross-fade as `GamepadView`.
@@ -148,7 +163,7 @@ http://192.168.1.20:9878/?k=<pairing-key>
 
 - Works on phones, tablets and laptops — anything with a modern browser.
 - Touch sticks, D-pad, face buttons, shoulders and triggers; multi-touch.
-- Eight themes, PS/Xbox face labels, stick deadzone/curve, vibration strength
+- Nine themes, PS/Xbox face labels, stick deadzone/curve, vibration strength
   and ECO/STANDARD/TURBO input-rate modes, all in the settings sheet.
 - Player-slot chips (AUTO or P1–P8), a live status pill and latency graph, and
   CONNECT / RECONNECT / DISCONNECT.
@@ -198,4 +213,4 @@ licenses are listed in [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md).
 
 ---
 
-**lemoGamePad ultimate™ © Alam showkat** · v1.6.10
+**lemoGamePad ultimate™ © Alam showkat** · v1.6.11
