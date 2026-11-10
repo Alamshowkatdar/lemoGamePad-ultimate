@@ -289,6 +289,7 @@ def test_page_and_key(server, port):
         "slot-row",
         "screen-pip",
         "data-faces",
+        "motion-toggle",
         "fullscreen-toggle",
         "dialog-scrim",
     ):
@@ -299,9 +300,13 @@ def test_page_and_key(server, port):
     # WebSocket client never runs.
     status, css = http_get(port, "/style.css")
     assert status == 200 and "#pad-canvas" in css and ".swatch" in css, status
+    assert "@keyframes ui-pulse" in css and 'data-motion="ripple"' in css
     status, script = http_get(port, "/app.js")
     assert status == 200 and "WebSocket" in script, status
     assert "createImageBitmap" in script and "lmgb.layouts" in script
+    # The animated-button feature ships with every palette and the toggle.
+    assert "const MOTIONS" in script and "function drawPressFx" in script
+    assert "lmgb.motion" in script and "prefers-reduced-motion" in script
     assert "requestFullscreen" in script and "fullscreenchange" in script
     # The sheet opens on the pad's pointerup, so its backdrop must not close on
     # the compatibility click that follows the same tap.

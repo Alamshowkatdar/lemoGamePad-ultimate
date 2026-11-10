@@ -44,11 +44,16 @@
   const app = $("#app");
   const canvas = $("#pad-canvas");
   const ctx = canvas.getContext("2d");
+  // Reduce or remove decorative movement when the OS asks for it.
+  const REDUCED_MOTION = !!(
+    window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  );
 
   // ------------------------------------------------------------------ themes
   const THEMES = [
     {
       id: "neon", name: "Neon", dark: true,
+      motion: "pulse",
       bgTop: "#0f1a14", bgMid: "#070c09", bgBottom: "#030504",
       surface: "#0e1712", surfaceAlt: "#16251d",
       text: "#e9fbf1", textDim: "#b9cfc2", muted: "#6f8579",
@@ -57,6 +62,7 @@
     },
     {
       id: "midnight", name: "Midnight", dark: true,
+      motion: "wave",
       bgTop: "#101a2b", bgMid: "#0a1120", bgBottom: "#05080f",
       surface: "#101a29", surfaceAlt: "#172741",
       text: "#e8eef9", textDim: "#c3cedf", muted: "#7e8ca3",
@@ -65,6 +71,7 @@
     },
     {
       id: "violet", name: "Violet", dark: true,
+      motion: "halo",
       bgTop: "#150f22", bgMid: "#0c0814", bgBottom: "#05040a",
       surface: "#171126", surfaceAlt: "#241a3a",
       text: "#f0eaff", textDim: "#cfc4ea", muted: "#8b7fa8",
@@ -73,6 +80,7 @@
     },
     {
       id: "crimson", name: "Crimson", dark: true,
+      motion: "shock",
       bgTop: "#1a0b0e", bgMid: "#100608", bgBottom: "#060203",
       surface: "#1b1013", surfaceAlt: "#2c181d",
       text: "#ffedef", textDim: "#e3bfc4", muted: "#a3808a",
@@ -81,6 +89,7 @@
     },
     {
       id: "solar", name: "Solar", dark: true,
+      motion: "burst",
       bgTop: "#1c1207", bgMid: "#100a04", bgBottom: "#070302",
       surface: "#1b1209", surfaceAlt: "#2a1c0f",
       text: "#fff3e4", textDim: "#ead4b8", muted: "#a38b70",
@@ -89,6 +98,7 @@
     },
     {
       id: "retro", name: "Retro", dark: true,
+      motion: "step",
       bgTop: "#20242a", bgMid: "#16191e", bgBottom: "#0b0d10",
       surface: "#2a2f36", surfaceAlt: "#363c45",
       text: "#e9edf2", textDim: "#c0c8d2", muted: "#8a94a0",
@@ -97,6 +107,7 @@
     },
     {
       id: "arctic", name: "Arctic", dark: false,
+      motion: "ripple",
       bgTop: "#f2f7fc", bgMid: "#e2eaf3", bgBottom: "#cbd8e5",
       surface: "#ffffff", surfaceAlt: "#eaf1f8",
       text: "#16202b", textDim: "#3e4c5c", muted: "#6c7c8c",
@@ -105,6 +116,7 @@
     },
     {
       id: "mono", name: "Mono", dark: true,
+      motion: "line",
       bgTop: "#141414", bgMid: "#0b0b0b", bgBottom: "#030303",
       surface: "#121212", surfaceAlt: "#212121",
       text: "#f5f5f5", textDim: "#d0d0d0", muted: "#8a8a8a",
@@ -112,6 +124,23 @@
       cross: "#ededed", circle: "#bfbfbf", square: "#9e9e9e", triangle: "#dcdcdc",
     },
   ];
+  // One press animation per palette. The style is drawn on the pad, while the
+  // ms/spread values also pace the DOM feedback in style.css.
+  const MOTIONS = {
+    pulse: { style: "pulse", ms: 420, spread: 1.55 },
+    wave: { style: "wave", ms: 540, spread: 1.75 },
+    halo: { style: "halo", ms: 640, spread: 1.35 },
+    shock: { style: "shock", ms: 360, spread: 1.85 },
+    burst: { style: "burst", ms: 460, spread: 1.70 },
+    step: { style: "step", ms: 440, spread: 1.60 },
+    ripple: { style: "ripple", ms: 660, spread: 1.95 },
+    line: { style: "line", ms: 380, spread: 1.45 },
+  };
+
+  function motionOf(theme) {
+    return MOTIONS[theme.motion] || MOTIONS.pulse;
+  }
+
   const THEME_KEYS = [
     "bgTop", "bgMid", "bgBottom", "surface", "surfaceAlt",
     "text", "textDim", "muted", "accent", "accent2", "ok", "warn",
@@ -161,7 +190,12 @@
   }
 
   function blendThemes(a, b, t) {
-    const out = { id: t < 0.5 ? a.id : b.id, name: t < 0.5 ? a.name : b.name, dark: t < 0.5 ? a.dark : b.dark };
+    const out = {
+      id: t < 0.5 ? a.id : b.id,
+      name: t < 0.5 ? a.name : b.name,
+      dark: t < 0.5 ? a.dark : b.dark,
+      motion: t < 0.5 ? a.motion : b.motion,
+    };
     for (const key of THEME_KEYS) out[key] = blendHex(a[key], b[key], t);
     return out;
   }
@@ -173,6 +207,7 @@
     deadzone: "lmgb.deadzone",
     curve: "lmgb.curve",
     haptics: "lmgb.haptics",
+    motion: "lmgb.motion",
     strength: "lmgb.strength",
     rate: "lmgb.rate",
     slot: "lmgb.slot",
@@ -227,6 +262,7 @@
     deadzone: Math.max(0, Math.min(40, readNumber(PREF.deadzone, 12))),
     curve: Math.max(0, Math.min(100, readNumber(PREF.curve, 0))),
     haptics: readBool(PREF.haptics, true),
+    motion: readBool(PREF.motion, !REDUCED_MOTION),
     strength: Math.max(0, Math.min(100, readNumber(PREF.strength, 100))),
     rate: ["eco", "standard", "turbo"].includes(readPref(PREF.rate, ""))
       ? readPref(PREF.rate, "standard")
@@ -306,8 +342,14 @@
     for (const [name, value] of Object.entries(vars)) {
       root.style.setProperty(name, value);
     }
+    root.dataset.motion = theme.motion;
+    root.style.setProperty("--press-ms", `${motionOf(theme).ms}ms`);
     const meta = document.querySelector('meta[name="theme-color"]');
     if (meta) meta.setAttribute("content", theme.bgTop);
+  }
+
+  function applyMotionPref() {
+    document.documentElement.classList.toggle("no-motion", !prefs.motion);
   }
 
   function setTheme(id) {
@@ -349,7 +391,7 @@
       defFx: fx, defFy: fy, scale: 1, hidden: false, customized: false,
       cx: 0, cy: 0, hw: 0, hh: 0, r: 0,
       pressed: false, pointer: null, up: false, down: false, left: false, right: false,
-      kx: 0, ky: 0, pressT: 0, pressVel: 0, bw: 0, bh: 0,
+      kx: 0, ky: 0, pressT: 0, pressVel: 0, bw: 0, bh: 0, ripple: 0,
     };
   }
 
@@ -541,6 +583,126 @@
     drawTracked(displayLabel(node), node.cx, node.cy, Math.min(H * 0.019, ey * 0.6), alpha(themeNow.muted, 0.86), H * 0.0035, true);
   }
 
+  /**
+   * One-shot press ripple. Each palette owns a motion style, so the same
+   * press reads differently without adding a second theme system.
+   */
+  function drawPressFx(node, cx, cy, radius, accent) {
+    const t = node.ripple;
+    if (!prefs.motion || t <= 0) return;
+    const m = motionOf(themeNow);
+    const ease = 1 - Math.pow(1 - t, 3);
+    const fade = Math.max(0, 1 - t);
+    const reach = radius + radius * (m.spread - 1) * ease;
+    const thin = px(1.4);
+
+    ctx.save();
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+
+    if (m.style === "pulse") {
+      ctx.strokeStyle = alpha(accent, 0.55 * fade);
+      ctx.lineWidth = px(1.2 + 2.4 * fade);
+      ctx.beginPath();
+      ctx.arc(cx, cy, reach, 0, Math.PI * 2);
+      ctx.stroke();
+    } else if (m.style === "wave") {
+      ctx.strokeStyle = alpha(accent, 0.50 * fade);
+      ctx.lineWidth = px(1.2 + 2.0 * fade);
+      ctx.beginPath();
+      ctx.arc(cx, cy, reach, Math.PI * -0.35, Math.PI * 1.15);
+      ctx.stroke();
+      ctx.strokeStyle = alpha(accent, 0.28 * fade);
+      ctx.lineWidth = thin;
+      ctx.beginPath();
+      ctx.arc(cx, cy, reach * 0.80, Math.PI * 0.15, Math.PI * 1.65);
+      ctx.stroke();
+    } else if (m.style === "halo") {
+      const grd = ctx.createRadialGradient(cx, cy, radius * 0.72, cx, cy, reach);
+      grd.addColorStop(0, alpha(accent, 0.30 * fade));
+      grd.addColorStop(0.62, alpha(accent, 0.16 * fade));
+      grd.addColorStop(1, alpha(accent, 0));
+      ctx.fillStyle = grd;
+      ctx.beginPath();
+      ctx.arc(cx, cy, reach, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = alpha(accent, 0.34 * fade);
+      ctx.lineWidth = thin;
+      ctx.beginPath();
+      ctx.arc(cx, cy, reach * 0.94, 0, Math.PI * 2);
+      ctx.stroke();
+    } else if (m.style === "shock") {
+      ctx.strokeStyle = alpha(accent, 0.62 * fade);
+      ctx.lineWidth = px(0.6 + 2.0 * fade);
+      ctx.beginPath();
+      ctx.arc(cx, cy, reach, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.strokeStyle = alpha(accent, 0.30 * fade);
+      ctx.lineWidth = thin;
+      ctx.beginPath();
+      ctx.arc(cx, cy, reach * 0.74, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.strokeStyle = alpha(accent, 0.22 * fade);
+      for (let i = 0; i < 4; i++) {
+        const a = Math.PI / 4 + (i * Math.PI) / 2;
+        const c = Math.cos(a);
+        const s = Math.sin(a);
+        ctx.beginPath();
+        ctx.moveTo(cx + c * radius * 0.92, cy + s * radius * 0.92);
+        ctx.lineTo(cx + c * reach * 1.06, cy + s * reach * 1.06);
+        ctx.stroke();
+      }
+    } else if (m.style === "burst") {
+      ctx.strokeStyle = alpha(accent, 0.52 * fade);
+      ctx.lineWidth = px(1.6);
+      for (let i = 0; i < 8; i++) {
+        const a = (i * Math.PI) / 4;
+        const c = Math.cos(a);
+        const s = Math.sin(a);
+        const inner = radius * (0.72 + 0.16 * ease);
+        ctx.beginPath();
+        ctx.moveTo(cx + c * inner, cy + s * inner);
+        ctx.lineTo(cx + c * reach * 1.08, cy + s * reach * 1.08);
+        ctx.stroke();
+      }
+    } else if (m.style === "step") {
+      // Quantised growth: the ring advances in four chunky retro steps.
+      const stepped = Math.ceil(ease * 4) / 4;
+      const box = radius * (0.86 + (m.spread - 0.86) * stepped);
+      ctx.strokeStyle = alpha(accent, 0.52 * fade);
+      ctx.lineWidth = px(2.4);
+      ctx.strokeRect(cx - box, cy - box, box * 2, box * 2);
+    } else if (m.style === "ripple") {
+      for (let i = 0; i < 3; i++) {
+        const local = t - i * 0.20;
+        if (local <= 0) continue;
+        const k = Math.min(1, local);
+        const r = radius * (0.9 + (m.spread - 0.9) * (1 - Math.pow(1 - k, 3)));
+        ctx.strokeStyle = alpha(accent, 0.42 * (1 - k));
+        ctx.lineWidth = thin;
+        ctx.beginPath();
+        ctx.arc(cx, cy, r, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    } else {
+      // mono: a precise underline that shoots out from the centre.
+      const y = cy + radius * 0.86;
+      const half = radius * (0.35 + (m.spread - 0.35) * ease);
+      ctx.strokeStyle = alpha(accent, 0.62 * fade);
+      ctx.lineWidth = px(2);
+      ctx.beginPath();
+      ctx.moveTo(cx - half, y);
+      ctx.lineTo(cx + half, y);
+      ctx.stroke();
+      ctx.fillStyle = alpha(accent, 0.66 * fade);
+      ctx.beginPath();
+      ctx.arc(cx - half, y, px(1.6), 0, Math.PI * 2);
+      ctx.arc(cx + half, y, px(1.6), 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
   function drawDpad(node) {
     const r = node.r;
     const accent = themeNow.accent;
@@ -562,21 +724,27 @@
     ctx.arc(node.cx, node.cy, r - px(2), (205 * Math.PI) / 180, (335 * Math.PI) / 180);
     ctx.stroke();
 
+    drawPressFx(node, node.cx, node.cy, r, accent);
+
     const armT = r * 0.30;
     const arm = (cx, cy, hw, hh, pressed, dx, dy) => {
+      const k = pressed ? Math.min(1, Math.max(0, node.pressT)) : 0;
       if (pressed) {
-        ctx.fillStyle = alpha(accent, 0.22);
+        ctx.fillStyle = alpha(accent, 0.10 + 0.14 * k);
         roundRectPath(cx - hw - px(4), cy - hh - px(4), (hw + px(4)) * 2, (hh + px(4)) * 2, r * 0.2);
         ctx.fill();
       }
-      ctx.fillStyle = pressed ? accent : themeNow.surfaceAlt;
-      roundRectPath(cx - hw, cy - hh, hw * 2, hh * 2, r * 0.16);
+      const inset = 1 - 0.02 * k;
+      const ahw = hw * inset;
+      const ahh = hh * inset;
+      ctx.fillStyle = pressed ? blendHex(themeNow.surfaceAlt, accent, 0.35 + 0.65 * k) : themeNow.surfaceAlt;
+      roundRectPath(cx - ahw, cy - ahh, ahw * 2, ahh * 2, r * 0.16);
       ctx.fill();
-      ctx.strokeStyle = pressed ? alpha(accent, 0.86) : alpha(themeNow.text, 0.10);
+      ctx.strokeStyle = pressed ? alpha(accent, 0.45 + 0.41 * k) : alpha(themeNow.text, 0.10);
       ctx.lineWidth = px(1);
-      roundRectPath(cx - hw, cy - hh, hw * 2, hh * 2, r * 0.16);
+      roundRectPath(cx - ahw, cy - ahh, ahw * 2, ahh * 2, r * 0.16);
       ctx.stroke();
-      drawArrow(cx, cy, r, dx, dy, pressed ? themeNow.bgBottom : alpha(themeNow.text, 0.59));
+      drawArrow(cx, cy, r, dx, dy, pressed && k > 0.55 ? themeNow.bgBottom : pressed ? alpha(themeNow.bgBottom, 0.4 + 0.6 * k) : alpha(themeNow.text, 0.59));
     };
 
     arm(node.cx, node.cy - r * 0.55, armT, r * 0.36, node.up, 0, -1);
@@ -730,6 +898,8 @@
     ctx.arc(cx, cy, r * 0.80, 0, Math.PI * 2);
     ctx.stroke();
 
+    drawPressFx(node, cx, cy, node.r, accent);
+
     const ink = p > 0.55 ? themeNow.bgBottom : accent;
     if (prefs.faces === "ps") {
       drawGlyph(node.faceIdx, cx, cy, r, ink);
@@ -783,44 +953,50 @@
   function drawPill(node) {
     const accent = themeNow.accent;
     const pressed = node.pressed;
+    const p = Math.min(1, Math.max(0, node.pressT));
 
     if (node.kind === K_PS) {
-      if (pressed) {
-        ctx.fillStyle = alpha(accent, 0.27);
+      if (p > 0.01) {
+        ctx.fillStyle = alpha(accent, 0.27 * p);
         ctx.beginPath();
-        ctx.arc(node.cx, node.cy, node.r * 1.22, 0, Math.PI * 2);
+        ctx.arc(node.cx, node.cy, node.r * (1.08 + 0.14 * p), 0, Math.PI * 2);
         ctx.fill();
       }
-      ctx.fillStyle = pressed ? blendHex(themeNow.surface, accent, 0.45) : themeNow.surface;
+      ctx.fillStyle = pressed ? blendHex(themeNow.surface, accent, 0.45 * p) : themeNow.surface;
       ctx.beginPath();
-      ctx.arc(node.cx, node.cy, node.r, 0, Math.PI * 2);
+      ctx.arc(node.cx, node.cy, node.r * (1 - 0.02 * p), 0, Math.PI * 2);
       ctx.fill();
-      ctx.strokeStyle = pressed ? accent : alpha(themeNow.text, 0.19);
-      ctx.lineWidth = pressed ? px(2.2) : px(1.3);
+      ctx.strokeStyle = pressed ? alpha(accent, 0.55 + 0.45 * p) : alpha(themeNow.text, 0.19);
+      ctx.lineWidth = px(1.3 + 0.9 * p);
       ctx.beginPath();
       ctx.arc(node.cx, node.cy, node.r - px(0.6), 0, Math.PI * 2);
       ctx.stroke();
-      drawTracked(node.label, node.cx, node.cy, node.r * 0.60, pressed ? themeNow.bgBottom : themeNow.textDim, node.r * 0.08, true);
+      drawPressFx(node, node.cx, node.cy, node.r, accent);
+      drawTracked(node.label, node.cx, node.cy, node.r * 0.60, p > 0.55 ? themeNow.bgBottom : themeNow.textDim, node.r * 0.08, true);
       return;
     }
 
     const radius = node.hh > node.hw ? Math.min(node.hw, node.hh) * 0.55 : node.hh * 0.55;
-    if (pressed) {
-      ctx.fillStyle = alpha(accent, 0.22);
+    const hw = node.hw * (1 - 0.018 * p);
+    const hh = node.hh * (1 - 0.018 * p);
+    if (p > 0.01) {
+      ctx.fillStyle = alpha(accent, 0.22 * p);
       roundRectPath(node.cx - node.hw - px(3), node.cy - node.hh - px(3), (node.hw + px(3)) * 2, (node.hh + px(3)) * 2, radius + px(3));
       ctx.fill();
     }
-    ctx.fillStyle = pressed ? blendHex(themeNow.surface, accent, 0.42) : themeNow.surface;
-    roundRectPath(node.cx - node.hw, node.cy - node.hh, node.hw * 2, node.hh * 2, radius);
+    ctx.fillStyle = pressed ? blendHex(themeNow.surface, accent, 0.42 * p) : themeNow.surface;
+    roundRectPath(node.cx - hw, node.cy - hh, hw * 2, hh * 2, radius);
     ctx.fill();
-    ctx.strokeStyle = pressed ? accent : alpha(themeNow.text, 0.16);
-    ctx.lineWidth = pressed ? px(2) : px(1.2);
-    roundRectPath(node.cx - node.hw, node.cy - node.hh, node.hw * 2, node.hh * 2, radius);
+    ctx.strokeStyle = pressed ? alpha(accent, 0.55 + 0.45 * p) : alpha(themeNow.text, 0.16);
+    ctx.lineWidth = px(1.2 + 0.8 * p);
+    roundRectPath(node.cx - hw, node.cy - hh, hw * 2, hh * 2, radius);
     ctx.stroke();
+
+    drawPressFx(node, node.cx, node.cy, Math.max(node.hw, node.hh), accent);
 
     const label = displayLabel(node);
     const size = fitTrackedSize(label, node.hw * 1.6, Math.min(node.hh * 1.05, node.hw * 0.60));
-    drawTracked(label, node.cx, node.cy, size, pressed ? themeNow.bgBottom : themeNow.textDim, size * 0.09, true);
+    drawTracked(label, node.cx, node.cy, size, p > 0.55 ? themeNow.bgBottom : themeNow.textDim, size * 0.09, true);
   }
 
   function statusColor() {
@@ -997,6 +1173,16 @@
     let active = false;
 
     for (const node of nodes) {
+      if (node.ripple > 0) {
+        if (prefs.motion) {
+          node.ripple += dt / motionOf(themeNow).ms;
+          if (node.ripple >= 1) node.ripple = 0;
+          active = true;
+        } else {
+          node.ripple = 0;
+        }
+      }
+
       const target = node.pressed || node.pointer !== null ? 1 : 0;
       const delta = target - node.pressT;
       if (Math.abs(delta) < 0.003 && Math.abs(node.pressVel) < 0.003) {
@@ -1111,10 +1297,19 @@
     return set;
   }
 
+  function pressFx(node) {
+    if (!prefs.motion) return;
+    node.ripple = 0.0001;
+    dirty = true;
+    requestFrame();
+  }
+
   function hold(node, source) {
     if (!node) return;
+    const wasPressed = node.pressed;
     sourceSet(node).add(source);
     node.pressed = true;
+    if (!wasPressed) pressFx(node);
     dirty = true;
     requestFrame();
   }
@@ -1180,10 +1375,12 @@
     const left = dx < -threshold;
     const right = dx > threshold;
     if (up !== node.up || down !== node.down || left !== node.left || right !== node.right) {
+      const wasActive = node.up || node.down || node.left || node.right;
       node.up = up;
       node.down = down;
       node.left = left;
       node.right = right;
+      if (!wasActive && (up || down || left || right)) pressFx(node);
       dirty = true;
       requestFrame();
     }
@@ -1671,7 +1868,7 @@
   });
 
   // ------------------------------------------------------------------ network
-  const VERSION = "1.6.9";
+  const VERSION = "1.6.10";
   let socket = null;
   let connected = false;
   let manualOffline = false;
@@ -2299,6 +2496,7 @@
   const curveEl = $("#curve");
   const curveLabel = $("#curve-label");
   const hapticsToggle = $("#haptics-toggle");
+  const motionToggle = $("#motion-toggle");
   const strengthEl = $("#strength");
   const strengthLabel = $("#strength-label");
 
@@ -2310,6 +2508,9 @@
     hapticsToggle.textContent = prefs.haptics ? "ON" : "OFF";
     hapticsToggle.classList.toggle("on", prefs.haptics);
     hapticsToggle.setAttribute("aria-pressed", prefs.haptics ? "true" : "false");
+    motionToggle.textContent = prefs.motion ? "ON" : "OFF";
+    motionToggle.classList.toggle("on", prefs.motion);
+    motionToggle.setAttribute("aria-pressed", prefs.motion ? "true" : "false");
     strengthEl.value = String(Math.round(prefs.strength));
     strengthLabel.textContent = `VIBRATION STRENGTH  \u00b7  ${Math.round(prefs.strength)}%`;
     for (const button of document.querySelectorAll("[data-rate]")) {
@@ -2318,6 +2519,21 @@
       button.setAttribute("aria-pressed", selected ? "true" : "false");
     }
     rateHint.textContent = RATE_INFO[prefs.rate].hint;
+  }
+
+  function bindMotionFeedback() {
+    const selector = ".action, .chip, .toggle, .round, .swatch";
+    document.addEventListener("pointerdown", (event) => {
+      if (!prefs.motion) return;
+      const target = event.target.closest(selector);
+      if (!target) return;
+      target.classList.remove("press-anim");
+      void target.offsetWidth;
+      target.classList.add("press-anim");
+      const clear = () => target.classList.remove("press-anim");
+      target.addEventListener("animationend", clear, { once: true });
+      setTimeout(clear, 900);
+    }, true);
   }
 
   function bindControls() {
@@ -2341,6 +2557,15 @@
       prefs.haptics = !prefs.haptics;
       savePref(PREF.haptics, prefs.haptics);
       syncControls();
+    });
+
+    motionToggle.addEventListener("click", () => {
+      prefs.motion = !prefs.motion;
+      savePref(PREF.motion, prefs.motion);
+      applyMotionPref();
+      syncControls();
+      dirty = true;
+      requestFrame();
     });
 
     strengthEl.addEventListener("input", () => {
@@ -3176,11 +3401,13 @@
     buildThemeGrid();
     buildSlotRow();
     bindControls();
+    bindMotionFeedback();
     bindLayouts();
     bindScreen();
     bindFullscreen();
     bindDialogs();
     applyCssTheme(themeNow);
+    applyMotionPref();
     resize();
     syncScreen();
 

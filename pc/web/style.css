@@ -868,3 +868,88 @@ button:focus-visible {
     padding: 11px 12px 12px;
   }
 }
+
+/* ------------------------------------------------------- animated buttons */
+/* Each palette sets one motion name; the pad uses the same eight motifs. */
+:root {
+  --press-anim: ui-pulse;
+  --press-ease: cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+
+:root[data-motion="pulse"] { --press-anim: ui-pulse; }
+:root[data-motion="wave"] { --press-anim: ui-wave; }
+:root[data-motion="halo"] { --press-anim: ui-halo; }
+:root[data-motion="shock"] { --press-anim: ui-shock; }
+:root[data-motion="burst"] { --press-anim: ui-burst; }
+:root[data-motion="step"] { --press-anim: ui-step; --press-ease: steps(4, end); }
+:root[data-motion="ripple"] { --press-anim: ui-ripple; }
+:root[data-motion="line"] { --press-anim: ui-line; }
+
+.action.press-anim,
+.chip.press-anim,
+.toggle.press-anim,
+.round.press-anim,
+.swatch.press-anim {
+  animation: var(--press-anim) var(--press-ms, 420ms) var(--press-ease) both;
+}
+
+@keyframes ui-pulse {
+  0% { transform: scale(1); box-shadow: 0 0 0 0 var(--accent-soft); }
+  30% { transform: scale(0.955); box-shadow: 0 0 0 3px var(--accent-soft); }
+  100% { transform: scale(1); box-shadow: 0 0 0 10px transparent; }
+}
+
+@keyframes ui-wave {
+  0% { transform: translateY(0) scale(1); box-shadow: 0 -2px 0 0 var(--accent-soft); }
+  40% { transform: translateY(-1px) scale(0.97); box-shadow: 0 4px 0 0 var(--accent-soft); }
+  100% { transform: translateY(0) scale(1); box-shadow: 0 9px 0 0 transparent; }
+}
+
+@keyframes ui-halo {
+  0% { box-shadow: 0 0 0 0 var(--accent-soft), 0 0 0 0 transparent; }
+  35% { box-shadow: 0 0 0 2px var(--accent-soft), 0 0 20px 3px var(--accent-soft); }
+  100% { box-shadow: 0 0 0 0 transparent, 0 0 30px 0 transparent; }
+}
+
+@keyframes ui-shock {
+  0% { transform: translateX(0) scale(1); box-shadow: 0 0 0 0 var(--accent-soft); }
+  22% { transform: translateX(-1.6px) scale(0.965); box-shadow: 0 0 0 2px var(--accent-soft); }
+  55% { transform: translateX(1.6px) scale(0.985); box-shadow: 0 0 0 5px transparent; }
+  100% { transform: translateX(0) scale(1); box-shadow: 0 0 0 0 transparent; }
+}
+
+@keyframes ui-burst {
+  0% { transform: scale(1); box-shadow: 0 0 0 0 var(--accent-soft); }
+  25% { transform: scale(0.95); box-shadow: 0 0 14px 4px var(--accent-soft); }
+  100% { transform: scale(1); box-shadow: 0 0 30px 12px transparent; }
+}
+
+@keyframes ui-step {
+  0% { transform: scale(1); }
+  25% { transform: scale(0.94); }
+  50% { transform: scale(0.975); }
+  75% { transform: scale(0.945); }
+  100% { transform: scale(1); }
+}
+
+@keyframes ui-ripple {
+  0% { box-shadow: 0 0 0 0 var(--accent-soft), 0 0 0 0 transparent; }
+  40% { box-shadow: 0 0 0 3px var(--accent-soft), 0 0 0 8px transparent; }
+  100% { box-shadow: 0 0 0 9px transparent, 0 0 0 16px transparent; }
+}
+
+@keyframes ui-line {
+  0% { transform: scale(1); box-shadow: inset 0 0 0 0 transparent; }
+  30% { transform: scale(0.97); box-shadow: inset 0 -2px 0 0 var(--accent); }
+  100% { transform: scale(1); box-shadow: inset 0 -2px 0 0 transparent; }
+}
+
+.no-motion .press-anim,
+.no-motion .action,
+.no-motion .chip,
+.no-motion .toggle,
+.no-motion .round,
+.no-motion .swatch {
+  animation: none !important;
+  transition: none !important;
+}

@@ -71,11 +71,19 @@ Tap the status pill to open **CONTROL CENTRE**:
   creates every lower pad first; a move to an unused slot creates that pad too.
 - **Appearance** — the eight themes (Neon, Midnight, Violet, Crimson, Solar,
   Retro, Arctic, Mono) with a cross-fade when switching, PlayStation or
-  Xbox face-button labels, and the **FULL SCREEN** toggle.
+  Xbox face-button labels, an **Animated buttons** toggle and the **FULL
+  SCREEN** toggle.
 - **Controls** — stick deadzone, stick curve, vibration on/off and strength,
   and the input-rate mode.
 - **Layouts** — customize the pad and save named arrangements (see below).
 - **PC screen** — an in-page preview of the PC screen (see below).
+
+Every theme also has its own one-shot press animation, drawn on the pad and
+echoed by the settings buttons: Neon pulses, Midnight waves, Violet halos,
+Crimson shocks, Solar bursts, Retro steps, Arctic ripples and Mono draws a
+line. **APPEARANCE → Animated buttons** turns them off; it starts off when the
+browser reports `prefers-reduced-motion: reduce`. Motion only advances while a
+press is settling, so an idle pad still draws nothing.
 
 Settings are stored in the browser's `localStorage` on that device. They are
 not shared with other browsers, other devices or the Android app.

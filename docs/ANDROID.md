@@ -268,6 +268,11 @@ curve, so there is no visible kick when the fade starts or ends. Buttons spring
 under your thumb (a light, slightly under-damped spring that settles in about
 120 ms), the status dot ripples only when the connection state actually changes,
 the PiP window scales in, and the edit toolbar slides down from the top.
+Each palette also has its own one-shot press ripple, so the same tap feels
+different in every theme: Neon pulses a ring, Midnight sends a wave, Violet
+blooms a halo, Crimson shocks, Solar bursts, Retro steps in quantised chunks,
+Arctic ripples three rings and Mono draws a precise underline. The ripple only
+advances while a press is settling, so an idle pad still renders nothing.
 Animations are frame-rate independent: they look the same on a 60 Hz and a
 120 Hz screen. All animations use the current theme's colours. Themes, face
 labels, layout and connection settings are remembered independently.
@@ -287,7 +292,7 @@ Every change applies immediately.
 - **PC address / port**, **Scan network**, **Scan QR**, and the diagnostics line.
 - **Bluetooth pairing** — adapter state, bonded PCs, discoverable mode, PAN address.
 - **Phone-to-phone Bluetooth HID** — pair this phone as a standard gamepad with another Android phone (Android 9+), with a live *broadcasting / connected* line. No helper app or Accessibility permission is needed on the game host.
-- **Appearance** — eight palettes in a two-column picker with colour previews and a cross-fade.
+- **Appearance** — eight palettes in a two-column picker with colour previews, a cross-fade and an **Animated buttons** toggle.
 - **Face button labels** — PlayStation symbols or Xbox letters.
 - **Layouts** — save several named arrangements, switch between them, delete
   one, or restore the default.

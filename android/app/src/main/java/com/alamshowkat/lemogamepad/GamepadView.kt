@@ -61,6 +61,15 @@ class GamepadView(context: Context) : View(context) {
     @Volatile
     var hapticsEnabled = true
 
+    /** Decorative press ripples drawn by each palette's motion style. */
+    var motionEnabled = true
+        set(value) {
+            if (field == value) return
+            field = value
+            if (!value) for (n in nodes) n.ripple = 0f
+            invalidate()
+        }
+
     // Theme switching is a 300 ms cross-fade, so the whole pad melts from one
     // palette into the next instead of snapping.
     private var themeTarget: PadTheme = Themes.NEON
@@ -142,6 +151,9 @@ class GamepadView(context: Context) : View(context) {
 
         /** Velocity of [pressT] so presses spring instead of easing linearly. */
         var pressVel = 0f
+
+        /** 0 = idle, otherwise 0..1 progress through the palette's press ripple. */
+        var ripple = 0f
 
         var bw = 0f
         var bh = 0f
@@ -465,6 +477,16 @@ class GamepadView(context: Context) : View(context) {
         val step = (dt / 16.667f).coerceIn(0.25f, 3f)
 
         for (n in nodes) {
+            if (n.ripple > 0f) {
+                if (motionEnabled) {
+                    n.ripple += dt / Motions.of(themeNow).ms
+                    if (n.ripple >= 1f) n.ripple = 0f
+                    animating = true
+                } else {
+                    n.ripple = 0f
+                }
+            }
+
             val target = if (n.pressed || n.pointer != -1) 1f else 0f
             val delta = target - n.pressT
             if (abs(delta) < 0.003f && abs(n.pressVel) < 0.003f) {
@@ -534,6 +556,128 @@ class GamepadView(context: Context) : View(context) {
         )
     }
 
+    /**
+     * One-shot press ripple. Each palette owns a motion style, so the same
+     * press reads differently without adding a second theme system.
+     */
+    private fun drawPressFx(
+        canvas: Canvas,
+        n: Node,
+        cx: Float,
+        cy: Float,
+        radius: Float,
+        accent: Int,
+    ) {
+        val t = n.ripple
+        if (!motionEnabled || t <= 0f) return
+        val m = Motions.of(theme)
+        val ease = 1f - (1f - t) * (1f - t) * (1f - t)
+        val fade = (1f - t).coerceAtLeast(0f)
+        val reach = radius + radius * (m.spread - 1f) * ease
+        strokePaint.pathEffect = null
+
+        when (m.style) {
+            "pulse" -> {
+                strokePaint.color = withAlpha(accent, (140 * fade).toInt())
+                strokePaint.strokeWidth = dp(1.2f + 2.4f * fade)
+                canvas.drawCircle(cx, cy, reach, strokePaint)
+            }
+            "wave" -> {
+                strokePaint.color = withAlpha(accent, (128 * fade).toInt())
+                strokePaint.strokeWidth = dp(1.2f + 2f * fade)
+                rect.set(cx - reach, cy - reach, cx + reach, cy + reach)
+                canvas.drawArc(rect, -63f, 270f, false, strokePaint)
+                strokePaint.color = withAlpha(accent, (72 * fade).toInt())
+                strokePaint.strokeWidth = dp(1.4f)
+                val r2 = reach * 0.8f
+                rect.set(cx - r2, cy - r2, cx + r2, cy + r2)
+                canvas.drawArc(rect, 27f, 270f, false, strokePaint)
+            }
+            "halo" -> {
+                glowPaint.shader = RadialGradient(
+                    cx, cy, reach.coerceAtLeast(1f),
+                    intArrayOf(
+                        withAlpha(accent, (77 * fade).toInt()),
+                        withAlpha(accent, (41 * fade).toInt()),
+                        withAlpha(accent, 0),
+                    ),
+                    floatArrayOf(0f, 0.62f, 1f),
+                    Shader.TileMode.CLAMP,
+                )
+                canvas.drawCircle(cx, cy, reach, glowPaint)
+                glowPaint.shader = null
+                strokePaint.color = withAlpha(accent, (87 * fade).toInt())
+                strokePaint.strokeWidth = dp(1.4f)
+                canvas.drawCircle(cx, cy, reach * 0.94f, strokePaint)
+            }
+            "shock" -> {
+                strokePaint.color = withAlpha(accent, (158 * fade).toInt())
+                strokePaint.strokeWidth = dp(0.6f + 2f * fade)
+                canvas.drawCircle(cx, cy, reach, strokePaint)
+                strokePaint.color = withAlpha(accent, (77 * fade).toInt())
+                strokePaint.strokeWidth = dp(1.4f)
+                canvas.drawCircle(cx, cy, reach * 0.74f, strokePaint)
+                strokePaint.color = withAlpha(accent, (56 * fade).toInt())
+                for (i in 0 until 4) {
+                    val a = Math.PI / 4.0 + i * Math.PI / 2.0
+                    val c = cos(a).toFloat()
+                    val sn = sin(a).toFloat()
+                    canvas.drawLine(
+                        cx + c * radius * 0.92f, cy + sn * radius * 0.92f,
+                        cx + c * reach * 1.06f, cy + sn * reach * 1.06f,
+                        strokePaint,
+                    )
+                }
+            }
+            "burst" -> {
+                strokePaint.color = withAlpha(accent, (133 * fade).toInt())
+                strokePaint.strokeWidth = dp(1.6f)
+                val inner = radius * (0.72f + 0.16f * ease)
+                for (i in 0 until 8) {
+                    val a = i * Math.PI / 4.0
+                    val c = cos(a).toFloat()
+                    val sn = sin(a).toFloat()
+                    canvas.drawLine(
+                        cx + c * inner, cy + sn * inner,
+                        cx + c * reach * 1.08f, cy + sn * reach * 1.08f,
+                        strokePaint,
+                    )
+                }
+            }
+            "step" -> {
+                val stepped = kotlin.math.ceil(ease * 4f) / 4f
+                val box = radius * (0.86f + (m.spread - 0.86f) * stepped)
+                strokePaint.color = withAlpha(accent, (133 * fade).toInt())
+                strokePaint.strokeWidth = dp(2.4f)
+                rect.set(cx - box, cy - box, cx + box, cy + box)
+                canvas.drawRect(rect, strokePaint)
+            }
+            "ripple" -> {
+                strokePaint.strokeWidth = dp(1.4f)
+                for (i in 0 until 3) {
+                    val local = t - i * 0.20f
+                    if (local <= 0f) continue
+                    val k = local.coerceAtMost(1f)
+                    val r = radius * (
+                        0.9f + (m.spread - 0.9f) * (1f - (1f - k) * (1f - k) * (1f - k))
+                        )
+                    strokePaint.color = withAlpha(accent, (107 * (1f - k)).toInt())
+                    canvas.drawCircle(cx, cy, r, strokePaint)
+                }
+            }
+            else -> {
+                val y = cy + radius * 0.86f
+                val half = radius * (0.35f + (m.spread - 0.35f) * ease)
+                strokePaint.color = withAlpha(accent, (158 * fade).toInt())
+                strokePaint.strokeWidth = dp(2f)
+                canvas.drawLine(cx - half, y, cx + half, y, strokePaint)
+                fillPaint.color = withAlpha(accent, (168 * fade).toInt())
+                canvas.drawCircle(cx - half, y, dp(1.6f), fillPaint)
+                canvas.drawCircle(cx + half, y, dp(1.6f), fillPaint)
+            }
+        }
+    }
+
     private fun drawDpad(canvas: Canvas, n: Node) {
         val r = n.r
         val accent = theme.accent
@@ -551,22 +695,36 @@ class GamepadView(context: Context) : View(context) {
         rect.set(n.cx - r + dp(2f), n.cy - r + dp(2f), n.cx + r - dp(2f), n.cy + r - dp(2f))
         canvas.drawArc(rect, 205f, 130f, false, strokePaint)
 
+        drawPressFx(canvas, n, n.cx, n.cy, r, accent)
+
         val armT = r * 0.30f
 
         fun arm(cx: Float, cy: Float, hw: Float, hh: Float, pressed: Boolean, dx: Float, dy: Float) {
-            rect.set(cx - hw, cy - hh, cx + hw, cy + hh)
+            val k = if (pressed) n.pressT.coerceIn(0f, 1f) else 0f
             if (pressed) {
-                glowPaint.color = withAlpha(accent, 55)
+                glowPaint.color = withAlpha(accent, (26 + 29 * k).toInt())
                 rect.set(cx - hw - dp(4f), cy - hh - dp(4f), cx + hw + dp(4f), cy + hh + dp(4f))
                 canvas.drawRoundRect(rect, r * 0.2f, r * 0.2f, glowPaint)
-                rect.set(cx - hw, cy - hh, cx + hw, cy + hh)
             }
-            fillPaint.color = if (pressed) accent else theme.surfaceAlt
+            val inset = 1f - 0.02f * k
+            val ahw = hw * inset
+            val ahh = hh * inset
+            rect.set(cx - ahw, cy - ahh, cx + ahw, cy + ahh)
+            fillPaint.color = if (pressed) blend(theme.surfaceAlt, accent, 0.35f + 0.65f * k) else theme.surfaceAlt
             canvas.drawRoundRect(rect, r * 0.16f, r * 0.16f, fillPaint)
-            strokePaint.color = if (pressed) withAlpha(accent, 220) else withAlpha(theme.text, 26)
+            strokePaint.color = if (pressed) withAlpha(accent, (115 + 105 * k).toInt()) else withAlpha(theme.text, 26)
             strokePaint.strokeWidth = dp(1f)
             canvas.drawRoundRect(rect, r * 0.16f, r * 0.16f, strokePaint)
-            drawArrow(canvas, cx, cy, r, dx, dy, if (pressed) theme.bgBottom else withAlpha(theme.text, 150))
+            drawArrow(
+                canvas, cx, cy, r, dx, dy,
+                if (!pressed) {
+                    withAlpha(theme.text, 150)
+                } else if (k > 0.55f) {
+                    theme.bgBottom
+                } else {
+                    withAlpha(theme.bgBottom, (102 + 153 * k).toInt())
+                },
+            )
         }
 
         arm(n.cx, n.cy - r * 0.55f, armT, r * 0.36f, n.up, 0f, -1f)
@@ -689,6 +847,8 @@ class GamepadView(context: Context) : View(context) {
         strokePaint.strokeWidth = dp(1f)
         canvas.drawCircle(cx, cy, r * 0.80f, strokePaint)
 
+        drawPressFx(canvas, n, cx, cy, n.r, accent)
+
         val ink = if (p > 0.55f) theme.bgBottom else accent
         if (faceLabels == FaceLabels.PLAYSTATION) {
             drawGlyph(canvas, i, cx, cy, r, ink)
@@ -738,48 +898,53 @@ class GamepadView(context: Context) : View(context) {
     private fun drawPill(canvas: Canvas, n: Node) {
         val accent = theme.accent
         val pressed = n.pressed
+        val p = n.pressT.coerceIn(0f, 1f)
         fillPaint.shader = null
 
         if (n.kind == K_PS) {
-            if (pressed) {
-                glowPaint.color = withAlpha(accent, 70)
-                canvas.drawCircle(n.cx, n.cy, n.r * 1.22f, glowPaint)
+            if (p > 0.01f) {
+                glowPaint.color = withAlpha(accent, (69 * p).toInt())
+                canvas.drawCircle(n.cx, n.cy, n.r * (1.08f + 0.14f * p), glowPaint)
             }
-            fillPaint.color = if (pressed) blend(theme.surface, accent, 0.45f) else theme.surface
-            canvas.drawCircle(n.cx, n.cy, n.r, fillPaint)
-            strokePaint.color = if (pressed) accent else withAlpha(theme.text, 48)
-            strokePaint.strokeWidth = if (pressed) dp(2.2f) else dp(1.3f)
+            fillPaint.color = if (pressed) blend(theme.surface, accent, 0.45f * p) else theme.surface
+            canvas.drawCircle(n.cx, n.cy, n.r * (1f - 0.02f * p), fillPaint)
+            strokePaint.color = if (pressed) withAlpha(accent, (140 + 115 * p).toInt()) else withAlpha(theme.text, 48)
+            strokePaint.strokeWidth = dp(1.3f + 0.9f * p)
             canvas.drawCircle(n.cx, n.cy, n.r - dp(0.6f), strokePaint)
+            drawPressFx(canvas, n, n.cx, n.cy, n.r, accent)
             drawTracked(
                 canvas, n.label, n.cx, n.cy, n.r * 0.60f,
-                if (pressed) theme.bgBottom else theme.textDim, n.r * 0.08f, true,
+                if (p > 0.55f) theme.bgBottom else theme.textDim, n.r * 0.08f, true,
             )
             return
         }
 
-        rect.set(n.cx - n.hw, n.cy - n.hh, n.cx + n.hw, n.cy + n.hh)
         val radius = if (n.hh > n.hw) min(n.hw, n.hh) * 0.55f else n.hh * 0.55f
+        val hw = n.hw * (1f - 0.018f * p)
+        val hh = n.hh * (1f - 0.018f * p)
 
-        if (pressed) {
-            glowPaint.color = withAlpha(accent, 55)
+        if (p > 0.01f) {
+            glowPaint.color = withAlpha(accent, (56 * p).toInt())
             rect.set(
                 n.cx - n.hw - dp(3f), n.cy - n.hh - dp(3f),
                 n.cx + n.hw + dp(3f), n.cy + n.hh + dp(3f),
             )
             canvas.drawRoundRect(rect, radius + dp(3f), radius + dp(3f), glowPaint)
-            rect.set(n.cx - n.hw, n.cy - n.hh, n.cx + n.hw, n.cy + n.hh)
         }
-        fillPaint.color = if (pressed) blend(theme.surface, accent, 0.42f) else theme.surface
+        rect.set(n.cx - hw, n.cy - hh, n.cx + hw, n.cy + hh)
+        fillPaint.color = if (pressed) blend(theme.surface, accent, 0.42f * p) else theme.surface
         canvas.drawRoundRect(rect, radius, radius, fillPaint)
-        strokePaint.color = if (pressed) accent else withAlpha(theme.text, 40)
-        strokePaint.strokeWidth = if (pressed) dp(2f) else dp(1.2f)
+        strokePaint.color = if (pressed) withAlpha(accent, (140 + 115 * p).toInt()) else withAlpha(theme.text, 40)
+        strokePaint.strokeWidth = dp(1.2f + 0.8f * p)
         canvas.drawRoundRect(rect, radius, radius, strokePaint)
+
+        drawPressFx(canvas, n, n.cx, n.cy, max(n.hw, n.hh), accent)
 
         val label = displayLabel(n)
         val size = fitTrackedSize(label, n.hw * 1.6f, min(n.hh * 1.05f, n.hw * 0.60f))
         drawTracked(
             canvas, label, n.cx, n.cy, size,
-            if (pressed) theme.bgBottom else theme.textDim, size * 0.09f, true,
+            if (p > 0.55f) theme.bgBottom else theme.textDim, size * 0.09f, true,
         )
     }
 
@@ -977,10 +1142,17 @@ class GamepadView(context: Context) : View(context) {
             n.right = false
             n.kx = 0f
             n.ky = 0f
+            n.ripple = 0f
         }
         hudPointer = -1
         hudPressed = false
         publish()
+        startAnimating()
+    }
+
+    private fun pressFx(n: Node) {
+        if (!motionEnabled) return
+        n.ripple = 0.0001f
         startAnimating()
     }
 
@@ -1016,6 +1188,7 @@ class GamepadView(context: Context) : View(context) {
         if (face != null && face.pointer == -1) {
             face.pointer = id
             face.pressed = true
+            pressFx(face)
             tap()
             publish()
             invalidate()
@@ -1031,6 +1204,7 @@ class GamepadView(context: Context) : View(context) {
                 K_STICK_L, K_STICK_R -> moveStick(n, x, y)
                 else -> {
                     n.pressed = true
+                    pressFx(n)
                     tap()
                     publish()
                 }
@@ -1057,6 +1231,7 @@ class GamepadView(context: Context) : View(context) {
                     val inside = n.hit(x, y)
                     if (inside != n.pressed) {
                         n.pressed = inside
+                        if (inside) pressFx(n)
                         publish()
                     }
                 }
@@ -1106,6 +1281,7 @@ class GamepadView(context: Context) : View(context) {
         if (target === n) {
             if (!n.pressed) {
                 n.pressed = true
+                pressFx(n)
                 tap()
                 publish()
             }
@@ -1116,6 +1292,7 @@ class GamepadView(context: Context) : View(context) {
             n.pointer = -1
             target.pointer = id
             target.pressed = true
+            pressFx(target)
             tap()
             publish()
         } else if (n.pressed) {
@@ -1164,10 +1341,12 @@ class GamepadView(context: Context) : View(context) {
         val left = dx < -t
         val right = dx > t
         if (up != n.up || down != n.down || left != n.left || right != n.right) {
+            val wasActive = n.up || n.down || n.left || n.right
             n.up = up
             n.down = down
             n.left = left
             n.right = right
+            if (!wasActive && (up || down || left || right)) pressFx(n)
             publish()
         }
     }

@@ -45,6 +45,7 @@ internal object PrefsKeys {
     const val WIFI_GUIDE_SEEN = "wifi_guide_seen"
     const val THEME = "theme"
     const val FACES = "faces"
+    const val MOTION = "motion"
     const val LAYOUT = "layout"
     const val LAYOUT_ACTIVE = "layout_active"
     const val LAYOUTS = "layouts"
@@ -781,6 +782,15 @@ class SettingsPanel(
         }
         tinters += { styleFaces() }
         styleFaces()
+
+        card.addView(
+            toggle("Animated buttons", pad.motionEnabled) { on ->
+                pad.motionEnabled = on
+                prefs.edit().putBoolean(PrefsKeys.MOTION, on).apply()
+            },
+            topParams(px(8)),
+        )
+        card.addView(tiny("Each theme has its own press ripple on the pad.", top = px(2)))
 
         return card
     }

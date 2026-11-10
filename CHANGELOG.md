@@ -2,6 +2,27 @@
 
 Newest first. The reasoning behind each release is in [`docs/REVIEW.md`](docs/REVIEW.md).
 
+## 1.6.10
+
+- **Every theme now has its own animated press** — the browser pad and
+  `GamepadView` draw a one-shot ripple when a face button, bumper, trigger or
+  d-pad direction is pressed. Neon pulses a clean ring, Midnight sends a
+  trailing wave, Violet blooms a soft halo, Crimson fires a double shock ring,
+  Solar throws eight rays, Retro advances a square in four quantised steps,
+  Arctic expands three staggered rings and Mono shoots a precise underline.
+- **The rest of the UI joins in** — the same eight motifs drive the press
+  feedback on browser chips, toggles, actions and theme tiles, keyed off the
+  active palette, while the Android settings buttons keep their themed spring.
+- **Animated buttons toggle** — added to **APPEARANCE** in both the browser
+  CONTROL CENTRE (`lmgb.motion`) and the Android settings sheet
+  (`PrefsKeys.MOTION`). It defaults to on, but starts off when the device
+  reports reduced motion. The browser also disables the DOM animation through
+  `html.no-motion`.
+- **Battery behaviour is unchanged** — ripples are one-shot, advance only while
+  a press settles, and never add idle frames. Pills and d-pad arms now use the
+  existing `pressT` spring for their inset/glow instead of a boolean snap.
+- **Wire-compatible** — no protocol or transport changes. `versionCode` is 24.
+
 ## 1.6.9
 
 - **Swapping onto another player's pad now needs their consent** — choosing an

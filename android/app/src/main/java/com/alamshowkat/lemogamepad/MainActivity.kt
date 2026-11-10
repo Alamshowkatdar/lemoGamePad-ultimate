@@ -125,6 +125,7 @@ class MainActivity : Activity() {
         view.deadzone = prefs.getInt(PrefsKeys.DEADZONE, 12) / 100f
         view.stickCurve = prefs.getInt(PrefsKeys.STICK_CURVE, 0) / 100f
         view.hapticsEnabled = prefs.getBoolean(PrefsKeys.HAPTICS, true)
+        view.motionEnabled = prefs.getBoolean(PrefsKeys.MOTION, true)
         view.onOpenSettings = { showSettings() }
         view.onHaptic = { ms -> tapFeedback(ms) }
         view.onLayoutChanged = { persistLayout() }

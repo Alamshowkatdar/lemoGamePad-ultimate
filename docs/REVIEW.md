@@ -1,4 +1,4 @@
-# Review notes — 1.3.6 / 1.3.7 / 1.4.0 / 1.5.0 / 1.6.0 / 1.6.1 / 1.6.2 / 1.6.3 / 1.6.4 / 1.6.5 / 1.6.6 / 1.6.7 / 1.6.8 / 1.6.9
+# Review notes — 1.3.6 / 1.3.7 / 1.4.0 / 1.5.0 / 1.6.0 / 1.6.1 / 1.6.2 / 1.6.3 / 1.6.4 / 1.6.5 / 1.6.6 / 1.6.7 / 1.6.8 / 1.6.9 / 1.6.10
 
 A pass over the whole app (Kotlin sources, manifest, Gradle files, CI) focused on
 bugs, UI smoothness, and making the phone-to-phone Bluetooth gamepad honest.
@@ -25,7 +25,9 @@ CONTROL CENTRE closing on the tap that opened it (see
 makes a requested slot match the game's controller number and fixes moves to
 never-used pads (see [Player slot order (1.6.8)](#player-slot-order-168));
 1.6.9 makes changing to an occupied pad a consent-based swap that never pauses
-input (see [Player swap consent (1.6.9)](#player-swap-consent-169)).
+input (see [Player swap consent (1.6.9)](#player-swap-consent-169)); 1.6.10 gives
+each theme its own animated button press (see
+[Animated buttons (1.6.10)](#animated-buttons-1610)).
 This file records what was found and what changed, so the reasoning does not get
 lost between releases.
 
@@ -834,3 +836,55 @@ LAN has long since arrived.
 - `pc/test_web.py::test_swap` drives two WebSocket tabs through ask, input while
   pending, accept with both results, a cancellation via `w:0`, and a subsequent
   decline.
+
+## Animated buttons (1.6.10)
+
+The eight palettes already changed every colour; they now change how a press
+feels too. A palette carries a `motion` name, and a small table maps it to a
+style, duration and spread. The pad keeps one `ripple` progress per node and
+draws the effect from the existing animation loop, so the work fits the
+render-only-when-something-changes design instead of adding a second idle
+timeline.
+
+| Theme | Motion | What is drawn |
+|---|---|---|
+| Neon | `pulse` | a clean expanding ring |
+| Midnight | `wave` | an expanding arc with a trailing inner arc |
+| Violet | `halo` | a soft radial bloom with an edge ring |
+| Crimson | `shock` | a sharp double ring with four short spokes |
+| Solar | `burst` | eight rays shooting outward |
+| Retro | `step` | a square that grows in four quantised steps |
+| Arctic | `ripple` | three staggered concentric rings |
+| Mono | `line` | a precise underline with end caps |
+
+### Where the ripple starts
+
+- Browser: `hold()` starts a ripple only on the rising edge of a press, so a
+  finger that stays down does not retrigger it; `moveDpad()` does the same when
+  a direction becomes active. The ripple advances in `stepAnimations()` and is
+  drawn behind the face/pill body and outside the d-pad arms.
+- Android: the same rising-edge points live in `grab`, `dragNode`, `rollFace`
+  and `moveDpad`. Ripples advance in `GamepadView.stepAnimations()` before the
+  early `continue` that parks a settled press spring.
+
+Sticks deliberately have no ripple: they are drag controls, and the existing
+active-ring already shows that a thumb owns them. Pills and d-pad arms now use
+`pressT` for their inset and glow, replacing the old boolean snap with the same
+slightly under-damped spring the face buttons already had.
+
+### Toggle and reduced motion
+
+`motion` defaults to on, but the browser reads
+`prefers-reduced-motion: reduce` and the stored `lmgb.motion` value defaults to
+off when it matches. The Android sheet stores `PrefsKeys.MOTION`; the browser
+CONTROL CENTRE stores `lmgb.motion` and toggles `html.no-motion`. Turned off,
+both clients stop advancing and drawing ripples immediately; the browser also
+drops the `.press-anim` CSS class and disables its button transitions. An
+explicit toggle always wins, so a user who asks for motion still gets it.
+
+### Compatibility
+
+No protocol, packet or transport changes. The browser still uses local files
+only; the CSS adds no remote font or CDN. Existing layouts, themes and saved
+settings keep working because `motion` has a default (`pulse`) and unknown
+values fall back to it.

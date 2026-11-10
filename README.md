@@ -13,7 +13,7 @@ by **Alam showkat**
 
 [**Download the latest release →**](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) · [Report an issue](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/issues)
 
-**App source version:** 1.6.9. Download the signed APK and the Windows/Linux server from the [latest release](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) — use **1.3.7.2 or newer** on Linux, which fixes the swapped X/Y face buttons. The release workflow also publishes a `SHA256SUMS.txt` so you can verify your download.
+**App source version:** 1.6.10. Download the signed APK and the Windows/Linux server from the [latest release](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) — use **1.3.7.2 or newer** on Linux, which fixes the swapped X/Y face buttons. The release workflow also publishes a `SHA256SUMS.txt` so you can verify your download.
 
 ---
 
@@ -44,7 +44,24 @@ either, only access to `/dev/uinput`.
 > **lemoGamePad ultimate™** — trademark of **Alam showkat**.
 > App package: `com.alamshowkat.lemogamepad`.
 
-### What's new in 1.6.9
+### What's new in 1.6.10
+
+- **Animated buttons, one motion per theme** — every palette now has its own
+  one-shot press response on the phone and the browser pad. **Neon** pulses,
+  **Midnight** sends a wave, **Violet** blooms a halo, **Crimson** shocks,
+  **Solar** bursts, **Retro** steps in quantised chunks, **Arctic** ripples in
+  three rings and **Mono** draws a precise underline. The same motif plays on
+  the chips, toggles and theme tiles in the settings sheet.
+- **You control the motion** — **APPEARANCE → Animated buttons** turns the
+  effects on or off in both the Android settings sheet and the browser CONTROL
+  CENTRE. It defaults to on unless the device asks for reduced motion. Ripples
+  are one-shot and only advance while a press is settling, so an idle pad still
+  renders nothing and battery behaviour is unchanged.
+- **Everything from 1.6.9** — consent-based player swaps that never pause
+  input.
+- Wire-compatible with 1.3 and later apps and servers.
+
+### Highlights from 1.6.9
 
 - **Player swaps now ask first** — selecting a pad another player is using no
   longer steals it. That player gets a small **Accept / Decline** card on their
@@ -64,7 +81,6 @@ either, only access to `/dev/uinput`.
 - **Everything from 1.6.8** — requested slots match the game's controller
   number, moves to never-used pads create them, and eight controllers work on
   Linux.
-- Wire-compatible with 1.3 and later apps and servers.
 
 ### Highlights from 1.6.4
 
@@ -182,4 +198,4 @@ licenses are listed in [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md).
 
 ---
 
-**lemoGamePad ultimate™ © Alam showkat** · v1.6.9
+**lemoGamePad ultimate™ © Alam showkat** · v1.6.10

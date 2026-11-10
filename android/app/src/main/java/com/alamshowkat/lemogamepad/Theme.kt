@@ -29,6 +29,8 @@ data class PadTheme(
     val circle: Int,
     val square: Int,
     val triangle: Int,
+    /** Press animation style, resolved through [Motions]. */
+    val motion: String = "pulse",
 ) {
     val isLight: Boolean get() = !dark
 }
@@ -73,7 +75,33 @@ fun blendThemes(a: PadTheme, b: PadTheme, t: Float): PadTheme {
         circle = c(a.circle, b.circle),
         square = c(a.square, b.square),
         triangle = c(a.triangle, b.triangle),
+        motion = if (k < 0.5f) a.motion else b.motion,
     )
+}
+
+/** How a palette animates a press. Mirrors the browser MOTIONS table. */
+data class Motion(val style: String, val ms: Float, val spread: Float)
+
+object Motions {
+    val PULSE = Motion("pulse", 420f, 1.55f)
+    val WAVE = Motion("wave", 540f, 1.75f)
+    val HALO = Motion("halo", 640f, 1.35f)
+    val SHOCK = Motion("shock", 360f, 1.85f)
+    val BURST = Motion("burst", 460f, 1.70f)
+    val STEP = Motion("step", 440f, 1.60f)
+    val RIPPLE = Motion("ripple", 660f, 1.95f)
+    val LINE = Motion("line", 380f, 1.45f)
+
+    fun of(theme: PadTheme): Motion = when (theme.motion) {
+        "wave" -> WAVE
+        "halo" -> HALO
+        "shock" -> SHOCK
+        "burst" -> BURST
+        "step" -> STEP
+        "ripple" -> RIPPLE
+        "line" -> LINE
+        else -> PULSE
+    }
 }
 
 /** Branding shown in-app and in the settings footer. */
@@ -83,7 +111,7 @@ object Brand {
     const val AUTHOR = "Alam showkat"
 
     /** Keep in sync with `versionName` in android/app/build.gradle.kts. */
-    const val VERSION = "1.6.9"
+    const val VERSION = "1.6.10"
 }
 
 object Themes {
@@ -109,6 +137,7 @@ object Themes {
         circle = 0xFF5FE3FF.toInt(),
         square = 0xFFBCFF6E.toInt(),
         triangle = 0xFF8CFFD6.toInt(),
+        motion = "pulse",
     )
 
     val MIDNIGHT = PadTheme(
@@ -131,6 +160,7 @@ object Themes {
         circle = 0xFFFF5C72.toInt(),
         square = 0xFFFF7BC4.toInt(),
         triangle = 0xFF45DFA5.toInt(),
+        motion = "wave",
     )
 
     val VIOLET = PadTheme(
@@ -153,6 +183,7 @@ object Themes {
         circle = 0xFFFF6FAE.toInt(),
         square = 0xFF6EE7FF.toInt(),
         triangle = 0xFF7CFFC4.toInt(),
+        motion = "halo",
     )
 
     val CRIMSON = PadTheme(
@@ -175,6 +206,7 @@ object Themes {
         circle = 0xFFFF9B4D.toInt(),
         square = 0xFFFF7BC4.toInt(),
         triangle = 0xFFFFD166.toInt(),
+        motion = "shock",
     )
 
     val RETRO = PadTheme(
@@ -197,6 +229,7 @@ object Themes {
         circle = 0xFFFF5C72.toInt(),
         square = 0xFFFF7BC4.toInt(),
         triangle = 0xFF45DFA5.toInt(),
+        motion = "step",
     )
 
     val ARCTIC = PadTheme(
@@ -219,6 +252,7 @@ object Themes {
         circle = 0xFFD93F55.toInt(),
         square = 0xFFB85AC9.toInt(),
         triangle = 0xFF0E9F63.toInt(),
+        motion = "ripple",
     )
 
     /** Warm sunset: copper background glow with amber and coral controls. */
@@ -242,6 +276,7 @@ object Themes {
         circle = 0xFFFF7A55.toInt(),
         square = 0xFFFFD07A.toInt(),
         triangle = 0xFF8BE28F.toInt(),
+        motion = "burst",
     )
 
     /** High-contrast graphite: pure greys with a white key light. */
@@ -265,6 +300,7 @@ object Themes {
         circle = 0xFFBFBFBF.toInt(),
         square = 0xFF9E9E9E.toInt(),
         triangle = 0xFFDCDCDC.toInt(),
+        motion = "line",
     )
 
     val all = listOf(NEON, MIDNIGHT, VIOLET, CRIMSON, SOLAR, RETRO, ARCTIC, MONO)
