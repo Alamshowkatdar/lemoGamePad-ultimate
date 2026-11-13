@@ -13,7 +13,7 @@ by **Alam showkat**
 
 [**Download the latest release →**](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) · [Report an issue](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/issues)
 
-**App source version:** 1.6.11. Download the signed APK and the Windows/Linux server from the [latest release](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) — use **1.3.7.2 or newer** on Linux, which fixes the swapped X/Y face buttons. The release workflow also publishes a `SHA256SUMS.txt` so you can verify your download.
+**App source version:** 1.6.12. Download the signed APK and the Windows/Linux server from the [latest release](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) — use **1.3.7.2 or newer** on Linux, which fixes the swapped X/Y face buttons. The release workflow also publishes a `SHA256SUMS.txt` so you can verify your download.
 
 ---
 
@@ -44,7 +44,19 @@ either, only access to `/dev/uinput`.
 > **lemoGamePad ultimate™** — trademark of **Alam showkat**.
 > App package: `com.alamshowkat.lemogamepad`.
 
-### What's new in 1.6.11
+### What's new in 1.6.12
+
+- **The browser pad recovers from a network change** — the printed Web pad URL,
+  the console QR and the saved `lemoGamePad-web-qr-<ip>.png` files used to be
+  produced once, at startup. When the PC joined another Wi-Fi network, the old
+  address kept being advertised and the link failed on every device, PC
+  included, while the server itself was still fine. The server now notices the
+  new addresses within about ten seconds, prints the current `Web pad` URL and
+  rewrites the QR images.
+- Wire-compatible with 1.3 and later apps and servers.
+
+<details>
+<summary>1.6.11</summary>
 
 - **AMOLED theme** — a ninth palette with a true `#000000` background and
   near-black surfaces. On an OLED/AMOLED phone those pixels switch fully off,
@@ -58,6 +70,8 @@ either, only access to `/dev/uinput`.
   spring in both clients, so an arrow eases in and out instead of freezing at a
   fixed glow or snapping off. Browser keyboard arrows animate too.
 - Wire-compatible with 1.3 and later apps and servers.
+
+</details>
 
 ### Highlights from 1.6.10
 
@@ -213,4 +227,4 @@ licenses are listed in [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md).
 
 ---
 
-**lemoGamePad ultimate™ © Alam showkat** · v1.6.11
+**lemoGamePad ultimate™ © Alam showkat** · v1.6.12

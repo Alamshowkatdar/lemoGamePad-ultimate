@@ -1,4 +1,4 @@
-# Review notes — 1.3.6 / 1.3.7 / 1.4.0 / 1.5.0 / 1.6.0 / 1.6.1 / 1.6.2 / 1.6.3 / 1.6.4 / 1.6.5 / 1.6.6 / 1.6.7 / 1.6.8 / 1.6.9 / 1.6.10 / 1.6.11
+# Review notes — 1.3.6 / 1.3.7 / 1.4.0 / 1.5.0 / 1.6.0 / 1.6.1 / 1.6.2 / 1.6.3 / 1.6.4 / 1.6.5 / 1.6.6 / 1.6.7 / 1.6.8 / 1.6.9 / 1.6.10 / 1.6.11 / 1.6.12
 
 A pass over the whole app (Kotlin sources, manifest, Gradle files, CI) focused on
 bugs, UI smoothness, and making the phone-to-phone Bluetooth gamepad honest.
@@ -915,3 +915,31 @@ No protocol, packet or transport changes. The browser still uses local files
 only; the CSS adds no remote font or CDN. Existing layouts, themes and saved
 settings keep working because `motion` has a default (`pulse`) and unknown
 values fall back to it.
+
+## Advertised address (1.6.12)
+
+The browser pad listens on every interface, so a network change never stopped
+the server from accepting connections. What broke was the *advertised* address:
+`_print_banner()` drew the Web pad URL and the QR images once, at startup, and
+nothing refreshed them afterwards.
+
+The symptom read as a browser bug: the page timed out in every browser, on the
+phone and on the PC, while `http://127.0.0.1:9878/?k=...` answered 200, served
+every asset and accepted WebSocket input. The PC had simply moved from
+`192.168.0.x` to `192.168.31.x`; the console and the Desktop QR still named the
+old address, and neither device could route to it.
+
+`_refresh_offer_addresses()` now reports whether the address set changed instead
+of discarding the comparison. The status thread, which already re-reads
+`local_ips()` every ten seconds, calls `_announce_network_change()` when it did.
+That prints the new `PC IP` / `Web pad` lines and re-draws the pairing codes
+through `_print_qr_codes()`, extracted from `_print_banner()` so both paths share
+one implementation. Sockets and discovery are untouched: only the advertised
+address is refreshed.
+
+### Tests
+
+`pc/test_web.py` still passes. A local harness stubs `local_ips()` to return
+`192.168.0.102` and then `192.168.31.23`: the first refresh reports no change,
+the second reports a change, the announcement prints the new URL and drops the
+old one, and the startup banner keeps its previous output.

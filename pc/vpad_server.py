@@ -1330,9 +1330,13 @@ class Server:
                 out.append(packed)
         return out[:8]
 
-    def _refresh_offer_addresses(self) -> None:
-        self._ip_cache = self._pack_addresses(local_ips())
+    def _refresh_offer_addresses(self) -> bool:
+        """Reload the cached LAN addresses; True when the set changed."""
+        current = self._pack_addresses(local_ips())
         self._ip_cache_at = time.time()
+        changed = current != self._ip_cache
+        self._ip_cache = current
+        return changed
 
     # ---------------------------------------------------------------- discovery
     def _handle_discover(self, data: bytes, addr: tuple) -> None:
@@ -2479,32 +2483,61 @@ class Server:
             print(line)
 
         if self.qr_enabled:
-            ips = local_ips()
-            if ips:
-                print_qr(ips[0], self.port, self.hostname, os.getcwd())
-                for extra in ips[1:]:
-                    print(f"  Other address: {qr_payload(extra, self.port, self.hostname)}")
-                if self.web is not None:
-                    # The browser pad gets its own scannable code: point any
-                    # phone camera at it and the page opens directly.
-                    first = ips[0]
-                    safe = first.replace(":", "-").replace(".", "_")
-                    print_qr_block(
-                        self.web_url(first),
-                        os.getcwd(),
-                        f"lemoGamePad-web-qr-{safe}.png",
-                        "Browser link",
-                    )
-                    for extra in ips[1:]:
-                        safe = extra.replace(":", "-").replace(".", "_")
-                        name = f"lemoGamePad-web-qr-{safe}.png"
-                        if save_qr_png(self.web_url(extra), os.path.join(os.getcwd(), name)):
-                            print(f"  Browser QR   : {name}")
+            self._print_qr_codes(local_ips())
 
         if self.video is not None and self.video.error:
             print(f"  !! {self.video.error}")
         if self.web is not None and self.web.error:
             print(f"  !! {self.web.error}")
+        print()
+
+    def _print_qr_codes(self, ips) -> None:
+        """Draw the app and browser pairing codes for [ips]."""
+        if not ips:
+            return
+        print_qr(ips[0], self.port, self.hostname, os.getcwd())
+        for extra in ips[1:]:
+            print(f"  Other address: {qr_payload(extra, self.port, self.hostname)}")
+        if self.web is None:
+            return
+        # The browser pad gets its own scannable code: point any phone camera
+        # at it and the page opens directly.
+        first = ips[0]
+        safe = first.replace(":", "-").replace(".", "_")
+        print_qr_block(
+            self.web_url(first),
+            os.getcwd(),
+            f"lemoGamePad-web-qr-{safe}.png",
+            "Browser link",
+        )
+        for extra in ips[1:]:
+            safe = extra.replace(":", "-").replace(".", "_")
+            name = f"lemoGamePad-web-qr-{safe}.png"
+            if save_qr_png(self.web_url(extra), os.path.join(os.getcwd(), name)):
+                print(f"  Browser QR   : {name}")
+
+    def _announce_network_change(self) -> None:
+        """
+        Re-print the advertised addresses after the PC's IP changes.
+
+        The banner, the printed links and the saved QR images were produced
+        once at startup, so a laptop that joined another Wi-Fi network kept
+        advertising an address that no longer existed: the old link and its QR
+        code then failed on the phone and on the PC alike. The sockets listen
+        on every interface, so only the advertised address needs refreshing.
+        """
+        ips = [socket.inet_ntoa(packed) for packed in self._ip_cache]
+        print()
+        print("  " + "-" * 58)
+        print("  Network changed - phones must use the new address:")
+        for ip in ips:
+            print(f"  PC IP        : {ip}")
+        if self.web is not None:
+            for ip in ips:
+                print(f"  Web pad      : {self.web_url(ip)}")
+        print("  " + "-" * 58)
+        if self.qr_enabled:
+            self._print_qr_codes(ips)
         print()
 
     def _log(self, message: str) -> None:
@@ -2558,7 +2591,8 @@ class Server:
             try:
                 self._drain_logs()
                 if time.time() - self._ip_cache_at >= 10.0:
-                    self._refresh_offer_addresses()
+                    if self._refresh_offer_addresses():
+                        self._announce_network_change()
                 self._status()
             except Exception:
                 # A detached console can make stdout unusable; keep serving input.

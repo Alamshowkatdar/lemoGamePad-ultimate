@@ -2,6 +2,20 @@
 
 Newest first. The reasoning behind each release is in [`docs/REVIEW.md`](docs/REVIEW.md).
 
+## 1.6.12
+
+- **The browser pad stops advertising a dead address** — the printed Web pad
+  URL, the console QR and the saved `lemoGamePad-web-qr-<ip>.png` images were
+  produced once, at startup. A laptop that joined another Wi-Fi network kept
+  showing the previous IP, so the old link and its QR code failed on every
+  device, PC included, even though the server itself was healthy and still
+  listening on every interface. The status thread already re-reads the
+  machine's addresses every ten seconds; it now re-announces them when they
+  change and rewrites the QR images, so the console carries the working link
+  within about ten seconds of a network switch.
+- **Wire-compatible** — server-only change; no protocol, packet or app changes.
+  `versionCode` is 26.
+
 ## 1.6.11
 
 - **AMOLED theme** — a ninth palette with a true `#000000` background and

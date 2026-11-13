@@ -200,7 +200,7 @@ See [SECURITY.md](../SECURITY.md) for the full threat model.
 
 | Symptom | Fix |
 | --- | --- |
-| Page does not load | Check the URL's IP and port, confirm the device is on the same Wi-Fi, and allow TCP 9878 through the firewall. |
+| Page does not load | Check the URL's IP and port, confirm the device is on the same Wi-Fi, and allow TCP 9878 through the firewall. If the link stopped working after the PC joined a different network, the IP changed: the console prints `Network changed` with the new `Web pad` URL (and rewrites the QR images) within about ten seconds, so use that one or rescan the code. |
 | `Pairing link is not valid` | The server restarted (new random key) or the `?k=` part was dropped. Copy the current URL or rescan the web QR. |
 | Page loads but the dot stays red | The WebSocket is blocked. Some guest / AP-isolation Wi-Fi networks block device-to-device traffic; use a normal network or USB tethering. |
 | No controller appears | All `--max-phones` slots are busy. Disconnect an idle phone or raise the limit (maximum eight). |
