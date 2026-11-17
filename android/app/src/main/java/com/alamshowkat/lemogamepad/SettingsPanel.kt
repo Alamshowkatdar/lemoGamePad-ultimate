@@ -46,9 +46,25 @@ internal object PrefsKeys {
     const val THEME = "theme"
     const val FACES = "faces"
     const val MOTION = "motion"
+    const val MODE = "mode"
     const val LAYOUT = "layout"
     const val LAYOUT_ACTIVE = "layout_active"
     const val LAYOUTS = "layouts"
+    const val LAYOUT_RACING = "layout_racing"
+    const val LAYOUT_ACTIVE_RACING = "layout_active_racing"
+    const val LAYOUTS_RACING = "layouts_racing"
+    const val LAYOUT_FPS = "layout_fps"
+    const val LAYOUT_ACTIVE_FPS = "layout_active_fps"
+    const val LAYOUTS_FPS = "layouts_fps"
+    const val GYRO_STEER = "gyro_steer"
+    const val GYRO_AIM = "gyro_aim"
+    const val STEER_SENS = "steer_sens"
+    const val STEER_DEADZONE = "steer_deadzone"
+    const val STEER_CURVE = "steer_curve"
+    const val AIM_SENS = "aim_sens"
+    const val TOUCHPAD_SENS = "touchpad_sens"
+    const val PAD_ALPHA = "pad_alpha"
+    const val FACE_SPACING = "face_spacing"
     const val TRANSPORT = "transport"
     const val TOKEN = "token"
     const val SCREEN = "screen"
@@ -60,7 +76,6 @@ internal object PrefsKeys {
 
 internal fun transportById(id: String?): Transport = when (id) {
     "wifi" -> Transport.WIFI
-    "bluetooth" -> Transport.BLUETOOTH
     "usb" -> Transport.USB
     else -> Transport.AUTO
 }
@@ -95,6 +110,7 @@ class SettingsPanel(
         fun onScanQr()
         fun onEditLayout()
         fun onLayoutSaved()
+        fun onModeChanged(mode: ControllerMode)
         fun onThemeChanged(theme: PadTheme)
         fun onScreenPreview(enabled: Boolean)
         fun onScreenSize(small: Boolean)
@@ -105,10 +121,15 @@ class SettingsPanel(
         fun toast(message: String)
         fun bluetoothPermissionsMissing(): Boolean
         fun requestBluetoothPermissions()
-        fun onStartPhoneGamepad()
-        fun onStopPhoneGamepad()
-        fun phoneGamepadRunning(): Boolean
-        fun phoneGamepadConnected(): Boolean
+        fun onBluetoothPair()
+        fun onBluetoothDiscoverable()
+        fun bluetoothHosts(): List<BluetoothHost>
+        fun onBluetoothConnect(address: String)
+        fun onBluetoothDisconnect()
+        fun bluetoothGamepadRunning(): Boolean
+        fun bluetoothGamepadConnected(): Boolean
+        fun bluetoothGamepadName(): String
+        fun bluetoothGamepadStatus(): String
     }
 
     val view = FrameLayout(activity)
@@ -139,27 +160,29 @@ class SettingsPanel(
     private lateinit var scanLine: TextView
     /** Set when a scan only succeeded on a link the user did not pick. */
     private var scanFallback: String? = null
-    private lateinit var phoneGamepadStatus: TextView
-    private lateinit var bluetoothStatus: TextView
-    private lateinit var panLine: TextView
-    private lateinit var bluetoothGrantBtn: TextView
-    private lateinit var discoverBtn: TextView
-    private lateinit var pairBtn: TextView
+    private lateinit var btStatus: TextView
+    private lateinit var btGrantBtn: TextView
+    private lateinit var btHostBtn: TextView
+    private lateinit var btDisconnectBtn: TextView
+    private lateinit var btPairBtn: TextView
+    private lateinit var btDiscoverBtn: TextView
+
+    private lateinit var racingGroup: LinearLayout
+    private lateinit var fpsGroup: LinearLayout
+    private lateinit var gamepadHint: TextView
+    private lateinit var sensorLine: TextView
+    private lateinit var modeDesc: TextView
+    private val modeChips = LinkedHashMap<ControllerMode, TextView>()
+    private var themePreview: View? = null
+    private var refreshLayouts: (() -> Unit)? = null
 
     private var selectedTransport: Transport = link.transport
     private var scanning = false
     private var showing = false
     private var closed = false
-    private var pendingBluetooth: (() -> Unit)? = null
-    private var lastBluetoothRefresh = 0L
     private var lastChipSignature = Int.MIN_VALUE
     /** Bumped on close/new scan so an in-flight discover cannot touch a dead UI. */
     private var scanGeneration = 0
-    /** Bumped on close so an in-flight Bluetooth probe is discarded. */
-    private var bluetoothGeneration = 0
-    private var bluetoothRefreshing = false
-    /** Last status, rendered immediately while a fresh probe runs off-thread. */
-    @Volatile private var bluetoothCache: BluetoothPairing.Status? = null
 
     private val ticker = object : Runnable {
         override fun run() {
@@ -332,10 +355,12 @@ class SettingsPanel(
 
         content.addView(statusCard(), cardParams())
         content.addView(connectionCard(), cardParams())
-        content.addView(bluetoothCard(), cardParams())
-        content.addView(phoneGamepadCard(), cardParams())
+        content.addView(bluetoothGamepadCard(), cardParams())
+        content.addView(modeCard(), cardParams())
+        content.addView(motionCard(), cardParams())
         content.addView(appearanceCard(), cardParams())
         content.addView(controlsCard(), cardParams())
+        content.addView(studioCard(), cardParams())
         content.addView(layoutsCard(), cardParams())
         content.addView(screenCard(), cardParams())
         content.addView(footer())
@@ -453,8 +478,7 @@ class SettingsPanel(
 
         val chips = row()
         for (tr in Transport.values()) {
-            val label = if (tr == Transport.BLUETOOTH) "BT" else tr.label
-            val chipView = chip(label) {
+            val chipView = chip(tr.label) {
                 if (selectedTransport == tr && !scanning) {
                     scan(autoConnect = true)
                     return@chip
@@ -477,9 +501,9 @@ class SettingsPanel(
         }
         card.addView(hintLine)
 
-        // Bluetooth PAN and USB tethering are off by default on most phones and
-        // the toggle is buried several menus deep, so offer a shortcut.
-        tetherBtn = action("OPEN TETHERING SETTINGS", primary = false) { openTetherSettings() }
+        // USB tethering is off by default on most phones and the toggle is
+        // buried several menus deep, so offer a shortcut.
+        tetherBtn = action("USB TETHERING SETTINGS", primary = false) { openTetherSettings() }
         tetherBtn.visibility = View.GONE
         card.addView(tetherBtn, topParams(px(2)))
 
@@ -560,107 +584,412 @@ class SettingsPanel(
         return card
     }
 
-    private fun bluetoothCard(): LinearLayout {
+    private fun bluetoothGamepadCard(): LinearLayout {
         val card = card()
-        card.addView(sectionTitle("BLUETOOTH PAIRING"))
-
-        bluetoothStatus = TextView(activity).apply {
+        card.addView(sectionTitle("BLUETOOTH GAMEPAD"))
+        card.addView(
+            tiny(
+                "Pair “Lemo GamePad” once from your PC or Android host. Opening this app never " +
+                    "connects by itself — use SELECT HOST to choose one bonded computer or phone. " +
+                    "It appears as a standard gamepad, with no app, driver or tethering on the host.",
+                bottom = px(6),
+            ),
+        )
+        btStatus = TextView(activity).apply {
             textSize = 11f
             setLineSpacing(px(3).toFloat(), 1f)
             setPadding(px(2), 0, px(2), px(9))
             maxLines = 3
             ellipsize = TextUtils.TruncateAt.END
         }
-        card.addView(bluetoothStatus)
+        card.addView(btStatus)
 
         val actions = row()
-        pairBtn = action("PAIR WITH PC", primary = false) {
-            if (!BluetoothPairing.openSettings(activity)) {
-                callbacks.toast("Open Settings › Connected devices › Pair new device")
-            }
+        btHostBtn = action("SELECT HOST", primary = true) { showBluetoothHostPicker() }
+        btDisconnectBtn = action("DISCONNECT", primary = false) {
+            callbacks.onBluetoothDisconnect()
         }
-        discoverBtn = action("DISCOVERABLE", primary = false) {
-            runBluetooth {
-                if (BluetoothPairing.requestDiscoverable(activity)) {
-                    callbacks.toast("Phone visible to the PC for 2 minutes")
-                } else {
-                    callbacks.toast("Bluetooth is not available")
-                }
-            }
-        }
-        actions.addView(pairBtn, weightParams(1f, end = px(5)))
-        actions.addView(discoverBtn, weightParams(1f))
+        actions.addView(btHostBtn, weightParams(1f, end = px(5)))
+        actions.addView(btDisconnectBtn, weightParams(1f))
         card.addView(actions)
 
-        bluetoothGrantBtn = action("ALLOW NEARBY DEVICES", primary = true) {
+        val setup = row().apply { setPadding(0, px(6), 0, 0) }
+        btPairBtn = action("BLUETOOTH SETTINGS", primary = false) { callbacks.onBluetoothPair() }
+        btDiscoverBtn = action("MAKE DISCOVERABLE", primary = false) {
+            callbacks.onBluetoothDiscoverable()
+        }
+        setup.addView(btPairBtn, weightParams(1f, end = px(5)))
+        setup.addView(btDiscoverBtn, weightParams(1f))
+        card.addView(setup)
+
+        btGrantBtn = action("ALLOW NEARBY DEVICES", primary = true) {
             callbacks.requestBluetoothPermissions()
         }
-        bluetoothGrantBtn.visibility = View.GONE
-        card.addView(bluetoothGrantBtn, topParams(px(6)))
-
-        panLine = TextView(activity).apply {
-            textSize = 10.5f
-            setLineSpacing(px(3).toFloat(), 1f)
-            setPadding(px(2), px(9), px(2), px(9))
-            maxLines = 4
-            ellipsize = TextUtils.TruncateAt.END
-        }
-        card.addView(panLine)
-
-        val steps = tiny(
-            "1 · Make the phone discoverable, then add it in Windows › Bluetooth.\n" +
-                "2 · On the PC: Bluetooth devices › Join a Personal Area Network.\n" +
-                "3 · Turn on Bluetooth tethering below, then SCAN NETWORK.",
-            bottom = 0,
-        )
-        steps.setLineSpacing(px(3).toFloat(), 1f)
-        steps.maxLines = 4
-        card.addView(steps)
+        btGrantBtn.visibility = View.GONE
+        card.addView(btGrantBtn, topParams(px(6)))
 
         tinters += {
             val t = pad.selectedTheme
-            bluetoothStatus.setTextColor(t.textDim)
-            panLine.setTextColor(t.muted)
+            btStatus.setTextColor(t.muted)
         }
         return card
     }
 
-    private fun phoneGamepadCard(): LinearLayout {
+    // ------------------------------------------------------------- experience
+    private fun modeCard(): LinearLayout {
         val card = card()
-        card.addView(sectionTitle("PHONE-TO-PHONE GAMEPAD"))
-        card.addView(
+        card.addView(sectionTitle("EXPERIENCE"))
+        card.addView(tiny("CHOOSE WHAT THE PAD DRIVES", bottom = px(8)))
+
+        val chipsRow = row()
+        modeChips.clear()
+        for ((index, m) in ControllerMode.values().withIndex()) {
+            val chipView = chip(m.label) {
+                if (pad.mode != m) {
+                    callbacks.onModeChanged(m)
+                    styleModeChips()
+                    refreshModeViews()
+                    refreshLayouts?.invoke()
+                }
+            }
+            modeChips[m] = chipView
+            chipsRow.addView(chipView, weightParams(1f, end = if (index < 2) px(4) else 0))
+        }
+        card.addView(chipsRow)
+
+        modeDesc = tiny("", top = px(8))
+        card.addView(modeDesc)
+        tinters += { styleModeChips() }
+        styleModeChips()
+        return card
+    }
+
+    private fun styleModeChips() {
+        val t = pad.selectedTheme
+        for ((m, chipView) in modeChips) {
+            val on = pad.mode == m
+            chipView.setTextColor(if (on) onColor(t.accent) else t.textDim)
+            chipView.background = GradientDrawable().apply {
+                cornerRadius = px(12).toFloat()
+                setColor(if (on) t.accent else withAlpha(t.surfaceAlt, 235))
+                setStroke(px(1), withAlpha(if (on) t.accent else t.text, if (on) 255 else 34))
+            }
+        }
+        if (::modeDesc.isInitialized) {
+            modeDesc.text = "${pad.mode.tagline.uppercase()}  ·  ${pad.mode.detail}"
+        }
+    }
+
+    /** Sensor tuning for tilt steering and gyro aim. */
+    private fun motionCard(): LinearLayout {
+        val card = card()
+        card.addView(sectionTitle("MOTION"))
+        sensorLine = tiny(pad.sensorStatus.ifBlank { "Motion sensors ready" }, bottom = px(4))
+        card.addView(sensorLine)
+
+        racingGroup = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+        racingGroup.addView(
+            toggle("Tilt steering", prefs.getBoolean(PrefsKeys.GYRO_STEER, true)) { on ->
+                pad.gyroSteering = on
+                prefs.edit().putBoolean(PrefsKeys.GYRO_STEER, on).apply()
+            },
+        )
+        racingGroup.addView(
             tiny(
-                "Bluetooth makes this phone act like a real game controller. Start it here, " +
-                    "then pair “Lemo GamePad” from Bluetooth settings on the phone running your game. " +
-                    "Android 9+ is required; Wi-Fi-to-PC remains available separately.",
-                bottom = px(6),
+                "Hold the phone level and tilt it like a wheel. Drag the steering bar to steer by thumb instead.",
+                top = px(2),
             ),
         )
-        phoneGamepadStatus = TextView(activity).apply {
-            textSize = 11f
-            setLineSpacing(px(3).toFloat(), 1f)
-            setPadding(px(2), 0, px(2), px(9))
-            maxLines = 2
-            ellipsize = TextUtils.TruncateAt.END
+        racingGroup.addView(
+            seekRow("TILT SENSITIVITY", 0, 100, PrefsKeys.STEER_SENS, (pad.steerSensitivity * 100f).roundToInt()) {
+                pad.steerSensitivity = it / 100f
+            },
+        )
+        racingGroup.addView(
+            seekRow("STEER DEAD ZONE", 0, 40, PrefsKeys.STEER_DEADZONE, (pad.steerDeadzone * 100f).roundToInt()) {
+                pad.steerDeadzone = it / 100f
+            },
+        )
+        racingGroup.addView(
+            seekRow("STEER CURVE", 0, 100, PrefsKeys.STEER_CURVE, (pad.steerCurve * 100f).roundToInt()) {
+                pad.steerCurve = it / 100f
+            },
+        )
+        racingGroup.addView(
+            action("CALIBRATE CENTRE", primary = false) {
+                pad.calibrateTilt()
+                sensorLine.text = pad.sensorStatus.ifBlank { "Sensors ready" }
+            },
+            topParams(px(8)),
+        )
+        racingGroup.addView(
+            tiny("Sit in your driving position, then calibrate so level means straight ahead.", top = px(2)),
+        )
+        card.addView(racingGroup)
+
+        fpsGroup = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+        fpsGroup.addView(
+            toggle("Gyro aim", prefs.getBoolean(PrefsKeys.GYRO_AIM, true)) { on ->
+                pad.gyroAim = on
+                prefs.edit().putBoolean(PrefsKeys.GYRO_AIM, on).apply()
+            },
+        )
+        fpsGroup.addView(
+            tiny("Swipe the camera pad to swing the view; gyro adds fine aim on top.", top = px(2)),
+        )
+        fpsGroup.addView(
+            seekRow("GYRO AIM SENSITIVITY", 0, 100, PrefsKeys.AIM_SENS, (pad.aimSensitivity * 100f).roundToInt()) {
+                pad.aimSensitivity = it / 100f
+            },
+        )
+        fpsGroup.addView(
+            seekRow("TOUCHPAD SENSITIVITY", 0, 100, PrefsKeys.TOUCHPAD_SENS, (pad.touchpadSensitivity * 100f).roundToInt()) {
+                pad.touchpadSensitivity = it / 100f
+            },
+        )
+        card.addView(fpsGroup)
+
+        gamepadHint = tiny("Gamepad mode uses the sticks. Pick Racing or FPS for motion controls.")
+        card.addView(gamepadHint)
+        refreshModeViews()
+        return card
+    }
+
+    private fun refreshModeViews() {
+        if (!::racingGroup.isInitialized) return
+        racingGroup.visibility = if (pad.mode == ControllerMode.RACING) View.VISIBLE else View.GONE
+        fpsGroup.visibility = if (pad.mode == ControllerMode.FPS) View.VISIBLE else View.GONE
+        gamepadHint.visibility = if (pad.mode == ControllerMode.GAMEPAD) View.VISIBLE else View.GONE
+        sensorLine.text = pad.sensorStatus.ifBlank { "Motion sensors ready" }
+    }
+
+    /** Live visual tuning: opacity and face-button spacing. */
+    private fun studioCard(): LinearLayout {
+        val card = card()
+        card.addView(sectionTitle("CUSTOMIZATION STUDIO"))
+        card.addView(tiny("LIVE PREVIEW — THE PAD BEHIND THIS SHEET UPDATES AS YOU DRAG", bottom = px(6)))
+        card.addView(
+            seekRow("CONTROL OPACITY", 35, 100, PrefsKeys.PAD_ALPHA, (pad.controlAlpha * 100f).roundToInt()) {
+                pad.controlAlpha = it / 100f
+            },
+        )
+        card.addView(
+            seekRow("FACE BUTTON SPACING", 75, 160, PrefsKeys.FACE_SPACING, (pad.faceSpacing * 100f).roundToInt()) {
+                pad.faceSpacing = it / 100f
+            },
+        )
+        card.addView(
+            tiny("EDIT LAYOUT lets you drag, pinch-resize and hide controls. Pedals and the camera pad resize the same way.", top = px(2)),
+        )
+        card.addView(
+            action("EDIT LAYOUT", primary = true) { callbacks.onEditLayout() },
+            topParams(px(8)),
+        )
+        return card
+    }
+
+    /**
+     * Themed slider row used by the motion and studio sections. [current] is
+     * the real value; the bar is offset by [minValue] so 35..100 maps to 0..65.
+     */
+    private fun seekRow(
+        label: String,
+        minValue: Int,
+        maxValue: Int,
+        key: String,
+        current: Int,
+        onChange: (Int) -> Unit,
+    ): LinearLayout {
+        val box = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+        val span = (maxValue - minValue).coerceAtLeast(1)
+        val safe = current.coerceIn(minValue, maxValue)
+        val title = tiny("$label  ·  $safe%", top = px(10), bottom = px(2))
+        val bar = SeekBar(activity).apply {
+            max = span
+            progress = safe - minValue
+            setPadding(0, 0, 0, 0)
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(seekBar: SeekBar?, value: Int, fromUser: Boolean) {
+                    val actual = minValue + value
+                    title.text = "$label  ·  $actual%"
+                    onChange(actual)
+                }
+
+                override fun onStartTrackingTouch(seekBar: SeekBar?) = Unit
+
+                override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                    prefs.edit().putInt(key, minValue + (seekBar?.progress ?: 0)).apply()
+                }
+            })
         }
-        card.addView(phoneGamepadStatus)
+        tinters += {
+            val t = pad.selectedTheme
+            bar.progressTintList = ColorStateList.valueOf(t.accent)
+            bar.thumbTintList = ColorStateList.valueOf(t.accent)
+            bar.progressBackgroundTintList = ColorStateList.valueOf(withAlpha(t.text, 30))
+        }
+        box.addView(title)
+        box.addView(bar)
+        return box
+    }
+
+    /**
+     * Shows a palette on a mock controller before committing it. Cancelling
+     * leaves the live pad exactly as it was.
+     */
+    private fun previewTheme(th: PadTheme) {
+        closePreview(instant = true)
+        val t = pad.selectedTheme
+        // The settings sheet sits at 18dp elevation. Lift the preview above it
+        // so the whole card — including the right half of APPLY — stays visible
+        // and tappable where it overlaps the sheet in landscape.
+        val overlay = FrameLayout(activity).apply {
+            isClickable = true
+            elevation = px(40).toFloat()
+        }
+
+        val dim = View(activity).apply {
+            setBackgroundColor(withAlpha(0x000000, if (t.dark) 170 else 110))
+            setOnClickListener { closePreview() }
+        }
+        overlay.addView(
+            dim,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            ),
+        )
+
+        val cardView = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(px(13), px(13), px(13), px(12))
+            background = GradientDrawable().apply {
+                cornerRadius = px(20).toFloat()
+                setColor(withAlpha(th.surface, 253))
+                setStroke(px(1), withAlpha(th.accent, 110))
+            }
+            isClickable = true
+        }
+
+        val preview = ThemePreview(activity).apply {
+            theme = th
+            faceLabels = pad.faceLabels
+        }
+        cardView.addView(
+            preview,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, px(140)).apply {
+                bottomMargin = px(11)
+            },
+        )
+
+        cardView.addView(
+            TextView(activity).apply {
+                text = th.name
+                textSize = 16f
+                letterSpacing = 0.03f
+                setTextColor(th.text)
+                typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            },
+        )
+        cardView.addView(
+            TextView(activity).apply {
+                text = th.mood.ifBlank { "Preview" }
+                textSize = 11f
+                setTextColor(th.textDim)
+                setPadding(0, px(3), 0, px(9))
+            },
+        )
+
+        val dots = row()
+        dots.gravity = Gravity.CENTER_VERTICAL
+        for (i in 0 until 4) {
+            dots.addView(
+                View(activity).apply {
+                    background = GradientDrawable().apply {
+                        shape = GradientDrawable.OVAL
+                        setColor(Iconic.face(pad.faceLabels, i))
+                    }
+                },
+                LinearLayout.LayoutParams(px(17), px(17)).apply { marginEnd = px(7) },
+            )
+        }
+        dots.addView(
+            TextView(activity).apply {
+                text = if (pad.faceLabels == FaceLabels.XBOX) {
+                    "A · B · X · Y KEEP THEIR COLOURS"
+                } else {
+                    "CROSS · CIRCLE · SQUARE · TRIANGLE KEEP THEIR COLOURS"
+                }
+                textSize = 8.5f
+                letterSpacing = 0.08f
+                setTextColor(th.muted)
+            },
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+        )
+        cardView.addView(dots)
+
         val actions = row()
         actions.addView(
-            action("START GAMEPAD", primary = true) { callbacks.onStartPhoneGamepad() },
-            weightParams(1f, end = px(5)),
+            action("CANCEL", primary = false) { closePreview() },
+            weightParams(1f, end = px(6)),
         )
         actions.addView(
-            action("STOP", primary = false) { callbacks.onStopPhoneGamepad() },
+            action("APPLY THEME", primary = true) {
+                pad.theme = th
+                prefs.edit().putString(PrefsKeys.THEME, th.id).apply()
+                callbacks.onThemeChanged(th)
+                closePreview()
+                refreshTints()
+                callbacks.toast("${th.name} applied")
+            },
             weightParams(1f),
         )
-        card.addView(actions)
-        return card
+        cardView.addView(actions, topParams(px(12)))
+
+        val metrics = activity.resources.displayMetrics
+        overlay.addView(
+            cardView,
+            FrameLayout.LayoutParams(
+                minOf(px(400), (metrics.widthPixels * 0.86f).toInt()),
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.CENTER,
+            ),
+        )
+
+        view.addView(
+            overlay,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            ),
+        )
+        themePreview = overlay
+        overlay.alpha = 0f
+        cardView.scaleX = 0.95f
+        cardView.scaleY = 0.95f
+        overlay.animate().alpha(1f).setDuration(150L).start()
+        cardView.animate().scaleX(1f).scaleY(1f)
+            .setDuration(210L)
+            .setInterpolator(DecelerateInterpolator())
+            .start()
+    }
+
+    private fun closePreview(instant: Boolean = false) {
+        val overlay = themePreview ?: return
+        themePreview = null
+        if (instant) {
+            view.removeView(overlay)
+            return
+        }
+        overlay.animate().alpha(0f).setDuration(130L)
+            .withEndAction { view.removeView(overlay) }
+            .start()
     }
 
     private fun appearanceCard(): LinearLayout {
         val card = card()
         card.addView(sectionTitle("APPEARANCE"))
-        card.addView(tiny("THEME  ·  TAP A PALETTE TO CROSS-FADE THE PAD", bottom = px(8)))
+        card.addView(tiny("THEME  ·  TAP A PALETTE TO PREVIEW IT", bottom = px(8)))
 
         val swatches = ArrayList<Triple<PadTheme, LinearLayout, TextView>>()
 
@@ -729,10 +1058,7 @@ class SettingsPanel(
             box.addView(name)
 
             box.setOnClickListener {
-                pad.theme = th
-                prefs.edit().putString(PrefsKeys.THEME, th.id).apply()
-                callbacks.onThemeChanged(th)
-                refreshTints()
+                previewTheme(th)
             }
             pressable(box)
             swatches += Triple(th, box, name)
@@ -950,7 +1276,6 @@ class SettingsPanel(
         val card = card()
         card.addView(sectionTitle("LAYOUTS"))
 
-        val store = LayoutStore(prefs)
         val listHost = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
         val summary = tiny("", top = px(7), bottom = 0)
 
@@ -979,8 +1304,8 @@ class SettingsPanel(
 
         fun refresh() {
             listHost.removeAllViews()
-            val active = store.activeName()
-            val saved = store.saved()
+            val active = layoutStore().activeName()
+            val saved = layoutStore().saved()
 
             fun addRow(name: String?, label: String, deletable: Boolean) {
                 val line = row()
@@ -988,14 +1313,14 @@ class SettingsPanel(
                     when {
                         name == null -> {
                             pad.resetLayout()
-                            store.clearActive()
+                            layoutStore().clearActive()
                             callbacks.onLayoutSaved()
                             refresh()
                             callbacks.toast("Default layout restored")
                         }
 
-                        store.activate(name) -> {
-                            pad.applyLayout(store.activeData())
+                        layoutStore().activate(name) -> {
+                            pad.applyLayout(layoutStore().activeData())
                             callbacks.onLayoutSaved()
                             refresh()
                             callbacks.toast("Layout: $name")
@@ -1029,7 +1354,7 @@ class SettingsPanel(
                                     "positions but is no longer saved under that name.",
                                 positive = "DELETE",
                             ) {
-                                store.remove(target)
+                                layoutStore().remove(target)
                                 refresh()
                                 callbacks.toast("Layout deleted")
                             }
@@ -1062,9 +1387,9 @@ class SettingsPanel(
                     pad.selectedTheme,
                     title = "SAVE LAYOUT",
                     initial = "",
-                    existing = store.saved().map { it.name },
+                    existing = layoutStore().saved().map { it.name },
                 ) { name ->
-                    val replaced = store.save(name, pad.layoutSnapshot())
+                    val replaced = layoutStore().save(name, pad.layoutSnapshot())
                     callbacks.onLayoutSaved()
                     refresh()
                     callbacks.toast(
@@ -1079,6 +1404,50 @@ class SettingsPanel(
             weightParams(1f),
         )
         card.addView(actions)
+
+        val share = row()
+        share.addView(
+            action("EXPORT", primary = false) {
+                val clip = activity.getSystemService(Context.CLIPBOARD_SERVICE)
+                    as? android.content.ClipboardManager
+                if (clip == null) {
+                    callbacks.toast("Clipboard unavailable")
+                } else {
+                    clip.setPrimaryClip(
+                        android.content.ClipData.newPlainText(
+                            "lemoGamePad ${pad.mode.label} layout",
+                            pad.layoutSnapshot(),
+                        ),
+                    )
+                    callbacks.toast("${pad.mode.label} layout copied")
+                }
+            },
+            weightParams(1f, end = px(6)),
+        )
+        share.addView(
+            action("IMPORT", primary = false) {
+                val clip = activity.getSystemService(Context.CLIPBOARD_SERVICE)
+                    as? android.content.ClipboardManager
+                val data = clip?.primaryClip
+                    ?.takeIf { it.itemCount > 0 }
+                    ?.getItemAt(0)
+                    ?.coerceToText(activity)
+                    ?.toString()
+                if (data.isNullOrBlank()) {
+                    callbacks.toast("Copy a layout text first")
+                } else if (!data.contains(':')) {
+                    callbacks.toast("That is not a layout")
+                } else {
+                    pad.applyLayout(data)
+                    callbacks.onLayoutSaved()
+                    refresh()
+                    callbacks.toast("Layout imported")
+                }
+            },
+            weightParams(1f),
+        )
+        card.addView(share, topParams(px(6)))
+
         card.addView(
             tiny(
                 "Every control's position, size and visibility is remembered. " +
@@ -1090,11 +1459,16 @@ class SettingsPanel(
         card.addView(summary)
 
         // Rebuild the list when the theme changes so the chips pick up the
-        // new palette, without accumulating a tinter per row.
+        // new palette, without accumulating a tinter per row. Surface the
+        // rebuild so switching experience also swaps the preset list.
+        refreshLayouts = { refresh() }
         tinters += { refresh() }
         refresh()
         return card
     }
+
+    /** Layout presets are scoped to the experience currently on screen. */
+    private fun layoutStore(): LayoutStore = LayoutStore(prefs, pad.mode)
 
     private fun screenCard(): LinearLayout {
         val card = card()
@@ -1594,14 +1968,14 @@ class SettingsPanel(
                             "allow lemoGamePad-server through Windows Firewall."
                     } else {
                         "No PC answered on ${selectedTransport.label}. " +
-                            "Start lemoGamePad-server and enable tethering for BT/USB."
+                            "Start lemoGamePad-server and, for USB, enable USB tethering."
                     }
                     callbacks.toast("No PC found on ${selectedTransport.label}")
                     return@runOnUiThread
                 }
 
                 // Follow the link the PC actually answered on: the chip may
-                // say BLUETOOTH while the PC is reachable over Wi-Fi.
+                // say USB while the PC is reachable over Wi-Fi.
                 val foundTransport = link.lastScanTransport
                 scanFallback = if (
                     foundTransport != null && want != Transport.AUTO && foundTransport != want
@@ -1705,10 +2079,9 @@ class SettingsPanel(
 
         refreshTransportChips(readiness)
         refreshSlotChips()
-        refreshBluetooth()
-        refreshPhoneGamepad()
+        refreshBluetoothGamepad()
         tetherBtn.visibility = if (
-            selectedTransport != Transport.AUTO && readiness[selectedTransport] != true
+            selectedTransport == Transport.USB && readiness[Transport.USB] != true
         ) {
             View.VISIBLE
         } else {
@@ -1776,113 +2149,135 @@ class SettingsPanel(
             else -> buildString {
                 append(tr.hint)
                 append("\n● no ")
-                append(if (tr == Transport.BLUETOOTH) "Bluetooth" else tr.label.lowercase())
-                append(" interface yet — enable tethering")
+                append(tr.label.lowercase())
+                append(" interface yet")
+                if (tr == Transport.USB) append(" — enable USB tethering")
             }
         }
-    }
-
-    /** Runs a Bluetooth action, asking for Android 12+ permissions first. */
-    private fun runBluetooth(action: () -> Unit) {
-        if (callbacks.bluetoothPermissionsMissing()) {
-            pendingBluetooth = action
-            callbacks.requestBluetoothPermissions()
-            return
-        }
-        action()
     }
 
     /** Called by the activity after the Bluetooth permission dialog closes. */
     fun onBluetoothPermissionResult(granted: Boolean) {
-        val action = pendingBluetooth
-        pendingBluetooth = null
-        if (granted) {
-            action?.invoke()
-        } else {
-            callbacks.toast("Bluetooth access denied")
-        }
-        lastBluetoothRefresh = 0L
-        refreshBluetooth(force = true)
+        if (!granted) callbacks.toast("Bluetooth access denied")
+        refreshBluetoothGamepad()
     }
 
-    /** Live state of the HID gamepad, so the card is not just two buttons. */
-    private fun refreshPhoneGamepad() {
+    /** Live state of the manually selected HID gamepad. Cheap: no probing. */
+    fun refreshBluetoothGamepad() {
         val t = pad.selectedTheme
-        val connected = callbacks.phoneGamepadConnected()
-        val running = callbacks.phoneGamepadRunning()
-        phoneGamepadStatus.text = when {
-            connected -> "● Connected — the game host is receiving input"
-            running -> "○ Broadcasting as “Lemo GamePad” — waiting for the host to pair"
-            else -> "Not running · START GAMEPAD, then pair from the host phone"
+        val missing = callbacks.bluetoothPermissionsMissing()
+        val connected = callbacks.bluetoothGamepadConnected()
+        val running = callbacks.bluetoothGamepadRunning()
+        val name = callbacks.bluetoothGamepadName()
+        btStatus.text = when {
+            missing -> "Nearby devices access is off — grant it, then pick a host."
+            connected -> "● Connected — ${name.ifBlank { "host" }} is receiving input"
+            running -> "○ Gamepad ready — tap SELECT HOST to choose a computer"
+            else -> callbacks.bluetoothGamepadStatus()
+                .ifBlank { "Bluetooth gamepad is off — tap SELECT HOST to connect" }
         }
-        phoneGamepadStatus.setTextColor(if (connected) t.ok else if (running) t.warn else t.muted)
-    }
-
-    private fun refreshBluetooth(force: Boolean = false) {
-        if (closed) return
-        val now = android.os.SystemClock.uptimeMillis()
-        if (!force && now - lastBluetoothRefresh < 1500L) return
-        lastBluetoothRefresh = now
-
-        // Render the previous reading at once, then refresh it in the
-        // background. status() walks every NetworkInterface (PAN address),
-        // which is too slow to repeat on the UI thread twice a second.
-        bluetoothCache?.let { renderBluetooth(it) }
-        if (bluetoothRefreshing) return
-        bluetoothRefreshing = true
-        val generation = ++bluetoothGeneration
-        thread(name = "vpad-bt-status", isDaemon = true) {
-            val status = try {
-                BluetoothPairing.status(activity)
-            } catch (_: Exception) {
-                null
-            }
-            handler.post {
-                // Discard a probe whose panel has closed or been replaced, and
-                // only clear the in-flight flag for the current generation so a
-                // stale probe cannot unblock a second concurrent one.
-                if (generation != bluetoothGeneration) return@post
-                bluetoothRefreshing = false
-                if (status == null || closed) return@post
-                bluetoothCache = status
-                renderBluetooth(status)
-            }
-        }
-    }
-
-    /** Applies a Bluetooth snapshot to the card's views. */
-    private fun renderBluetooth(status: BluetoothPairing.Status) {
-        bluetoothStatus.text = when {
-            !status.supported -> "No Bluetooth adapter on this phone."
-            !status.permitted -> "Bluetooth access is off — allow nearby devices to pair."
-            !status.enabled -> "Bluetooth is off. Turn it on in system settings."
-            else -> if (status.phoneName.isBlank()) "This phone" else status.phoneName
-        }
-        bluetoothGrantBtn.visibility =
-            if (status.supported && !status.permitted) View.VISIBLE else View.GONE
-        discoverBtn.alpha = if (status.enabled && status.permitted) 1f else 0.45f
-        panLine.text = when {
-            status.panAddress != null -> "PAN link up  ·  ${status.panAddress}"
-            !status.permitted -> "PAN link: allow Bluetooth access to read it"
-            status.bonded.isEmpty() -> "No paired PC yet — pair from Windows Bluetooth settings."
-            else -> "Paired: " + summarizeBonded(status.bonded)
-        }
+        btStatus.setTextColor(if (connected) t.ok else if (running) t.warn else t.muted)
+        btGrantBtn.visibility = if (missing) View.VISIBLE else View.GONE
+        btHostBtn.isEnabled = !missing
+        btHostBtn.alpha = if (missing) 0.45f else 1f
+        btDisconnectBtn.isEnabled = connected
+        btDisconnectBtn.alpha = if (connected) 1f else 0.45f
+        btPairBtn.alpha = if (missing) 0.45f else 1f
+        btDiscoverBtn.alpha = if (missing) 0.45f else 1f
     }
 
     /**
-     * Lists the Windows host first and caps the rest, so a phone with a dozen
-     * bonded headsets/keyboards does not flood the card.
+     * Lists only bonded computers/phones and connects to the one the user taps.
+     * No host is contacted just for opening this dialog.
      */
-    private fun summarizeBonded(bonded: List<String>): String {
-        val ordered = bonded.sortedBy { name ->
-            if (name.contains("DESKTOP", true) || name.contains("LAPTOP", true)) 0 else 1
+    private fun showBluetoothHostPicker() {
+        val decor = activity.window?.decorView as? ViewGroup ?: return
+        val t = pad.selectedTheme
+        val overlay = FrameLayout(activity).apply {
+            isClickable = true
+            elevation = px(40).toFloat()
+            setBackgroundColor(withAlpha(0x000000, if (t.dark) 170 else 110))
         }
-        val shown = ordered.take(5)
-        val hidden = ordered.size - shown.size
-        return shown.joinToString(", ") + if (hidden > 0) "  +$hidden more" else ""
+        fun close() = decor.removeView(overlay)
+        overlay.setOnClickListener { close() }
+
+        val box = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            isClickable = true
+            elevation = px(18).toFloat()
+            setPadding(px(20), px(18), px(20), px(18))
+            background = GradientDrawable().apply {
+                cornerRadius = px(18).toFloat()
+                setColor(t.surface)
+                setStroke(px(1), withAlpha(t.text, 45))
+            }
+        }
+        box.addView(TextView(activity).apply {
+            text = "SELECT BLUETOOTH HOST"
+            textSize = 12.5f
+            typeface = Typeface.DEFAULT_BOLD
+            letterSpacing = 0.08f
+            setTextColor(t.accent)
+        })
+
+        val hosts = callbacks.bluetoothHosts()
+        val connectedName = callbacks.bluetoothGamepadName()
+        if (hosts.isEmpty()) {
+            box.addView(
+                tiny(
+                    "No bonded computer or phone yet. Pair “Lemo GamePad” from your PC, " +
+                        "then come back and select it here.",
+                    top = px(12),
+                    bottom = px(2),
+                ),
+            )
+            box.addView(
+                action("OPEN BLUETOOTH SETTINGS", primary = true) {
+                    close()
+                    callbacks.onBluetoothPair()
+                },
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = px(14) },
+            )
+        } else {
+            val list = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+            for ((index, host) in hosts.withIndex()) {
+                val isConnected = host.name == connectedName && callbacks.bluetoothGamepadConnected()
+                val label = buildString {
+                    append(host.name)
+                    append("  ·  ")
+                    append(host.address.takeLast(5))
+                    if (isConnected) append("  ·  CONNECTED")
+                }
+                val button = action(label, primary = isConnected) {
+                    close()
+                    callbacks.onBluetoothConnect(host.address)
+                }
+                list.addView(
+                    button,
+                    LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                        if (index > 0) topMargin = px(7)
+                    },
+                )
+            }
+            box.addView(
+                ScrollView(activity).apply { addView(list) },
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = px(12) },
+            )
+        }
+        box.addView(
+            action("CANCEL", primary = false) { close() },
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = px(14) },
+        )
+
+        val width = min(px(320), activity.resources.displayMetrics.widthPixels - px(32))
+        overlay.addView(
+            box,
+            FrameLayout.LayoutParams(width, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER),
+        )
+        decor.addView(overlay)
     }
 
-    /** Jumps to the system tethering page (Bluetooth PAN / USB). */
+    /** Jumps to the system tethering page (USB). */
     private fun openTetherSettings() {
         val intents = ArrayList<Intent>()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
@@ -1932,8 +2327,6 @@ class SettingsPanel(
         }
         refreshTints()
         refreshLink()
-        lastBluetoothRefresh = 0L
-        refreshBluetooth(force = true)
         // Do not pop the keyboard just because the sheet opened: the sheet
         // takes focus, so the address fields only focus when tapped.
         sheet.requestFocus()
@@ -1964,12 +2357,11 @@ class SettingsPanel(
         if (closed) return
         closed = true
         showing = false
-        // Invalidate any discover/probe that is still running. scanning is
-        // reset so a freshly opened sheet can start a new scan immediately.
+        closePreview(instant = true)
+        // Invalidate any discover that is still running. scanning is reset so
+        // a freshly opened sheet can start a new scan immediately.
         scanGeneration++
-        bluetoothGeneration++
         scanning = false
-        bluetoothRefreshing = false
         handler.removeCallbacks(ticker)
         hideKeyboard()
         (view.parent as? ViewGroup)?.removeView(view)

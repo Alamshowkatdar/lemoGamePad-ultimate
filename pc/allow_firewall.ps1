@@ -5,8 +5,7 @@
 #   .\allow_firewall.ps1 -Program "C:\Path\To\python.exe"
 #
 # Rules use -Profile Any on purpose: Windows often classifies a USB-tethering
-# (RNDIS) or Bluetooth-PAN interface as "Public", and a Private-only rule
-# silently blocks those links.
+# (RNDIS) interface as "Public", and a Private-only rule silently blocks it.
 
 param(
     [string]$Program = "",
@@ -117,4 +116,4 @@ if ($withVideo) {
 if ($withWeb) {
     Write-Host "  TCP $WebPort (browser pad)"
 }
-Write-Host "  Profile: Any (Wi-Fi, Bluetooth PAN and USB tethering)"
+Write-Host "  Profile: Any (Wi-Fi and USB tethering)"

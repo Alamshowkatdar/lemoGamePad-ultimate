@@ -24,9 +24,11 @@
   eight Xbox 360 pads.
 - Screen preview is one-way video only; it does not let you control the PC with
   the phone's touchscreen.
-- Bluetooth PAN and USB-to-PC rely on Android tethering (PAN / RNDIS). Phone-to-phone
-  Bluetooth HID is a separate mode; it requires Android 9+ on the controller phone
-  and a game that supports external controllers on the host phone.
+- USB-to-PC relies on Android USB tethering (RNDIS). The Bluetooth HID gamepad
+  is a separate, server-less mode: it requires Android 9+ on the controller
+  phone and a host (PC or Android) that accepts standard HID gamepads. On
+  Windows it presents as a DirectInput device, not XInput, and it has no rumble,
+  screen preview or multi-phone slots.
 - No SIXAXIS motion or pressure-sensitive face buttons (the PS3 hardware features
   that almost no PC game reads anyway).
 - ViGEmBus is an archived third-party driver (its final release is 1.22.0). The
@@ -38,4 +40,4 @@
 
 ---
 
-**lemoGamePad ultimate™ © Alam showkat** · v1.6.12
+**lemoGamePad ultimate™ © Alam showkat** · v1.7.0

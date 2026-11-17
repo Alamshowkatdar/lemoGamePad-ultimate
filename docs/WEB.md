@@ -215,7 +215,7 @@ See [SECURITY.md](../SECURITY.md) for the full threat model.
 
 ## Not in the browser
 
-The Android-only transports stay out of the page: Bluetooth HID,
-phone-to-phone HID, Bluetooth PAN and USB tethering require Android APIs a
-browser does not expose. Use the Android app for those links. The browser also
-cannot create a virtual controller by itself — the PC server still does that.
+The Android-only paths stay out of the page: Bluetooth HID gamepad and USB
+tethering require Android APIs a browser does not expose. Use the Android app
+for those. The browser also cannot create a virtual controller by itself — the
+PC server still does that.

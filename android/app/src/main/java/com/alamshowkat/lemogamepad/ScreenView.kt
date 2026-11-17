@@ -18,6 +18,7 @@ import java.io.BufferedInputStream
 import java.io.DataInputStream
 import java.net.InetSocketAddress
 import java.net.Socket
+import java.util.ArrayDeque
 import kotlin.concurrent.thread
 import kotlin.math.hypot
 import kotlin.math.max
@@ -66,6 +67,11 @@ class ScreenView(context: Context) : View(context) {
     @Volatile private var activeSocket: Socket? = null
     @Volatile private var streamGeneration = 0
 
+    /** Decoded bitmaps waiting to be reused by the receive thread. */
+    private val bitmapPool = ArrayDeque<Bitmap>()
+    /** The bitmap the last draw actually consumed; safe to recycle when replaced. */
+    private var lastDrawn: Bitmap? = null
+
     private var worker: Thread? = null
     private var small = true
     private var warnedQualityUnsupported = false
@@ -109,6 +115,7 @@ class ScreenView(context: Context) : View(context) {
         running = true
         val generation = ++streamGeneration
         hint = "CONNECTING"
+        contentDescription = "PC screen preview connecting"
         postInvalidate()
         worker = thread(name = "vpad-screen", isDaemon = true) { loop(host, streamPort, generation) }
     }
@@ -128,12 +135,14 @@ class ScreenView(context: Context) : View(context) {
         frame = null
         streamFps = 0
         hint = "PC SCREEN"
+        contentDescription = "PC screen preview"
         postInvalidate()
     }
 
     fun setQuality(value: ScreenQuality) {
         if (quality == value) return
         quality = value
+        synchronized(bitmapPool) { bitmapPool.clear() }
         postInvalidate()
         val host = streamHost
         if (host != null && running) {
@@ -160,7 +169,6 @@ class ScreenView(context: Context) : View(context) {
 
     private fun loop(host: String, port: Int, generation: Int) {
         var backoff = 700L
-        val opts = BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.RGB_565 }
 
         while (running && generation == streamGeneration) {
             var sock: Socket? = null
@@ -247,7 +255,7 @@ class ScreenView(context: Context) : View(context) {
                         input.readFully(bytes)
                     }
                     if (len <= 0 || len > MAX_FRAME_BYTES) break
-                    val decoded = BitmapFactory.decodeByteArray(bytes, 0, len, opts)
+                    val decoded = decodeFrame(bytes, len)
                     if (decoded != null && running && generation == streamGeneration) {
                         frame = decoded
                         fpsFrames++
@@ -255,6 +263,7 @@ class ScreenView(context: Context) : View(context) {
                         val windowMs = now - fpsWindowStart
                         if (windowMs >= 1000L) {
                             streamFps = (fpsFrames * 1000L / windowMs).toInt()
+                            contentDescription = "${quality.label} ${streamFps} FPS"
                             fpsFrames = 0
                             fpsWindowStart = now
                         }
@@ -267,7 +276,9 @@ class ScreenView(context: Context) : View(context) {
                 if (activeSocket === sock) {
                     activeSocket = null
                     connected = false
+                    streamFps = 0
                     hint = if (running) "RECONNECTING" else "PC SCREEN"
+                    contentDescription = hint
                     postInvalidate()
                 }
                 try {
@@ -279,6 +290,57 @@ class ScreenView(context: Context) : View(context) {
             if (running && generation == streamGeneration) SystemClock.sleep(backoff)
             if (backoff < 4000L) backoff *= 2
         }
+    }
+
+    /**
+     * Decodes into a bitmap that the main thread has already finished drawing,
+     * so a 60 fps stream does not allocate ~40 MB/s of short-lived bitmaps.
+     * A bounds pass first picks a same-sized reusable bitmap; if the decoder
+     * refuses it, fall back to a fresh allocation for that frame.
+     */
+    private fun decodeFrame(bytes: ByteArray, len: Int): Bitmap? {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, len, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+
+        var reusable: Bitmap? = null
+        synchronized(bitmapPool) {
+            val iterator = bitmapPool.iterator()
+            while (iterator.hasNext()) {
+                val candidate = iterator.next()
+                if (!candidate.isRecycled &&
+                    candidate.width == bounds.outWidth &&
+                    candidate.height == bounds.outHeight
+                ) {
+                    reusable = candidate
+                    iterator.remove()
+                    break
+                }
+            }
+        }
+
+        val options = BitmapFactory.Options().apply {
+            inPreferredConfig = Bitmap.Config.RGB_565
+            inMutable = true
+            if (reusable != null) inBitmap = reusable
+        }
+        val decoded = try {
+            BitmapFactory.decodeByteArray(bytes, 0, len, options)
+        } catch (_: IllegalArgumentException) {
+            null
+        }
+        if (decoded != null) {
+            if (reusable != null && decoded !== reusable && !reusable!!.isRecycled) {
+                synchronized(bitmapPool) { bitmapPool.addLast(reusable!!) }
+            }
+            return decoded
+        }
+
+        if (reusable != null && !reusable!!.isRecycled) {
+            synchronized(bitmapPool) { bitmapPool.addLast(reusable!!) }
+        }
+        val fresh = BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.RGB_565 }
+        return BitmapFactory.decodeByteArray(bytes, 0, len, fresh)
     }
 
     // ------------------------------------------------------------------- draw
@@ -317,6 +379,17 @@ class ScreenView(context: Context) : View(context) {
             val dh = bmp.height * scale
             dst.set((w - dw) / 2f, (h - dh) / 2f, (w + dw) / 2f, (h + dh) / 2f)
             canvas.drawBitmap(bmp, null, dst, bmpPaint)
+            // This bitmap has now been consumed by the GPU; the next decode can
+            // safely overwrite it instead of allocating another one.
+            if (bmp !== lastDrawn) {
+                val old = lastDrawn
+                lastDrawn = bmp
+                if (old != null && !old.isRecycled) {
+                    synchronized(bitmapPool) {
+                        if (bitmapPool.size < 3) bitmapPool.addLast(old) else old.recycle()
+                    }
+                }
+            }
         } else {
             // Placeholder: subtle rings + status text.
             stroke.color = withAlpha(accent, 40)

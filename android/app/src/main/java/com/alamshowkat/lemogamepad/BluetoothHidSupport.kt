@@ -9,28 +9,22 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.provider.Settings
-import java.net.Inet4Address
-import java.net.NetworkInterface
 
 /**
- * Bluetooth pairing helper.
+ * Small helper around the Bluetooth HID device profile.
  *
- * Android cannot initiate a PC pairing on its own, so this exposes the pieces
- * the user actually needs: the adapter state, the phone's own name/address,
- * already-bonded devices, a "make discoverable" request, shortcuts to the
- * system Bluetooth and tethering pages, and the live PAN interface address.
- * Once Windows joins the phone's Personal Area Network, the normal UDP link
- * takes over - no serial/RFCOMM code is involved.
+ * The app no longer uses Bluetooth tethering (PAN), so there is nothing to
+ * configure here: HID only needs the adapter switched on, the Android 12+
+ * "Nearby devices" permission, and one trip through the system pairing prompt.
+ * Everything after that is handled by [BluetoothHidGamepad].
  */
-internal object BluetoothPairing {
+internal object BluetoothHidSupport {
 
     data class Status(
         val supported: Boolean,
         val enabled: Boolean,
         val permitted: Boolean,
         val phoneName: String,
-        val bonded: List<String>,
-        val panAddress: String?,
     )
 
     /** Runtime permissions are only needed on Android 12+. */
@@ -65,14 +59,11 @@ internal object BluetoothPairing {
     }
 
     fun status(context: Context): Status {
-        val pan = panAddress()
         val ad = adapter(context) ?: return Status(
             supported = false,
             enabled = false,
             permitted = !permissionsMissing(context),
             phoneName = "",
-            bonded = emptyList(),
-            panAddress = pan,
         )
         val permitted = !permissionsMissing(context)
         var enabled = false
@@ -81,56 +72,26 @@ internal object BluetoothPairing {
         } catch (_: SecurityException) {
         }
         var name = ""
-        var bonded = emptyList<String>()
         if (permitted) {
             try {
                 name = ad.name ?: ""
             } catch (_: SecurityException) {
             }
-            try {
-                bonded = ad.bondedDevices
-                    ?.mapNotNull { device ->
-                        try {
-                            device.name ?: device.address
-                        } catch (_: SecurityException) {
-                            null
-                        }
-                    }
-                    ?.filter { it.isNotBlank() }
-                    ?.sorted()
-                    ?: emptyList()
-            } catch (_: SecurityException) {
-            }
         }
-        return Status(true, enabled, permitted, name, bonded, pan)
+        return Status(true, enabled, permitted, name)
     }
 
-    /** The IPv4 address of the Bluetooth PAN interface, when tethering is up. */
-    fun panAddress(): String? = try {
-        java.util.Collections.list(NetworkInterface.getNetworkInterfaces())
-            .asSequence()
-            .filter { it.isUp && !it.isLoopback }
-            .filter { classifyInterface(it.name) == Transport.BLUETOOTH }
-            .mapNotNull { nif ->
-                nif.interfaceAddresses
-                    .firstOrNull { it.address is Inet4Address }
-                    ?.address
-                    ?.hostAddress
-            }
-            .firstOrNull()
-    } catch (_: Exception) {
-        null
-    }
-
-    /** Opens the system Bluetooth page (pair/unpair devices there). */
+    /** Opens the system Bluetooth page where hosts are paired and forgotten. */
     fun openSettings(activity: Activity): Boolean =
         start(activity, Intent(Settings.ACTION_BLUETOOTH_SETTINGS))
 
-    /** Asks Android to make this phone visible to PCs for a couple of minutes. */
-    fun requestDiscoverable(activity: Activity, seconds: Int = 120): Boolean {
+    /**
+     * Makes the phone visible to a PC or Android host for five minutes. The
+     * HID profile itself keeps running afterwards; only pairing needs this.
+     */
+    fun requestDiscoverable(activity: Activity, seconds: Int = 300): Boolean {
         val intent = Intent(BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE).apply {
             putExtra(BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION, seconds.coerceIn(1, 300))
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         return start(activity, intent)
     }

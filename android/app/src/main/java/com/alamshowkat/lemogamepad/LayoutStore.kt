@@ -18,13 +18,20 @@ import org.json.JSONObject
  * Editing a named layout updates that saved entry in place (see [updateActive]);
  * use "Save as" to create a separate copy first.
  */
-class LayoutStore(private val prefs: SharedPreferences) {
+class LayoutStore(
+    private val prefs: SharedPreferences,
+    private val mode: ControllerMode = ControllerMode.GAMEPAD,
+) {
+
+    private val liveKey = layoutPrefKey(mode)
+    private val activeKey = activeLayoutPrefKey(mode)
+    private val listKey = layoutsPrefKey(mode)
 
     data class Saved(val name: String, val data: String)
 
     /** Saved layouts, oldest first. Malformed entries are ignored. */
     fun saved(): List<Saved> {
-        val raw = prefs.getString(PrefsKeys.LAYOUTS, null) ?: return emptyList()
+        val raw = prefs.getString(listKey, null) ?: return emptyList()
         val out = ArrayList<Saved>()
         try {
             val array = JSONArray(raw)
@@ -46,7 +53,7 @@ class LayoutStore(private val prefs: SharedPreferences) {
 
     /** Name of the saved layout currently in use, or null for a custom one. */
     fun activeName(): String? {
-        val name = prefs.getString(PrefsKeys.LAYOUT_ACTIVE, null)?.trim().orEmpty()
+        val name = prefs.getString(activeKey, null)?.trim().orEmpty()
         if (name.isEmpty()) return null
         // A deleted or half-written entry must not leave the sheet claiming a
         // name that no longer exists.
@@ -54,7 +61,7 @@ class LayoutStore(private val prefs: SharedPreferences) {
     }
 
     /** Current live layout data, named or not. */
-    fun activeData(): String? = prefs.getString(PrefsKeys.LAYOUT, null)
+    fun activeData(): String? = prefs.getString(liveKey, null)
 
     /**
      * Stores [data] under [name], makes it active and returns true when an
@@ -71,8 +78,8 @@ class LayoutStore(private val prefs: SharedPreferences) {
         if (replaced) list[index] = entry else list += entry
         persist(list)
         prefs.edit()
-            .putString(PrefsKeys.LAYOUT, data)
-            .putString(PrefsKeys.LAYOUT_ACTIVE, entry.name)
+            .putString(liveKey, data)
+            .putString(activeKey, entry.name)
             .apply()
         return replaced
     }
@@ -85,7 +92,7 @@ class LayoutStore(private val prefs: SharedPreferences) {
         if (index < 0) return
         list[index] = Saved(name, data)
         persist(list)
-        prefs.edit().putString(PrefsKeys.LAYOUT, data).apply()
+        prefs.edit().putString(liveKey, data).apply()
     }
 
     /** Deletes a saved layout. The live arrangement is left untouched. */
@@ -100,15 +107,15 @@ class LayoutStore(private val prefs: SharedPreferences) {
     fun activate(name: String): Boolean {
         val entry = find(name) ?: return false
         prefs.edit()
-            .putString(PrefsKeys.LAYOUT, entry.data)
-            .putString(PrefsKeys.LAYOUT_ACTIVE, entry.name)
+            .putString(liveKey, entry.data)
+            .putString(activeKey, entry.name)
             .apply()
         return true
     }
 
     /** Marks the live arrangement as custom (not tied to a saved name). */
     fun clearActive() {
-        prefs.edit().putString(PrefsKeys.LAYOUT_ACTIVE, "").apply()
+        prefs.edit().putString(activeKey, "").apply()
     }
 
     private fun persist(list: List<Saved>) {
@@ -120,6 +127,6 @@ class LayoutStore(private val prefs: SharedPreferences) {
                     .put("data", entry.data),
             )
         }
-        prefs.edit().putString(PrefsKeys.LAYOUTS, array.toString()).apply()
+        prefs.edit().putString(listKey, array.toString()).apply()
     }
 }

@@ -19,6 +19,7 @@ import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 import kotlin.math.sin
 
 // Node kinds. File-level so the nested Node class can use them.
@@ -29,6 +30,29 @@ private const val K_FACE = 3
 private const val K_PILL = 4
 private const val K_PS = 5
 private const val K_SHOULDER = 6
+private const val K_PEDAL = 7
+private const val K_STEER = 8
+private const val K_TOUCHPAD = 9
+private const val K_ACTION = 10
+
+/**
+ * Stroke paint whose width follows the active palette's border weight, so a
+ * frosted theme draws fine hairlines and an arcade theme draws thicker rims
+ * without every draw call having to remember to scale.
+ */
+private class ScaledStrokePaint : Paint(ANTI_ALIAS_FLAG) {
+    var widthScale = 1f
+
+    init {
+        style = Style.STROKE
+        strokeCap = Cap.ROUND
+        strokeJoin = Join.ROUND
+    }
+
+    override fun setStrokeWidth(width: Float) {
+        super.setStrokeWidth(width * widthScale)
+    }
+}
 
 /**
  * Full screen touch controller, restyled around [PadTheme].
@@ -46,6 +70,107 @@ class GamepadView(context: Context) : View(context) {
     var onHaptic: ((Int) -> Unit)? = null
     var onLayoutChanged: (() -> Unit)? = null
     var onToast: ((String) -> Unit)? = null
+
+    /** Fired after [mode] changed, so the activity can load that mode's layout. */
+    var onModeChanged: ((ControllerMode) -> Unit)? = null
+
+    /**
+     * Which experience is on screen. Every mode reuses the same [PadState], so
+     * the PC server and the Bluetooth HID host never see a different format.
+     */
+    var mode: ControllerMode = ControllerMode.GAMEPAD
+        set(value) {
+            if (field == value) return
+            field = value
+            buildNodes()
+            layoutControls()
+            applyMotionPrefs()
+            invalidate()
+        }
+
+    // ------------------------------------------------------------- motion input
+    private var motion: MotionInput? = null
+
+    var gyroSteering = false
+        set(value) {
+            field = value
+            applyMotionPrefs()
+        }
+    var gyroAim = false
+        set(value) {
+            field = value
+            applyMotionPrefs()
+        }
+
+    /** 0 = gentle (needs a big tilt), 1 = twitchy (a small tilt steers). */
+    var steerSensitivity = 0.55f
+        set(value) {
+            field = value.coerceIn(0f, 1f)
+            invalidate()
+        }
+
+    /** Fraction of full tilt ignored around the centre. */
+    var steerDeadzone = 0.05f
+        set(value) {
+            field = value.coerceIn(0f, 0.4f)
+        }
+
+    /** 0 = linear tilt, 1 = strongest soft-centre response. */
+    var steerCurve = 0.25f
+        set(value) {
+            field = value.coerceIn(0f, 1f)
+        }
+
+    var aimSensitivity = 0.55f
+        set(value) {
+            field = value.coerceIn(0f, 1f)
+        }
+
+    var touchpadSensitivity = 0.5f
+        set(value) {
+            field = value.coerceIn(0f, 1f)
+        }
+
+    /** Global opacity of the controls, for the customization studio. */
+    var controlAlpha = 1f
+        set(value) {
+            field = value.coerceIn(0.35f, 1f)
+            invalidate()
+        }
+
+    /** Distance multiplier for the four face buttons. */
+    var faceSpacing = 1f
+        set(value) {
+            field = value.coerceIn(0.75f, 1.6f)
+            layoutControls()
+            invalidate()
+        }
+
+    /** Latest tilt in degrees, relative to the last calibration. */
+    private var tiltDeg = 0f
+    /** Steering value after dead zone and curve, -1..1. */
+    private var steerValue = 0f
+    /** Camera impulse from the touchpad and gyro, -1..1. */
+    private var aimX = 0f
+    private var aimY = 0f
+    private var camLastX = 0f
+    private var camLastY = 0f
+
+    var sensorStatus: String = ""
+        private set
+
+    val currentSteer: Float get() = steerValue
+    val currentTilt: Float get() = tiltDeg
+
+    /** Centres tilt steering on how the phone is being held right now. */
+    fun calibrateTilt() {
+        motion?.calibrate()
+        tiltDeg = 0f
+        steerValue = 0f
+        onHaptic?.invoke(18)
+        onToast?.invoke("Steering centred")
+        invalidate()
+    }
 
     var deadzone: Float = 0.12f
         set(value) {
@@ -72,9 +197,9 @@ class GamepadView(context: Context) : View(context) {
 
     // Theme switching is a 300 ms cross-fade, so the whole pad melts from one
     // palette into the next instead of snapping.
-    private var themeTarget: PadTheme = Themes.NEON
-    private var themeFrom: PadTheme = Themes.NEON
-    private var themeNow: PadTheme = Themes.NEON
+    private var themeTarget: PadTheme = Themes.MIDNIGHT
+    private var themeFrom: PadTheme = Themes.MIDNIGHT
+    private var themeNow: PadTheme = Themes.MIDNIGHT
     private var themeT = 1f
 
     var theme: PadTheme
@@ -146,6 +271,14 @@ class GamepadView(context: Context) : View(context) {
         var kx = 0f
         var ky = 0f
 
+        /** Analog 0..1 travel for a pedal, and the raw manual steering value. */
+        var value = 0f
+
+        /** Touchpad feedback: last finger offset and how recently it moved. */
+        var trailX = 0f
+        var trailY = 0f
+        var trail = 0f
+
         // 0 = idle, 1 = fully pressed. Drives the springy press animation.
         var pressT = 0f
 
@@ -163,38 +296,37 @@ class GamepadView(context: Context) : View(context) {
         var bh = 0f
 
         fun extW(): Float = when (kind) {
-            K_PILL, K_PS, K_SHOULDER -> hw
+            K_PILL, K_PS, K_SHOULDER, K_PEDAL, K_STEER, K_TOUCHPAD -> hw
             else -> r
         }
 
         fun extH(): Float = when (kind) {
-            K_PILL, K_PS, K_SHOULDER -> hh
+            K_PILL, K_PS, K_SHOULDER, K_PEDAL, K_STEER, K_TOUCHPAD -> hh
             else -> r
         }
 
         fun hit(x: Float, y: Float): Boolean = when (kind) {
-            K_PILL, K_PS, K_SHOULDER -> x >= cx - hw * 1.1f && x <= cx + hw * 1.1f &&
-                y >= cy - hh * 1.15f && y <= cy + hh * 1.15f
+            K_PILL, K_PS, K_SHOULDER, K_PEDAL, K_STEER, K_TOUCHPAD ->
+                x >= cx - hw * 1.1f && x <= cx + hw * 1.1f &&
+                    y >= cy - hh * 1.15f && y <= cy + hh * 1.15f
             K_FACE -> hypot(x - cx, y - cy) <= r * 1.4f
             else -> hypot(x - cx, y - cy) <= r * 1.5f
         }
     }
 
-    private val nodes = ArrayList<Node>(16)
-    private val playOrder = ArrayList<Node>(16)
+    private val nodes = ArrayList<Node>(20)
+    private val playOrder = ArrayList<Node>(20)
     private val faceNodes = ArrayList<Node>(4)
-    private lateinit var dpadNode: Node
-    private lateinit var leftStick: Node
-    private lateinit var rightStick: Node
+    private var dpadNode: Node? = null
+    private var leftStick: Node? = null
+    private var rightStick: Node? = null
+    private var steerNode: Node? = null
+    private var touchpadNode: Node? = null
 
     // --------------------------------------------------------------- paints
     private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
-    private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-        strokeCap = Paint.Cap.ROUND
-        strokeJoin = Paint.Join.ROUND
-    }
+    private val strokePaint = ScaledStrokePaint()
     private val glyphPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeCap = Paint.Cap.ROUND
@@ -208,6 +340,23 @@ class GamepadView(context: Context) : View(context) {
     private val bgPaint = Paint()
     private val rect = RectF()
     private val path = Path()
+
+    /**
+     * Scale a glow colour's alpha by the active palette's shadow weight.
+     * AMOLED sets this to 0 for a flat, bloom-free look; arcade/neon palettes
+     * push it past 1 for a stronger halo.
+     */
+    private fun glow(color: Int): Int {
+        val s = theme.shadow.coerceIn(0f, 2f)
+        if (s == 1f) return color
+        val a = (color ushr 24) and 0xFF
+        val na = (a * s).toInt().coerceIn(0, 255)
+        return (color and 0x00FFFFFF) or (na shl 24)
+    }
+
+    /** Per-palette letter spacing multiplier applied to every tracked label. */
+    private fun track(spacing: Float): Float =
+        spacing * theme.tracking.coerceIn(0.7f, 1.5f)
 
     private val boldFace: Typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
     private val labelFace: Typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
@@ -260,10 +409,43 @@ class GamepadView(context: Context) : View(context) {
     }
 
     init {
+        motion = MotionInput(context).apply {
+            listener = object : MotionInput.Listener {
+                override fun onTilt(degrees: Float) = handleTilt(degrees)
+                override fun onGyro(yaw: Float, pitch: Float) = handleGyro(yaw, pitch)
+                override fun onAvailability(accelerometer: Boolean, gyroscope: Boolean) {
+                    sensorStatus = status()
+                }
+            }
+        }
+        sensorStatus = motion?.status().orEmpty()
         buildNodes()
     }
 
+    /**
+     * Builds the controls of the current [mode]. Keys are stable per mode, so
+     * a saved layout is applied to the right node after a rebuild.
+     */
     private fun buildNodes() {
+        nodes.clear()
+        faceNodes.clear()
+        playOrder.clear()
+        dpadNode = null
+        leftStick = null
+        rightStick = null
+        steerNode = null
+        touchpadNode = null
+
+        when (mode) {
+            ControllerMode.GAMEPAD -> buildGamepadNodes()
+            ControllerMode.RACING -> buildRacingNodes()
+            ControllerMode.FPS -> buildFpsNodes()
+        }
+        rebuildPlayOrder()
+        layoutControls()
+    }
+
+    private fun buildGamepadNodes() {
         dpadNode = Node("dpad", K_DPAD, -1, "D-PAD", 0.115f, 0.585f)
         leftStick = Node("ls", K_STICK_L, -1, "LEFT STICK", 0.265f, 0.75f)
         rightStick = Node("rs", K_STICK_R, -1, "RIGHT STICK", 0.705f, 0.75f)
@@ -280,27 +462,25 @@ class GamepadView(context: Context) : View(context) {
         val l1 = Node("l1", K_SHOULDER, Proto.L1, "L1", 0.115f, 0.2475f)
         val r2 = Node("r2", K_SHOULDER, Proto.R2, "R2", 0.885f, 0.105f)
         val r1 = Node("r1", K_SHOULDER, Proto.R1, "R1", 0.885f, 0.2475f)
-        val select = Node("select", K_PILL, Proto.SELECT, "SELECT", 0.435f, 0.935f).apply {
+        val select = Node("select", K_PILL, Proto.SELECT, "SELECT", 0.435f, 0.915f).apply {
             bw = 0.078f; bh = 0.042f
         }
-        val start = Node("start", K_PILL, Proto.START, "START", 0.565f, 0.935f).apply {
+        val start = Node("start", K_PILL, Proto.START, "START", 0.565f, 0.915f).apply {
             bw = 0.078f; bh = 0.042f
         }
         val ps = Node("ps", K_PS, Proto.PS, "PS", 0.5f, 0.80f).apply {
             bw = 0.05f; bh = 0.05f
         }
-        val l3 = Node("l3", K_PILL, Proto.L3, "L3", 0.265f, 0.955f).apply {
+        val l3 = Node("l3", K_PILL, Proto.L3, "L3", 0.265f, 0.925f).apply {
             bw = 0.055f; bh = 0.033f
         }
-        val r3 = Node("r3", K_PILL, Proto.R3, "R3", 0.705f, 0.955f).apply {
+        val r3 = Node("r3", K_PILL, Proto.R3, "R3", 0.705f, 0.925f).apply {
             bw = 0.055f; bh = 0.033f
         }
 
-        nodes.clear()
-        faceNodes.clear()
-        nodes += dpadNode
-        nodes += leftStick
-        nodes += rightStick
+        nodes += dpadNode!!
+        nodes += leftStick!!
+        nodes += rightStick!!
         nodes += tri
         nodes += cir
         nodes += cro
@@ -318,19 +498,126 @@ class GamepadView(context: Context) : View(context) {
         nodes += ps
         nodes += l3
         nodes += r3
-        rebuildPlayOrder()
     }
 
-    /** Small controls are hit-tested before the sticks so L3/R3 stay reachable. */
+    /**
+     * Racing: a steering bar (tilt or thumb) on the bottom, progressive
+     * throttle/brake pedals, and the remaining actions as round buttons.
+     * Throttle is R2 and brake is L2, so the pedals report analog travel to
+     * both the UDP server and the HID host.
+     */
+    private fun buildRacingNodes() {
+        steerNode = Node("steer", K_STEER, -1, "STEER", 0.5f, 0.885f).apply {
+            bw = 0.34f; bh = 0.058f
+        }
+        val gas = Node("gas", K_PEDAL, Proto.R2, "THROTTLE", 0.915f, 0.63f).apply {
+            bw = 0.085f; bh = 0.16f
+        }
+        val brake = Node("brake", K_PEDAL, Proto.L2, "BRAKE", 0.085f, 0.63f).apply {
+            bw = 0.085f; bh = 0.16f
+        }
+        val nitro = Node("nitro", K_ACTION, Proto.R1, "NITRO", 0.86f, 0.31f).apply {
+            bw = 0.074f
+        }
+        val hand = Node("hand", K_ACTION, Proto.L1, "H-BRAKE", 0.14f, 0.31f).apply {
+            bw = 0.074f
+        }
+        val gearUp = Node("gearUp", K_ACTION, Proto.TRIANGLE, "GEAR +", 0.72f, 0.195f).apply {
+            bw = 0.058f
+        }
+        val gearDown = Node("gearDown", K_ACTION, Proto.CROSS, "GEAR −", 0.72f, 0.345f).apply {
+            bw = 0.058f
+        }
+        val cam = Node("cam", K_ACTION, Proto.SQUARE, "CAMERA", 0.245f, 0.195f).apply {
+            bw = 0.058f
+        }
+        val reset = Node("reset", K_ACTION, Proto.CIRCLE, "RESET", 0.365f, 0.195f).apply {
+            bw = 0.058f
+        }
+        val pause = Node("pause", K_PILL, Proto.START, "PAUSE", 0.585f, 0.195f).apply {
+            bw = 0.062f; bh = 0.036f
+        }
+        val view = Node("select", K_PILL, Proto.SELECT, "VIEW", 0.585f, 0.105f).apply {
+            bw = 0.062f; bh = 0.034f
+        }
+
+        nodes += steerNode!!
+        nodes += gas
+        nodes += brake
+        nodes += nitro
+        nodes += hand
+        nodes += gearUp
+        nodes += gearDown
+        nodes += cam
+        nodes += reset
+        nodes += pause
+        nodes += view
+    }
+
+    /**
+     * FPS: left thumb for movement, a camera pad on the right (swipe, plus
+     * optional gyro aim), a large fire button and the usual actions.
+     */
+    private fun buildFpsNodes() {
+        leftStick = Node("ls", K_STICK_L, -1, "MOVE", 0.155f, 0.72f).apply {
+            bw = 0.145f
+        }
+        touchpadNode = Node("cam", K_TOUCHPAD, -1, "CAMERA", 0.615f, 0.60f).apply {
+            bw = 0.35f; bh = 0.33f
+        }
+        val fire = Node("fire", K_ACTION, Proto.R2, "FIRE", 0.895f, 0.755f).apply {
+            bw = 0.105f
+        }
+        val aim = Node("aim", K_ACTION, Proto.L2, "AIM", 0.885f, 0.485f).apply {
+            bw = 0.078f
+        }
+        val reload = Node("reload", K_ACTION, Proto.SQUARE, "RELOAD", 0.755f, 0.215f).apply {
+            bw = 0.058f
+        }
+        val jump = Node("jump", K_ACTION, Proto.CROSS, "JUMP", 0.63f, 0.215f).apply {
+            bw = 0.058f
+        }
+        val crouch = Node("crouch", K_ACTION, Proto.CIRCLE, "CROUCH", 0.505f, 0.215f).apply {
+            bw = 0.058f
+        }
+        val swap = Node("swap", K_ACTION, Proto.TRIANGLE, "SWAP", 0.38f, 0.215f).apply {
+            bw = 0.058f
+        }
+        val sprint = Node("sprint", K_ACTION, Proto.L3, "SPRINT", 0.30f, 0.90f).apply {
+            bw = 0.058f
+        }
+        val pause = Node("pause", K_PILL, Proto.START, "PAUSE", 0.505f, 0.925f).apply {
+            bw = 0.062f; bh = 0.032f
+        }
+
+        nodes += leftStick!!
+        nodes += touchpadNode!!
+        nodes += fire
+        nodes += aim
+        nodes += reload
+        nodes += jump
+        nodes += crouch
+        nodes += swap
+        nodes += sprint
+        nodes += pause
+    }
+
+    /** Small controls are hit-tested before the sticks so actions stay reachable. */
     private fun rebuildPlayOrder() {
         playOrder.clear()
-        playOrder += dpadNode
+        dpadNode?.let { playOrder += it }
         for (n in nodes) {
-            if (n.kind == K_SHOULDER || n.kind == K_PILL || n.kind == K_PS) playOrder += n
+            if (n.kind == K_SHOULDER || n.kind == K_PILL || n.kind == K_PS ||
+                n.kind == K_ACTION || n.kind == K_PEDAL
+            ) {
+                playOrder += n
+            }
         }
         playOrder += faceNodes
-        playOrder += leftStick
-        playOrder += rightStick
+        steerNode?.let { playOrder += it }
+        leftStick?.let { playOrder += it }
+        touchpadNode?.let { playOrder += it }
+        rightStick?.let { playOrder += it }
     }
     // --------------------------------------------------------------- layout
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
@@ -345,6 +632,68 @@ class GamepadView(context: Context) : View(context) {
             entered = true
             enterT = 0f
             startAnimating()
+        }
+    }
+
+    /**
+     * Static, cheap background decoration chosen by the palette. No particles
+     * and no animation, so it costs the same whether the pad is idle or busy.
+     */
+    private fun drawBackdrop(canvas: Canvas) {
+        if (W <= 0f || H <= 0f) return
+        val style = theme.backdrop
+        if (style == "none" || style == "glow") return
+        fillPaint.shader = null
+        when (style) {
+            "grid" -> {
+                val step = H * 0.13f
+                strokePaint.color = withAlpha(theme.accent, 13)
+                strokePaint.strokeWidth = dp(1f)
+                var x = W * 0.06f
+                while (x < W) {
+                    canvas.drawLine(x, H * 0.10f, x, H * 0.94f, strokePaint)
+                    x += step
+                }
+                var y = H * 0.12f
+                while (y < H * 0.94f) {
+                    canvas.drawLine(W * 0.02f, y, W * 0.98f, y, strokePaint)
+                    y += step
+                }
+            }
+            "scan" -> {
+                val step = dp(6f)
+                strokePaint.color = withAlpha(theme.text, 8)
+                strokePaint.strokeWidth = dp(1f)
+                var y = 0f
+                while (y < H) {
+                    canvas.drawLine(0f, y, W, y, strokePaint)
+                    y += step
+                }
+            }
+            "speed" -> {
+                strokePaint.strokeWidth = dp(1.4f)
+                for (i in 0 until 7) {
+                    val y = H * (0.22f + i * 0.108f)
+                    val left = W * (0.04f + (i % 3) * 0.03f)
+                    val len = W * (0.10f + (i % 4) * 0.035f)
+                    strokePaint.color = withAlpha(
+                        if (i % 2 == 0) theme.accent else theme.accent2,
+                        15 + (i % 3) * 5,
+                    )
+                    canvas.drawLine(left, y, left + len, y, strokePaint)
+                    canvas.drawLine(W - left, y, W - left - len, y, strokePaint)
+                }
+            }
+            "frost" -> {
+                fillPaint.shader = LinearGradient(
+                    0f, 0f, W * 0.9f, H * 0.85f,
+                    intArrayOf(withAlpha(0xFFFFFF, 46), withAlpha(0xFFFFFF, 0)),
+                    floatArrayOf(0f, 1f),
+                    Shader.TileMode.CLAMP,
+                )
+                canvas.drawPaint(fillPaint)
+                fillPaint.shader = null
+            }
         }
     }
 
@@ -399,12 +748,13 @@ class GamepadView(context: Context) : View(context) {
         for (n in nodes) {
             when (n.kind) {
                 K_DPAD -> n.r = H * 0.145f * a * n.scale
-                K_STICK_L, K_STICK_R -> n.r = H * 0.14f * a * n.scale
+                K_STICK_L, K_STICK_R ->
+                    n.r = H * (if (n.bw > 0f) n.bw else 0.14f) * a * n.scale
                 K_FACE -> {
                     n.r = H * 0.058f * a * n.scale
                     if (!n.customized) {
-                        n.fx = (baseX + n.homeDx * H * a) / W
-                        n.fy = (baseY + n.homeDy * H * a) / H
+                        n.fx = (baseX + n.homeDx * H * a * faceSpacing) / W
+                        n.fy = (baseY + n.homeDy * H * a * faceSpacing) / H
                         n.defFx = n.fx
                         n.defFy = n.fy
                     }
@@ -422,6 +772,11 @@ class GamepadView(context: Context) : View(context) {
                     n.hw = W * 0.0975f * n.scale
                     n.hh = H * 0.0625f * n.scale
                 }
+                K_PEDAL, K_STEER, K_TOUCHPAD -> {
+                    n.hw = H * n.bw * n.scale * a
+                    n.hh = H * n.bh * n.scale * a
+                }
+                K_ACTION -> n.r = H * n.bw * n.scale * a
             }
 
             // Keep every control fully on screen, even after a custom drag.
@@ -451,6 +806,8 @@ class GamepadView(context: Context) : View(context) {
             canvas.drawPaint(glowPaint)
             glowPaint.shader = null
         }
+        strokePaint.widthScale = theme.border.coerceIn(0.5f, 2f)
+        drawBackdrop(canvas)
 
         if (enterT < 1f) {
             val k = 1f - (1f - enterT) * (1f - enterT) * (1f - enterT)
@@ -461,6 +818,9 @@ class GamepadView(context: Context) : View(context) {
             canvas.translate(-W / 2f, -H / 2f)
         }
 
+        if (controlAlpha < 0.999f) {
+            canvas.saveLayerAlpha(0f, 0f, W, H, (255 * controlAlpha).toInt())
+        }
         for (n in nodes) {
             if (n.hidden) {
                 if (editMode) drawPlaceholder(canvas, n)
@@ -470,9 +830,14 @@ class GamepadView(context: Context) : View(context) {
                 K_DPAD -> drawDpad(canvas, n)
                 K_STICK_L, K_STICK_R -> drawStick(canvas, n)
                 K_FACE -> drawFace(canvas, n)
+                K_PEDAL -> drawPedal(canvas, n)
+                K_STEER -> drawSteer(canvas, n)
+                K_TOUCHPAD -> drawTouchpad(canvas, n)
+                K_ACTION -> drawAction(canvas, n)
                 else -> drawPill(canvas, n)
             }
         }
+        if (controlAlpha < 0.999f) canvas.restore()
 
         if (enterT < 1f) canvas.restore()
 
@@ -537,6 +902,32 @@ class GamepadView(context: Context) : View(context) {
             n.pressVel += (delta * PRESS_STIFFNESS - n.pressVel * PRESS_DAMPING) * step
             n.pressT = (n.pressT + n.pressVel * step).coerceIn(-0.02f, 1.15f)
             animating = true
+        }
+
+        if (aimX != 0f || aimY != 0f) {
+            // A swipe throws the camera stick off centre, then it glides back.
+            val k = Math.pow(0.86, step.toDouble()).toFloat()
+            aimX *= k
+            aimY *= k
+            if (abs(aimX) < 0.008f) aimX = 0f
+            if (abs(aimY) < 0.008f) aimY = 0f
+            publish(redraw = false)
+            if (aimX != 0f || aimY != 0f || touchpadNode?.pointer != -1) animating = true
+        }
+
+        val pad = touchpadNode
+        if (pad != null && (pad.trail > 0f || pad.kx != 0f || pad.ky != 0f)) {
+            if (pad.pointer == -1) {
+                pad.trail = (pad.trail - dt / 420f).coerceAtLeast(0f)
+                pad.kx *= 0.90f
+                pad.ky *= 0.90f
+                if (abs(pad.kx) < 0.01f) pad.kx = 0f
+                if (abs(pad.ky) < 0.01f) pad.ky = 0f
+                if (pad.trail > 0f || pad.kx != 0f || pad.ky != 0f) animating = true
+            } else {
+                pad.trail = 1f
+                animating = true
+            }
         }
 
         if (themeT < 1f) {
@@ -635,9 +1026,9 @@ class GamepadView(context: Context) : View(context) {
                 glowPaint.shader = RadialGradient(
                     cx, cy, reach.coerceAtLeast(1f),
                     intArrayOf(
-                        withAlpha(accent, (77 * fade).toInt()),
-                        withAlpha(accent, (41 * fade).toInt()),
-                        withAlpha(accent, 0),
+                        glow(withAlpha(accent, (77 * fade).toInt())),
+                        glow(withAlpha(accent, (41 * fade).toInt())),
+                        glow(withAlpha(accent, 0)),
                     ),
                     floatArrayOf(0f, 0.62f, 1f),
                     Shader.TileMode.CLAMP,
@@ -750,7 +1141,7 @@ class GamepadView(context: Context) : View(context) {
             val k = press.coerceIn(0f, 1f)
             val held = k > 0.01f
             if (held) {
-                glowPaint.color = withAlpha(accent, (26 + 29 * k).toInt())
+                glowPaint.color = glow(withAlpha(accent, (26 + 29 * k).toInt()))
                 rect.set(cx - hw - dp(4f), cy - hh - dp(4f), cx + hw + dp(4f), cy + hh + dp(4f))
                 canvas.drawRoundRect(rect, r * 0.2f, r * 0.2f, glowPaint)
             }
@@ -848,7 +1239,7 @@ class GamepadView(context: Context) : View(context) {
         val kr = r * 0.52f
 
         if (active) {
-            glowPaint.color = withAlpha(accent, 50)
+            glowPaint.color = glow(withAlpha(accent, 50))
             canvas.drawCircle(kx, ky, kr * 1.3f, glowPaint)
         }
         fillPaint.color = if (active) blend(theme.surfaceAlt, accent, 0.20f) else theme.surfaceAlt
@@ -879,7 +1270,7 @@ class GamepadView(context: Context) : View(context) {
         val cy = n.cy
 
         if (p > 0.01f) {
-            glowPaint.color = withAlpha(accent, (70 * p).toInt())
+            glowPaint.color = glow(withAlpha(accent, (70 * p).toInt()))
             canvas.drawCircle(cx, cy, n.r * (1.10f + 0.22f * p), glowPaint)
         }
         fillPaint.shader = null
@@ -911,12 +1302,7 @@ class GamepadView(context: Context) : View(context) {
         }
     }
 
-    private fun faceColor(i: Int): Int = when (i) {
-        0 -> theme.triangle
-        1 -> theme.circle
-        2 -> theme.cross
-        else -> theme.square
-    }
+    private fun faceColor(i: Int): Int = Iconic.face(faceLabels, i)
 
     private fun drawGlyph(canvas: Canvas, i: Int, cx: Float, cy: Float, r: Float, color: Int) {
         glyphPaint.color = color
@@ -943,6 +1329,233 @@ class GamepadView(context: Context) : View(context) {
         }
     }
 
+    private fun drawAction(canvas: Canvas, n: Node) {
+        val p = n.pressT.coerceIn(0f, 1f)
+        val pressed = n.pressed
+        val accent = actionAccent(n)
+        val r = n.r * (1f + 0.05f * p)
+
+        if (p > 0.01f) {
+            glowPaint.color = glow(withAlpha(accent, (76 * p).toInt()))
+            canvas.drawCircle(n.cx, n.cy, n.r * (1.12f + 0.22f * p), glowPaint)
+        }
+        fillPaint.shader = null
+        fillPaint.color = if (pressed) blend(theme.surface, accent, 0.45f * p) else theme.surface
+        canvas.drawCircle(n.cx, n.cy, r, fillPaint)
+        strokePaint.color = withAlpha(accent, (95 + 150 * p).toInt())
+        strokePaint.strokeWidth = dp(1.4f + 1.1f * p)
+        canvas.drawCircle(n.cx, n.cy, r - dp(0.7f), strokePaint)
+        strokePaint.color = withAlpha(theme.text, (14 + 22 * p).toInt())
+        strokePaint.strokeWidth = dp(1f)
+        canvas.drawCircle(n.cx, n.cy, r * 0.82f, strokePaint)
+
+        drawPressFx(canvas, n, n.cx, n.cy, n.r, accent)
+
+        val label = displayLabel(n)
+        val size = fitTrackedSize(label, n.r * 1.55f, n.r * 0.40f)
+        drawTracked(
+            canvas, label, n.cx, n.cy, size,
+            if (p > 0.55f) theme.bgBottom else theme.textDim,
+            size * 0.10f, true,
+        )
+    }
+
+    private fun actionAccent(n: Node): Int = when (n.key) {
+        "fire" -> FIRE_RED
+        "aim" -> theme.accent2
+        "nitro" -> theme.accent2
+        "hand" -> theme.warn
+        "gearUp" -> theme.ok
+        "gearDown" -> theme.accent
+        "brake" -> theme.warn
+        else -> theme.accent
+    }
+
+    /** Progressive throttle/brake pedal: how low the thumb is sets the travel. */
+    private fun drawPedal(canvas: Canvas, n: Node) {
+        val accent = if (n.bit == Proto.R2) theme.ok else theme.warn
+        val value = n.value.coerceIn(0f, 1f)
+        val held = n.pointer != -1
+        val radius = min(n.hw, n.hh) * 0.42f
+
+        fillPaint.shader = null
+        fillPaint.color = theme.surface
+        rect.set(n.cx - n.hw, n.cy - n.hh, n.cx + n.hw, n.cy + n.hh)
+        canvas.drawRoundRect(rect, radius, radius, fillPaint)
+
+        // Travel rises from the bottom of the pedal.
+        if (value > 0.001f) {
+            val bottom = n.cy + n.hh
+            canvas.save()
+            canvas.clipRect(n.cx - n.hw, n.cy - n.hh, n.cx + n.hw, bottom)
+            fillPaint.color = withAlpha(accent, (44 + 118 * value).toInt())
+            val top = bottom - n.hh * 2f * value
+            rect.set(n.cx - n.hw, top, n.cx + n.hw, bottom)
+            canvas.drawRoundRect(rect, radius, radius, fillPaint)
+            canvas.restore()
+            strokePaint.color = withAlpha(accent, (120 + 110 * value).toInt())
+            strokePaint.strokeWidth = dp(1.6f)
+            canvas.drawLine(n.cx - n.hw + dp(3f), top, n.cx + n.hw - dp(3f), top, strokePaint)
+        }
+
+        rect.set(n.cx - n.hw, n.cy - n.hh, n.cx + n.hw, n.cy + n.hh)
+        strokePaint.color = if (held) withAlpha(accent, 235) else withAlpha(theme.text, 46)
+        strokePaint.strokeWidth = dp(1.3f + if (held) 1f else 0f)
+        canvas.drawRoundRect(rect, radius, radius, strokePaint)
+
+        // Tick marks on the outer edge for a mechanical feel.
+        strokePaint.color = withAlpha(theme.text, 26)
+        strokePaint.strokeWidth = dp(1f)
+        for (i in 1..4) {
+            val y = n.cy + n.hh - n.hh * 2f * (i / 5f)
+            canvas.drawLine(n.cx + n.hw - dp(5f), y, n.cx + n.hw - dp(1f), y, strokePaint)
+        }
+
+        drawPressFx(canvas, n, n.cx, n.cy, max(n.hw, n.hh) * 0.8f, accent)
+
+        canvas.save()
+        canvas.rotate(-90f, n.cx, n.cy - n.hh * 0.16f)
+        val size = fitTrackedSize(n.label, n.hh * 1.15f, n.hw * 0.62f)
+        drawTracked(
+            canvas, n.label, n.cx, n.cy - n.hh * 0.16f, size,
+            if (held) theme.text else theme.textDim, size * 0.12f, true,
+        )
+        canvas.restore()
+
+        drawTracked(
+            canvas, "${(value * 100f).roundToInt()}%", n.cx, n.cy + n.hh * 0.66f,
+            n.hw * 0.46f, withAlpha(accent, if (value > 0f) 235 else 150), 0f, true,
+        )
+    }
+
+    /** Wide steering bar: manual drag or the live tilt position. */
+    private fun drawSteer(canvas: Canvas, n: Node) {
+        val accent = theme.accent
+        val steer = effectiveSteer()
+        val radius = n.hh * 0.75f
+        val manual = n.pointer != -1
+
+        rect.set(n.cx - n.hw, n.cy - n.hh, n.cx + n.hw, n.cy + n.hh)
+        fillPaint.shader = null
+        fillPaint.color = theme.surface
+        canvas.drawRoundRect(rect, radius, radius, fillPaint)
+
+        strokePaint.color = if (manual) withAlpha(accent, 235) else withAlpha(theme.text, 44)
+        strokePaint.strokeWidth = dp(1.3f + if (manual) 1f else 0f)
+        canvas.drawRoundRect(rect, radius, radius, strokePaint)
+
+        // Scale ticks and the centre notch.
+        strokePaint.strokeWidth = dp(1f)
+        strokePaint.color = withAlpha(theme.text, 34)
+        for (i in -4..4) {
+            val x = n.cx + n.hw * 0.9f * (i / 4f)
+            val tall = i == 0
+            canvas.drawLine(
+                x, n.cy - n.hh * (if (tall) 0.62f else 0.26f),
+                x, n.cy + n.hh * (if (tall) 0.62f else 0.26f),
+                strokePaint,
+            )
+        }
+
+        // Highlighted travel from centre to the current steering angle.
+        if (abs(steer) > 0.01f) {
+            strokePaint.color = withAlpha(accent, 120)
+            strokePaint.strokeWidth = dp(3f)
+            canvas.drawLine(n.cx, n.cy + n.hh * 0.78f, n.cx + steer * n.hw * 0.9f, n.cy + n.hh * 0.78f, strokePaint)
+        }
+
+        val kx = n.cx + steer * n.hw * 0.9f
+        glowPaint.color = glow(withAlpha(accent, if (manual) 90 else 55))
+        canvas.drawCircle(kx, n.cy, n.hh * 1.05f, glowPaint)
+        fillPaint.color = blend(theme.surfaceAlt, accent, if (manual) 0.55f else 0.30f)
+        canvas.drawCircle(kx, n.cy, n.hh * 0.78f, fillPaint)
+        strokePaint.color = withAlpha(accent, 220)
+        strokePaint.strokeWidth = dp(1.5f)
+        canvas.drawCircle(kx, n.cy, n.hh * 0.78f, strokePaint)
+        fillPaint.color = accent
+        canvas.drawCircle(kx, n.cy, n.hh * 0.16f, fillPaint)
+
+        val hint = when {
+            manual -> "MANUAL"
+            gyroSteering -> "GYRO  ${tiltDeg.roundToInt()}°"
+            else -> "TILT OFF · DRAG TO STEER"
+        }
+        val size = fitTrackedSize(hint, n.hw * 1.5f, n.hh * 0.74f)
+        drawTracked(
+            canvas, hint, n.cx, n.cy - n.hh * 0.42f, size,
+            withAlpha(if (manual) theme.text else accent, 220), size * 0.12f, true,
+        )
+    }
+
+    /** FPS camera pad: swipe to swing the camera, gyro may add to it. */
+    private fun drawTouchpad(canvas: Canvas, n: Node) {
+        val accent = theme.accent2
+        val active = n.pointer != -1
+        val radius = min(n.hw, n.hh) * 0.28f
+
+        rect.set(n.cx - n.hw, n.cy - n.hh, n.cx + n.hw, n.cy + n.hh)
+        fillPaint.shader = null
+        fillPaint.color = withAlpha(theme.surface, if (active) 235 else 200)
+        canvas.drawRoundRect(rect, radius, radius, fillPaint)
+
+        strokePaint.color = withAlpha(accent, if (active) 225 else 80)
+        strokePaint.strokeWidth = dp(if (active) 2.2f else 1.3f)
+        canvas.drawRoundRect(rect, radius, radius, strokePaint)
+
+        // Quiet alignment grid.
+        strokePaint.color = withAlpha(theme.text, if (active) 26 else 16)
+        strokePaint.strokeWidth = dp(1f)
+        for (i in 1..3) {
+            val x = n.cx - n.hw + n.hw * 2f * (i / 4f)
+            val y = n.cy - n.hh + n.hh * 2f * (i / 4f)
+            canvas.drawLine(x, n.cy - n.hh + dp(6f), x, n.cy + n.hh - dp(6f), strokePaint)
+            canvas.drawLine(n.cx - n.hw + dp(6f), y, n.cx + n.hw - dp(6f), y, strokePaint)
+        }
+
+        // Crosshair.
+        strokePaint.color = withAlpha(theme.text, if (active) 130 else 80)
+        strokePaint.strokeWidth = dp(1.2f)
+        val gap = n.hh * 0.10f
+        val arm = n.hh * 0.20f
+        canvas.drawLine(n.cx - gap - arm, n.cy, n.cx - gap, n.cy, strokePaint)
+        canvas.drawLine(n.cx + gap, n.cy, n.cx + gap + arm, n.cy, strokePaint)
+        canvas.drawLine(n.cx, n.cy - gap - arm, n.cx, n.cy - gap, strokePaint)
+        canvas.drawLine(n.cx, n.cy + gap, n.cx, n.cy + gap + arm, strokePaint)
+
+        // Swipe trail and contact dot.
+        if (n.trail > 0f) {
+            val tx = n.cx + n.kx * n.hw * 0.82f
+            val ty = n.cy + n.ky * n.hh * 0.82f
+            strokePaint.color = withAlpha(accent, (110 * n.trail).toInt())
+            strokePaint.strokeWidth = dp(2f)
+            canvas.drawLine(n.cx, n.cy, tx, ty, strokePaint)
+            glowPaint.color = glow(withAlpha(accent, (70 * n.trail).toInt()))
+            canvas.drawCircle(tx, ty, n.hh * 0.16f * (0.7f + n.trail * 0.5f), glowPaint)
+            fillPaint.color = withAlpha(accent, (200 * n.trail).toInt())
+            canvas.drawCircle(tx, ty, n.hh * 0.055f, fillPaint)
+        }
+
+        val label = if (gyroAim) "CAMERA · GYRO" else "CAMERA"
+        drawTracked(
+            canvas, label, n.cx, n.cy - n.hh + dp(12f), n.hh * 0.095f,
+            withAlpha(accent, if (active) 235 else 170), n.hh * 0.012f, true,
+        )
+        if (active) {
+            drawTracked(
+                canvas, "${
+                    (hypot(aimX, aimY) * 100f).roundToInt()
+                }%", n.cx, n.cy + n.hh - dp(12f), n.hh * 0.085f,
+                withAlpha(theme.text, 150), n.hh * 0.008f, true,
+            )
+        }
+    }
+
+    /** Manual steering and gyro both read through here. */
+    private fun effectiveSteer(): Float {
+        val n = steerNode ?: return 0f
+        return if (n.pointer != -1) n.value.coerceIn(-1f, 1f) else if (gyroSteering) steerValue else 0f
+    }
+
     private fun drawPill(canvas: Canvas, n: Node) {
         val accent = theme.accent
         val pressed = n.pressed
@@ -951,7 +1564,7 @@ class GamepadView(context: Context) : View(context) {
 
         if (n.kind == K_PS) {
             if (p > 0.01f) {
-                glowPaint.color = withAlpha(accent, (69 * p).toInt())
+                glowPaint.color = glow(withAlpha(accent, (69 * p).toInt()))
                 canvas.drawCircle(n.cx, n.cy, n.r * (1.08f + 0.14f * p), glowPaint)
             }
             fillPaint.color = if (pressed) blend(theme.surface, accent, 0.45f * p) else theme.surface
@@ -972,7 +1585,7 @@ class GamepadView(context: Context) : View(context) {
         val hh = n.hh * (1f - 0.018f * p)
 
         if (p > 0.01f) {
-            glowPaint.color = withAlpha(accent, (56 * p).toInt())
+            glowPaint.color = glow(withAlpha(accent, (56 * p).toInt()))
             rect.set(
                 n.cx - n.hw - dp(3f), n.cy - n.hh - dp(3f),
                 n.cx + n.hw + dp(3f), n.cy + n.hh + dp(3f),
@@ -1028,7 +1641,7 @@ class GamepadView(context: Context) : View(context) {
         hudRect.set(W / 2f - w / 2f, H * 0.030f, W / 2f + w / 2f, H * 0.030f + h)
 
         if (hudPressed) {
-            glowPaint.color = withAlpha(theme.accent, 50)
+            glowPaint.color = glow(withAlpha(theme.accent, 50))
             rect.set(hudRect.left - dp(4f), hudRect.top - dp(4f), hudRect.right + dp(4f), hudRect.bottom + dp(4f))
             canvas.drawRoundRect(rect, h / 2f, h / 2f, glowPaint)
         }
@@ -1042,7 +1655,7 @@ class GamepadView(context: Context) : View(context) {
 
         val dotX = hudRect.left + h * 0.38f
         val dotR = h * 0.10f
-        glowPaint.color = withAlpha(statusColor(), 70)
+        glowPaint.color = glow(withAlpha(statusColor(), 70))
         canvas.drawCircle(dotX, hudRect.centerY(), dotR * 1.9f, glowPaint)
         fillPaint.color = statusColor()
         canvas.drawCircle(dotX, hudRect.centerY(), dotR, fillPaint)
@@ -1064,6 +1677,30 @@ class GamepadView(context: Context) : View(context) {
         drawGear(
             canvas, hudRect.right - h * 0.40f, hudRect.centerY(),
             h * 0.19f, withAlpha(theme.text, 150),
+        )
+
+        // Mode badge, centred under the status pill so a long server name can
+        // never collide with it. Racing shows the live tilt angle.
+        val badge = when {
+            mode == ControllerMode.RACING && gyroSteering ->
+                "RACING · ${tiltDeg.roundToInt()}°"
+            mode == ControllerMode.FPS && gyroAim -> "FPS · GYRO"
+            mode == ControllerMode.RACING && steerNode?.pointer != -1 -> "RACING · MANUAL"
+            else -> mode.label
+        }
+        val bsize = fitTrackedSize(badge, W * 0.42f, H * 0.0172f)
+        val badgeY = hudRect.bottom + bsize * 0.92f
+        val tw2 = trackedWidth(badge, bsize, bsize * 0.12f, true)
+        val badgeDotR = bsize * 0.22f
+        val dotGap = bsize * 0.55f
+        val total = badgeDotR * 2f + dotGap + tw2
+        val left = hudRect.centerX() - total / 2f
+        fillPaint.shader = null
+        fillPaint.color = withAlpha(theme.accent, 200)
+        canvas.drawCircle(left + badgeDotR, badgeY, badgeDotR, fillPaint)
+        drawTracked(
+            canvas, badge, left + badgeDotR * 2f + dotGap + tw2 / 2f, badgeY,
+            bsize, withAlpha(theme.accent, 225), bsize * 0.12f, true,
         )
     }
 
@@ -1087,10 +1724,11 @@ class GamepadView(context: Context) : View(context) {
     private fun trackedWidth(text: String, size: Float, tracking: Float, bold: Boolean): Float {
         textPaint.textSize = size
         textPaint.typeface = if (bold) boldFace else labelFace
+        val tr = track(tracking)
         var w = 0f
         for (i in text.indices) {
             w += textPaint.measureText(text, i, i + 1)
-            if (i < text.length - 1) w += tracking
+            if (i < text.length - 1) w += tr
         }
         return w
     }
@@ -1118,11 +1756,12 @@ class GamepadView(context: Context) : View(context) {
         textPaint.color = color
         val fm = textPaint.fontMetrics
         val baseline = cy - (fm.ascent + fm.descent) / 2f
+        val tr = track(tracking)
         var x = cx - trackedWidth(text, size, tracking, bold) / 2f
         for (i in text.indices) {
             val cw = textPaint.measureText(text, i, i + 1)
             canvas.drawText(text, i, i + 1, x, baseline, textPaint)
-            x += cw + tracking
+            x += cw + tr
         }
     }
 
@@ -1181,6 +1820,9 @@ class GamepadView(context: Context) : View(context) {
     }
 
     fun resetInputs() {
+        aimX = 0f
+        aimY = 0f
+        steerValue = 0f
         for (n in nodes) {
             n.pressed = false
             n.pointer = -1
@@ -1190,6 +1832,8 @@ class GamepadView(context: Context) : View(context) {
             n.right = false
             n.kx = 0f
             n.ky = 0f
+            n.value = 0f
+            n.trail = 0f
             n.ripple = 0f
             for (i in 0 until 4) {
                 n.armT[i] = 0f
@@ -1254,6 +1898,9 @@ class GamepadView(context: Context) : View(context) {
             when (n.kind) {
                 K_DPAD -> moveDpad(n, x, y)
                 K_STICK_L, K_STICK_R -> moveStick(n, x, y)
+                K_STEER -> moveSteer(n, x)
+                K_PEDAL -> movePedal(n, y)
+                K_TOUCHPAD -> beginCamera(n, x, y)
                 else -> {
                     n.pressed = true
                     pressFx(n)
@@ -1279,6 +1926,18 @@ class GamepadView(context: Context) : View(context) {
                 K_DPAD -> moveDpad(n, x, y)
                 K_STICK_L, K_STICK_R -> moveStick(n, x, y)
                 K_FACE -> rollFace(n, id, x, y)
+                K_STEER -> {
+                    moveSteer(n, x)
+                    invalidate()
+                }
+                K_PEDAL -> {
+                    movePedal(n, y)
+                    invalidate()
+                }
+                K_TOUCHPAD -> {
+                    moveCamera(n, x, y)
+                    invalidate()
+                }
                 else -> {
                     val inside = n.hit(x, y)
                     if (inside != n.pressed) {
@@ -1310,6 +1969,15 @@ class GamepadView(context: Context) : View(context) {
                     n.down = false
                     n.left = false
                     n.right = false
+                }
+                K_STEER -> n.value = 0f
+                K_PEDAL -> {
+                    n.value = 0f
+                    n.pressed = false
+                }
+                K_TOUCHPAD -> {
+                    n.kx = 0f
+                    n.ky = 0f
                 }
                 else -> n.pressed = false
             }
@@ -1401,6 +2069,44 @@ class GamepadView(context: Context) : View(context) {
             if (!wasActive && (up || down || left || right)) pressFx(n)
             publish()
         }
+    }
+
+    private fun moveSteer(n: Node, x: Float) {
+        n.value = ((x - n.cx) / (n.hw * 0.9f)).coerceIn(-1f, 1f)
+        publish()
+    }
+
+    private fun movePedal(n: Node, y: Float) {
+        val frac = ((y - (n.cy - n.hh)) / (2f * n.hh)).coerceIn(0f, 1f)
+        n.value = frac
+        n.pressed = frac > 0.02f
+        publish()
+    }
+
+    private fun beginCamera(n: Node, x: Float, y: Float) {
+        camLastX = x
+        camLastY = y
+        n.trail = 1f
+        n.kx = 0f
+        n.ky = 0f
+        tap()
+        startAnimating()
+    }
+
+    /** Swipe distance becomes a temporary camera-stick deflection. */
+    private fun moveCamera(n: Node, x: Float, y: Float) {
+        val dx = x - camLastX
+        val dy = y - camLastY
+        camLastX = x
+        camLastY = y
+        val gain = (0.7f + 2.8f * touchpadSensitivity) / max(1f, n.hw)
+        aimX = (aimX + dx * gain).coerceIn(-1f, 1f)
+        aimY = (aimY + dy * gain).coerceIn(-1f, 1f)
+        n.kx = ((x - n.cx) / n.hw).coerceIn(-1f, 1f)
+        n.ky = ((y - n.cy) / n.hh).coerceIn(-1f, 1f)
+        n.trail = 1f
+        publish()
+        startAnimating()
     }
 
     // --------------------------------------------------------------- edit touch
@@ -1520,6 +2226,54 @@ class GamepadView(context: Context) : View(context) {
         return null
     }
 
+    // ------------------------------------------------------------- motion input
+    private fun handleTilt(degrees: Float) {
+        if (mode != ControllerMode.RACING) return
+        tiltDeg = degrees
+        val maxTilt = 38f - 26f * steerSensitivity
+        val raw = (degrees / maxTilt).coerceIn(-1f, 1f)
+        val dz = steerDeadzone
+        steerValue = if (abs(raw) <= dz || dz >= 0.999f) {
+            0f
+        } else {
+            val sign = if (raw < 0f) -1f else 1f
+            val x = (abs(raw) - dz) / (1f - dz)
+            sign * (x * (1f - steerCurve + steerCurve * x * x))
+        }
+        if (gyroSteering) publish(redraw = false)
+        invalidate()
+    }
+
+    private fun handleGyro(yaw: Float, pitch: Float) {
+        if (mode != ControllerMode.FPS || !gyroAim) return
+        val gain = 1.3f + 4.6f * aimSensitivity
+        aimX = (aimX + yaw * gain).coerceIn(-1f, 1f)
+        aimY = (aimY + pitch * gain).coerceIn(-1f, 1f)
+        if (aimX != 0f || aimY != 0f) {
+            publish(redraw = false)
+            startAnimating()
+        }
+        invalidate()
+    }
+
+    /** Registers only the sensors the current mode actually uses. */
+    private fun applyMotionPrefs() {
+        motion?.setEnabled(
+            mode == ControllerMode.RACING && gyroSteering,
+            mode == ControllerMode.FPS && gyroAim,
+        )
+        sensorStatus = motion?.status().orEmpty()
+    }
+
+    fun startMotion() {
+        applyMotionPrefs()
+        motion?.start()
+    }
+
+    fun stopMotion() {
+        motion?.stop()
+    }
+
     // ---------------------------------------------------------------- publish
     private fun publish(redraw: Boolean = true) {
         var b = 0
@@ -1531,19 +2285,48 @@ class GamepadView(context: Context) : View(context) {
                     if (n.left) b = b or (1 shl Proto.LEFT)
                     if (n.right) b = b or (1 shl Proto.RIGHT)
                 }
-                else -> if (n.pressed) b = b or (1 shl n.bit)
+                K_PEDAL -> {
+                    if (n.bit >= 0 && n.value > 0.02f) b = b or (1 shl n.bit)
+                }
+                else -> if (n.bit >= 0 && n.pressed) b = b or (1 shl n.bit)
             }
         }
 
         state.buttons = b
-        val (lx, ly) = axes(leftStick)
-        val (rx, ry) = axes(rightStick)
-        state.lx = lx
-        state.ly = ly
-        state.rx = rx
-        state.ry = ry
-        state.l2 = if (b and (1 shl Proto.L2) != 0) 255 else 0
-        state.r2 = if (b and (1 shl Proto.R2) != 0) 255 else 0
+
+        if (mode == ControllerMode.RACING) {
+            val steer = effectiveSteer()
+            state.lx = (steer * 32767f).roundToInt()
+            state.ly = 0
+        } else {
+            val (lx, ly) = leftStick?.let { axes(it) } ?: (0 to 0)
+            state.lx = lx
+            state.ly = ly
+        }
+
+        if (mode == ControllerMode.FPS) {
+            state.rx = (aimX * 32767f).roundToInt()
+            state.ry = (-aimY * 32767f).roundToInt()
+        } else {
+            val (rx, ry) = rightStick?.let { axes(it) } ?: (0 to 0)
+            state.rx = rx
+            state.ry = ry
+        }
+
+        var l2 = 0f
+        var r2 = 0f
+        for (n in nodes) {
+            val value = when {
+                n.bit != Proto.L2 && n.bit != Proto.R2 -> 0f
+                n.kind == K_PEDAL -> n.value
+                n.pressed -> 1f
+                else -> 0f
+            }
+            if (n.bit == Proto.L2) l2 = max(l2, value)
+            if (n.bit == Proto.R2) r2 = max(r2, value)
+        }
+        state.l2 = (l2 * 255f).roundToInt().coerceIn(0, 255)
+        state.r2 = (r2 * 255f).roundToInt().coerceIn(0, 255)
         state.bump()
 
         if (redraw) {
@@ -1608,11 +2391,17 @@ class GamepadView(context: Context) : View(context) {
         for ((key, v) in parsed) {
             if (key == "face") continue
             val n = nodes.firstOrNull { it.key == key } ?: continue
-            n.fx = (v[0] / 10000f).coerceIn(0f, 1f)
-            n.fy = (v[1] / 10000f).coerceIn(0f, 1f)
-            n.scale = (v[2] / 1000f).coerceIn(0.55f, 1.9f)
+            val fx = (v[0] / 10000f).coerceIn(0f, 1f)
+            val fy = (v[1] / 10000f).coerceIn(0f, 1f)
+            val scale = (v[2] / 1000f).coerceIn(0.55f, 1.9f)
+            n.fx = fx
+            n.fy = fy
+            n.scale = scale
             n.hidden = v[3] == 1
-            n.customized = true
+            // A saved layout that still sits exactly on this mode's defaults
+            // must not lock the face cluster out of the spacing slider.
+            val moved = abs(fx - n.defFx) > 0.0008f || abs(fy - n.defFy) > 0.0008f
+            n.customized = moved || n.hidden || abs(scale - 1f) > 0.01f
         }
         layoutControls()
         invalidate()
@@ -1620,15 +2409,14 @@ class GamepadView(context: Context) : View(context) {
 
     fun resetLayout() {
         legacyFace = null
+        aimX = 0f
+        aimY = 0f
         for (n in nodes) {
             n.scale = 1f
             n.hidden = false
-            if (n.kind == K_FACE) {
-                n.customized = false
-            } else {
-                n.fx = n.defFx
-                n.fy = n.defFy
-            }
+            n.customized = false
+            n.fx = n.defFx
+            n.fy = n.defFy
         }
         layoutControls()
         invalidate()
@@ -1665,5 +2453,8 @@ class GamepadView(context: Context) : View(context) {
         /** Press spring, tuned per 60 Hz frame (slightly under-damped). */
         private const val PRESS_STIFFNESS = 0.30f
         private const val PRESS_DAMPING = 0.70f
+
+        /** Fire is hot red in every theme, like the trigger it maps to. */
+        private val FIRE_RED = 0xFFFF5A45.toInt()
     }
 }

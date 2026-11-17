@@ -34,7 +34,7 @@ disclosure is appreciated. There is no bug bounty.
 ## Threat model — what is and is not a vulnerability
 
 lemoGamePad is a **local-network** tool. It is designed for a trusted LAN or a
-direct USB/Bluetooth PAN link.
+direct USB tether link.
 
 By design:
 

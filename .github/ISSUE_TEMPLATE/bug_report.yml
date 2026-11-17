@@ -61,9 +61,8 @@ body:
       multiple: true
       options:
         - Wi-Fi
-        - Bluetooth PAN
         - USB tethering
-        - Phone-to-phone Bluetooth HID
+        - Bluetooth HID gamepad
         - Not applicable
 
   - type: textarea

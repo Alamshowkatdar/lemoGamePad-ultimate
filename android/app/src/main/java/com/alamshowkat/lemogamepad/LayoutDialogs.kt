@@ -198,6 +198,9 @@ internal object LayoutDialogs {
             setBackgroundColor(Color.argb(if (theme.dark) 210 else 150, 0, 0, 0))
             isClickable = true
             isFocusableInTouchMode = true
+            // The settings sheet uses 18dp elevation. Stay above it so dialogs
+            // added to the decor are not occluded where they overlap the sheet.
+            elevation = px(activity, 40).toFloat()
             setOnClickListener { remove(activity, this) }
             setOnKeyListener { _, keyCode, event ->
                 if (keyCode == KeyEvent.KEYCODE_BACK && event.action == KeyEvent.ACTION_UP) {

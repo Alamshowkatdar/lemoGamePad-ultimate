@@ -24,6 +24,8 @@ __pycache__/
 release/
 lemoGamePad-qr-*.png
 pc/lemoGamePad-qr-*.png
+lemoGamePad-web-qr-*.png
+pc/lemoGamePad-web-qr-*.png
 
 # --- editors / OS ----------------------------------------------------------
 .vscode/

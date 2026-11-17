@@ -24,8 +24,8 @@ At minimum:
 - Linux: `pc/linux/install-linux.sh` on a clean user, `run.sh`, `test_linux_pad.py`,
   and capture on the session type you use (X11 or Wayland).
 - Android: install over the previous release (same signing key), rotate,
-  background/foreground, toggle each transport, and pair a phone-to-phone HID
-  host.
+  background/foreground, toggle Wi-Fi and USB transports, and pair a PC and a
+  phone as Bluetooth HID hosts.
 
 ## 3. Tag and publish
 

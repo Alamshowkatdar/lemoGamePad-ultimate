@@ -54,6 +54,11 @@ class MainActivity : Activity() {
     private lateinit var phoneGamepad: BluetoothHidGamepad
     private var phoneGamepadActive = false
     private var lastPhoneVersion = -1L
+    private var btWasConnected = false
+    private var btPermissionAsked = false
+    /** Host address the user picked, kept across the Nearby-devices permission prompt. */
+    private var pendingConnectAddress: String? = null
+    @Volatile private var btStatus = "Bluetooth gamepad is off — tap SELECT HOST to connect"
 
     private val handler = Handler(Looper.getMainLooper())
     private var batteryReceiver: BroadcastReceiver? = null
@@ -73,11 +78,19 @@ class MainActivity : Activity() {
             // does not cost a wakeup every frame.
             val connected = phoneGamepad.isConnected
             if (connected) {
+                // The host may have connected after the last state change;
+                // force one report so it does not start with a stale pad.
+                if (!btWasConnected) {
+                    btWasConnected = true
+                    lastPhoneVersion = -1L
+                }
                 val version = view.state.version
                 if (version != lastPhoneVersion) {
                     lastPhoneVersion = version
                     phoneGamepad.send(view.state)
                 }
+            } else {
+                btWasConnected = false
             }
             handler.postDelayed(this, if (connected) 16L else 250L)
         }
@@ -108,19 +121,35 @@ class MainActivity : Activity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
         prefs = getSharedPreferences(PrefsKeys.FILE, MODE_PRIVATE)
-        layouts = LayoutStore(prefs)
+        // Each experience owns its own live layout and named presets, so
+        // swapping from racing to FPS never disturbs the controller pad.
+        val startMode = ControllerMode.fromId(prefs.getString(PrefsKeys.MODE, null))
+        layouts = LayoutStore(prefs, startMode)
         if (layouts.activeName() == null) layouts.clearActive()
         phoneGamepad = BluetoothHidGamepad(applicationContext) { message ->
-            handler.post { if (!isFinishing) toast(message) }
+            val error = message.startsWith("!")
+            btStatus = message.removePrefix("!")
+            if (error) handler.post { if (!isFinishing) toast(message.removePrefix("!")) }
+            handler.post { settingsPanel?.refreshBluetoothGamepad() }
         }
 
         view = GamepadView(this)
+        view.mode = startMode
         view.theme = Themes.byId(prefs.getString(PrefsKeys.THEME, null))
         view.faceLabels = if (prefs.getString(PrefsKeys.FACES, "ps") == "xbox") {
             FaceLabels.XBOX
         } else {
             FaceLabels.PLAYSTATION
         }
+        view.gyroSteering = prefs.getBoolean(PrefsKeys.GYRO_STEER, true)
+        view.gyroAim = prefs.getBoolean(PrefsKeys.GYRO_AIM, true)
+        view.steerSensitivity = prefs.getInt(PrefsKeys.STEER_SENS, 55) / 100f
+        view.steerDeadzone = prefs.getInt(PrefsKeys.STEER_DEADZONE, 5) / 100f
+        view.steerCurve = prefs.getInt(PrefsKeys.STEER_CURVE, 25) / 100f
+        view.aimSensitivity = prefs.getInt(PrefsKeys.AIM_SENS, 55) / 100f
+        view.touchpadSensitivity = prefs.getInt(PrefsKeys.TOUCHPAD_SENS, 50) / 100f
+        view.controlAlpha = prefs.getInt(PrefsKeys.PAD_ALPHA, 100) / 100f
+        view.faceSpacing = prefs.getInt(PrefsKeys.FACE_SPACING, 100) / 100f
         view.applyLayout(layouts.activeData())
         view.deadzone = prefs.getInt(PrefsKeys.DEADZONE, 12) / 100f
         view.stickCurve = prefs.getInt(PrefsKeys.STICK_CURVE, 0) / 100f
@@ -170,8 +199,10 @@ class MainActivity : Activity() {
         link.start()
         registerBattery()
         handler.post(ticker)
+        view.startMotion()
         if (screenEnabled) showScreenPreview(true)
-        // The HID ticker is stopped while backgrounded; restart it here.
+        // Bluetooth stays off until the user picks a host in the settings card.
+        // If a gamepad was already started explicitly, resume its report ticker.
         if (phoneGamepadActive) {
             handler.removeCallbacks(phoneGamepadTicker)
             handler.post(phoneGamepadTicker)
@@ -192,11 +223,15 @@ class MainActivity : Activity() {
         handler.removeCallbacks(rumbleTicker)
         vibrator()?.cancel()
         view.resetInputs()
+        view.stopMotion()
         link.stop()
-        // Release every button on the game host before parking the ticker.
+        // Release every button on the selected host before parking the ticker.
+        // The profile stays registered only because the user started it; a new
+        // app launch starts with it off and does not connect by itself.
         handler.removeCallbacks(phoneGamepadTicker)
         lastPhoneVersion = -1L
-        if (phoneGamepadActive) phoneGamepad.send(view.state)
+        btWasConnected = false
+        if (phoneGamepadActive) phoneGamepad.sendNeutral()
         // Keep the little window on screen, but drop the TCP link while the
         // app is in the background so it does not burn battery.
         screenView?.stopStreaming()
@@ -259,7 +294,12 @@ class MainActivity : Activity() {
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode != REQ_BT) return
-        settingsPanel?.onBluetoothPermissionResult(!BluetoothPairing.permissionsMissing(this))
+        val granted = !BluetoothHidSupport.permissionsMissing(this)
+        btPermissionAsked = false
+        if (granted) {
+            pendingConnectAddress?.let { connectBluetoothHost(it) }
+        }
+        settingsPanel?.onBluetoothPermissionResult(granted)
     }
 
     // ------------------------------------------------------------------ status
@@ -267,6 +307,10 @@ class MainActivity : Activity() {
         link.refreshConnectionState()
         val host = link.host
         when {
+            host == null && phoneGamepadActive && phoneGamepad.isConnected -> {
+                val name = phoneGamepad.connectedName?.uppercase() ?: "HOST"
+                view.setStatus("BLUETOOTH GAMEPAD  ·  $name", GamepadView.STATUS_OK)
+            }
             host == null -> view.setStatus("TAP TO CONNECT", GamepadView.STATUS_IDLE)
             link.connected -> {
                 val name = link.serverName.ifBlank { host }
@@ -540,9 +584,22 @@ class MainActivity : Activity() {
 
     private fun persistLayout() {
         val snapshot = view.layoutSnapshot()
-        prefs.edit().putString(PrefsKeys.LAYOUT, snapshot).apply()
+        prefs.edit().putString(layoutPrefKey(view.mode), snapshot).apply()
         // Keep the named preset in sync when the user tweaks an active layout.
         layouts.updateActive(snapshot)
+    }
+
+    /** Swaps the on-screen experience, loading that mode's own layout. */
+    private fun switchMode(mode: ControllerMode) {
+        if (mode == view.mode) return
+        if (view.editMode) exitEditing(save = true)
+        persistLayout()
+        prefs.edit().putString(PrefsKeys.MODE, mode.id).apply()
+        view.mode = mode
+        layouts = LayoutStore(prefs, mode)
+        view.applyLayout(layouts.activeData())
+        view.startMotion()
+        refreshStatus()
     }
 
     private fun showEditBar() {
@@ -666,6 +723,8 @@ class MainActivity : Activity() {
 
                 override fun onLayoutSaved() = persistLayout()
 
+                override fun onModeChanged(mode: ControllerMode) = switchMode(mode)
+
                 override fun onThemeChanged(theme: PadTheme) {
                     screenView?.accent = theme.accent
                     refreshStatus()
@@ -705,53 +764,113 @@ class MainActivity : Activity() {
                 }
 
                 override fun bluetoothPermissionsMissing(): Boolean =
-                    BluetoothPairing.permissionsMissing(this@MainActivity)
+                    BluetoothHidSupport.permissionsMissing(this@MainActivity)
 
                 override fun requestBluetoothPermissions() {
-                    BluetoothPairing.requestPermissions(this@MainActivity, REQ_BT)
+                    btPermissionAsked = true
+                    BluetoothHidSupport.requestPermissions(this@MainActivity, REQ_BT)
                 }
 
-                override fun onStartPhoneGamepad() {
-                    if (phoneGamepadActive) {
-                        toast("Phone gamepad is already running")
-                        return
-                    }
-                    if (BluetoothPairing.permissionsMissing(this@MainActivity)) {
-                        BluetoothPairing.requestPermissions(this@MainActivity, REQ_BT)
-                        toast("Allow Nearby devices, then tap START GAMEPAD again")
-                        return
-                    }
-                    if (!BluetoothPairing.status(this@MainActivity).enabled) {
-                        toast("Turn on Bluetooth, then start the phone gamepad")
-                        return
-                    }
-                    if (!phoneGamepad.start()) return
-                    phoneGamepadActive = true
-                    lastPhoneVersion = -1L
-                    handler.removeCallbacks(phoneGamepadTicker)
-                    handler.post(phoneGamepadTicker)
-                    if (BluetoothPairing.requestDiscoverable(this@MainActivity)) {
-                        toast("Accept the Bluetooth prompt, then pair Lemo GamePad from the game phone")
-                    } else {
-                        toast("Open Bluetooth settings on the game phone and pair Lemo GamePad")
+                override fun onBluetoothPair() {
+                    if (!BluetoothHidSupport.openSettings(this@MainActivity)) {
+                        toast("Open Settings › Connected devices › Pair new device")
                     }
                 }
 
-                override fun onStopPhoneGamepad() {
-                    phoneGamepadActive = false
-                    handler.removeCallbacks(phoneGamepadTicker)
-                    phoneGamepad.stop()
-                    toast("Phone gamepad stopped")
+                override fun onBluetoothDiscoverable() {
+                    makeDiscoverable(manual = true)
                 }
 
-                override fun phoneGamepadRunning(): Boolean = phoneGamepadActive
+                override fun bluetoothHosts(): List<BluetoothHost> = phoneGamepad.hosts()
 
-                override fun phoneGamepadConnected(): Boolean =
+                override fun onBluetoothConnect(address: String) {
+                    connectBluetoothHost(address)
+                }
+
+                override fun onBluetoothDisconnect() {
+                    disconnectBluetoothHost()
+                }
+
+                override fun bluetoothGamepadRunning(): Boolean =
+                    phoneGamepadActive && phoneGamepad.isRunning
+
+                override fun bluetoothGamepadConnected(): Boolean =
                     phoneGamepadActive && phoneGamepad.isConnected
+
+                override fun bluetoothGamepadName(): String =
+                    if (phoneGamepadActive) phoneGamepad.connectedName ?: "" else ""
+
+                override fun bluetoothGamepadStatus(): String = btStatus
             },
         )
         settingsPanel = panel
         panel.show(root)
+    }
+
+    // ------------------------------------------------------------- bluetooth
+    /**
+     * Starts the HID profile (if needed) and connects to one host the user
+     * picked. Nothing is registered or connected on app launch. Permission is
+     * requested once; the address survives the prompt so the user does not have
+     * to pick twice.
+     */
+    private fun connectBluetoothHost(address: String) {
+        if (!::phoneGamepad.isInitialized) return
+        val status = BluetoothHidSupport.status(this)
+        if (!status.supported) {
+            btStatus = "No Bluetooth adapter on this phone"
+            settingsPanel?.refreshBluetoothGamepad()
+            return
+        }
+        if (!status.permitted) {
+            btStatus = "Nearby devices access is off — granting access…"
+            pendingConnectAddress = address
+            if (!btPermissionAsked) {
+                btPermissionAsked = true
+                BluetoothHidSupport.requestPermissions(this, REQ_BT)
+            }
+            settingsPanel?.refreshBluetoothGamepad()
+            return
+        }
+        if (!status.enabled) {
+            btStatus = "Turn on Bluetooth to use the Bluetooth gamepad"
+            settingsPanel?.refreshBluetoothGamepad()
+            return
+        }
+        pendingConnectAddress = null
+        phoneGamepad.connect(address)
+        if (!phoneGamepadActive) {
+            phoneGamepadActive = true
+            lastPhoneVersion = -1L
+            btWasConnected = false
+        }
+        handler.removeCallbacks(phoneGamepadTicker)
+        handler.post(phoneGamepadTicker)
+        settingsPanel?.refreshBluetoothGamepad()
+    }
+
+    /** Drops the picked host only; the profile stays ready for another pick. */
+    private fun disconnectBluetoothHost() {
+        pendingConnectAddress = null
+        phoneGamepad.disconnect()
+        btStatus = "Bluetooth gamepad disconnected — tap SELECT HOST to connect"
+        settingsPanel?.refreshBluetoothGamepad()
+    }
+
+    private fun makeDiscoverable(manual: Boolean) {
+        if (BluetoothHidSupport.permissionsMissing(this)) {
+            btPermissionAsked = true
+            BluetoothHidSupport.requestPermissions(this, REQ_BT)
+            if (manual) toast("Allow Nearby devices, then tap MAKE DISCOVERABLE again")
+            return
+        }
+        if (BluetoothHidSupport.requestDiscoverable(this)) {
+            if (manual) {
+                toast("Visible as “Lemo GamePad” for 5 minutes — pair, then pick the host here")
+            }
+        } else if (manual) {
+            toast("Bluetooth is not available")
+        }
     }
 
     // ---------------------------------------------------------------- battery

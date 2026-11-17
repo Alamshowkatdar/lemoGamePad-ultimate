@@ -1,4 +1,4 @@
-# Review notes — 1.3.6 / 1.3.7 / 1.4.0 / 1.5.0 / 1.6.0 / 1.6.1 / 1.6.2 / 1.6.3 / 1.6.4 / 1.6.5 / 1.6.6 / 1.6.7 / 1.6.8 / 1.6.9 / 1.6.10 / 1.6.11 / 1.6.12
+# Review notes — 1.3.6 / 1.3.7 / 1.4.0 / 1.5.0 / 1.6.0 / 1.6.1 / 1.6.2 / 1.6.3 / 1.6.4 / 1.6.5 / 1.6.6 / 1.6.7 / 1.6.8 / 1.6.9 / 1.6.10 / 1.6.11 / 1.6.12 / 1.6.13 / 1.7.0
 
 A pass over the whole app (Kotlin sources, manifest, Gradle files, CI) focused on
 bugs, UI smoothness, and making the phone-to-phone Bluetooth gamepad honest.
@@ -162,14 +162,18 @@ ambiguous (`K_FACE` has no special case).
 
 ## Known limits
 
-- Phone-to-phone HID needs **Android 9+** on the controller phone, and the host
-  must accept external HID controllers (almost all do).
+- Bluetooth HID needs **Android 9+** on the controller phone, and the host must
+  accept standard HID gamepads (PCs and Android phones almost all do).
 - The **PS** button is not forwarded over HID; hosts use it for *Home*.
-- Bluetooth PAN and USB-to-PC still depend on Android tethering.
+- USB-to-PC still depends on Android USB tethering. Bluetooth is no longer a
+  network transport: 1.6.13 removed Bluetooth PAN entirely.
 - `BluetoothHidDevice` registration depends on the phone's Bluetooth stack; some
-  vendor ROMs report *gamepad mode* but never expose the device to other phones.
-  The status line now distinguishes "broadcasting" from "connected", so that
-  failure is visible instead of silent.
+  vendor ROMs do not ship HID device mode. `BluetoothHidGamepad` reports that
+  instead of pretending to work, and the settings card shows the live
+  *ready / connected* state so the failure is visible.
+- On Windows the Bluetooth pad is a DirectInput HID controller, not XInput, so
+  this path has no rumble, screen preview or multi-phone slots. XInput games
+  still need the Wi-Fi/USB server link.
 
 ---
 
@@ -943,3 +947,178 @@ address is refreshed.
 `192.168.0.102` and then `192.168.31.23`: the first refresh reports no change,
 the second reports a change, the announcement prints the new URL and drops the
 old one, and the startup banner keeps its previous output.
+
+---
+
+## Bluetooth HID rewrite (1.6.13)
+
+> The automatic registration/reconnect behaviour described in this section was
+> replaced in 1.7.0 with the explicit host selection described below. It is kept
+> here as the history of the HID rewrite.
+
+The old Bluetooth support was two unrelated systems that shared a permission
+prompt. One was a **Personal Area Network**: the PC joined the phone's `bnep*`
+network and the normal UDP client ran over it. It worked, but it needed a buried
+tethering toggle on the phone, a "Join a Personal Area Network" command on the
+PC, and it saturated at ~3 Mbps, so screen preview had to be turned off. The
+other was a **phone-to-phone HID gamepad** that had to be started by hand from
+the settings sheet every time.
+
+1.6.13 removes the PAN path completely: `Transport.BLUETOOTH`, the `bnep*`
+classification, the BT readiness dot, the PAN address probe, the tethering card
+and `BluetoothPairing.kt` are gone. Wi-Fi and USB keep the same server and the
+same UDP protocol. The Bluetooth permission and discoverability helpers moved
+into `BluetoothHidSupport.kt`, which now only covers HID: adapter state, the
+Android 12+ *Nearby devices* runtime permissions, a bonded-host check and the
+system discoverable prompt.
+
+`BluetoothHidGamepad.kt` was rewritten around "pair once, then it just works".
+
+- **Automatic registration.** `MainActivity.ensureBluetoothGamepad()` runs on
+  every `onResume()`. It checks for an adapter, the runtime permission and
+  Bluetooth being on, then registers the HID profile. There is no START/STOP
+  button. Leaving the app sends one neutral report and parks the report ticker,
+  but keeps the profile registered so a bonded host can reconnect.
+- **Automatic reconnect.** After registration, and after any disconnect, the
+  gamepad pages bonded `COMPUTER` and `PHONE` devices, newest-known first. A
+  short backoff (1.2 s, 2.4 s, … capped at 10 s) stops after six attempts; a
+  paired host that is switched on later still connects because the host pages
+  the phone.
+- **New report layout.** The report is nine bytes, no report ID:
+  `buttons lo, buttons hi, hat, X, Y, Rx, Ry, Z, Rz`. The descriptor exposes 16
+  buttons and an 8-way hat switch instead of four extra button bits, so
+  DirectInput games see a real d-pad. Sticks are signed 8-bit; L2/R2 are analog
+  `Z`/`Rz` (0–255) as well as buttons 7/8. `Y` and `Ry` are negated from the
+  app's wire convention so pushing up moves up on the host.
+- **Neutral on connect.** A new host can otherwise inherit the last pressed
+  button from a previous gamepad, so both `onGetReport` and the first tick after
+  `STATE_CONNECTED` send the centred report.
+
+The PS button is still deliberately absent from `hidButtons()`: Windows and
+Android treat HID button 13 as *Home* / *Guide* and would leave the game. The
+settings card is now "BLUETOOTH GAMEPAD": a live status line, **BLUETOOTH
+SETTINGS**, **MAKE DISCOVERABLE** and, only while the Android 12+ permission is
+missing, **ALLOW NEARBY DEVICES**. The old manual START/STOP card and the PAN
+pairing card were removed.
+
+### Verification
+
+`:app:compileDebugKotlin` passes (only the pre-existing Camera1 deprecation
+warnings). A full `:app:assembleDebug` was run after the version bump. The
+remaining `grep -ri "bluetooth|PAN|bnep|tether"` hits are either Wi-Fi/USB
+tethering (still real) or the new HID documentation.
+
+## Premium controller modes (1.7.0)
+
+1.7.0 turns the single gamepad canvas into three purpose-built experiences
+while leaving every wire format alone. The design constraint throughout was
+that the PC never has to learn a new protocol: all three modes still publish
+the same `PadState` through `Link`, so UDP on 9876, the TCP video stream on
+9877 and the 9-byte HID report are byte-for-byte compatible with 1.6.13.
+
+### Mode-specific mappings
+
+Each `ControllerMode` maps its controls onto the **same** `Proto` bits and axes
+rather than inventing new ones:
+
+| Mode | Control | Wire |
+| --- | --- | --- |
+| Racing | steering (touch or gyro) | left X |
+| Racing | gas / brake | analog R2 / L2 |
+| Racing | nitro / handbrake | R1 / L1 |
+| Racing | gear + / gear − / camera / reset | TRI / CROSS / SQR / CIR |
+| Racing | pause / view | START / SELECT |
+| FPS | camera pad / gyro aim | right X/Y |
+| FPS | fire / aim | analog R2 / L2 |
+| FPS | reload / jump / crouch / swap | SQR / CROSS / CIR / TRI |
+| FPS | sprint / pause | L3 / START |
+
+`MotionInput` re-registers only when the *set* of required sensors changes, so
+switching between tilt steering and gyro aim does not churn the sensor
+listeners. It centres on the first sample and also exposes an explicit
+`calibrate()` for the Racing calibration action. Both handlers clear their
+registration flags on `stop()`.
+
+### Theme system
+
+The ten palettes now carry more than colours: `border` scales stroke weight,
+`shadow` scales every glow alpha (AMOLED sets it to 0 for a flat look),
+`tracking` scales letter spacing on all tracked labels, and `backdrop` selects
+one of `grid`, `scan`, `speed`, `frost`, `glow` or `none`. Face-button colours
+are **fixed** per family (`Iconic`) and are never derived from the palette, so
+A/B/X/Y and Cross/Circle/Square/Triangle stay recognisable in every theme.
+
+`previewTheme()` deliberately does **not** write `PrefsKeys.THEME`; it opens a
+dedicated canvas dialog and commits only when APPLY is tapped. The preview
+overlay is lifted above the settings sheet with an elevation greater than the
+sheet's 18 dp — without that, the right half of APPLY sits under the sheet in
+landscape and taps there are swallowed.
+
+### Layouts
+
+`LayoutStore` scopes named layouts per mode. A node is only marked customized
+when it is actually moved, resized or hidden, so loading a default-position
+layout does not break face-button spacing. Live prefs (`pad_alpha`,
+`face_spacing`) stay global; geometry is per mode.
+
+### Bluetooth HID descriptor fix
+
+The 1.6.13 report descriptor declared `Usage Minimum (1) / Usage Maximum (16)`
+for the button collection. That is fine for Windows DirectInput and Android,
+but Linux maps generic HID button *N* to `BTN_GAMEPAD + N - 1`, i.e.
+`3 → BTN_C`, `4 → BTN_X`, `5 → BTN_Y`, `7 → BTN_TL`. Because the report packs
+bits as `A, B, X, Y, LB, RB, LT, RT, Back, Start, LS, RS`, this put Square on
+`BTN_C`, Triangle on `BTN_X`, L1 on `BTN_Y`, R1 on `BTN_Z`, L2/R2 on
+`BTN_TL`/`BTN_TR`, Back/Start on `BTN_TL2`/`BTN_TR2` and L3/R3 on
+`BTN_SELECT`/`BTN_START`. Games reading the standard gamepad codes therefore
+saw the wrong controls. The descriptor now lists all 16 usages explicitly in
+report-bit order (`1, 2, 4, 5, 7, 8, 9, 10, 11, 12, 14, 15, 3, 6, 13, 16`), so
+every host agrees on which bit is which button. The report layout itself is
+untouched. Note that BlueZ caches the descriptor for a bond; an existing host
+must forget/re-pair the phone to pick up the new one.
+
+### Explicit Bluetooth host selection (1.7.0)
+
+The old "connect on every resume" flow was too eager: simply opening the app
+could attach the phone to whichever paired host happened to be nearby. It is
+gone. `MainActivity.onResume()` no longer calls `ensureBluetoothGamepad()`;
+the HID profile is not registered and no host is paged until the user taps
+**SELECT HOST** in the Bluetooth card. That callback was replaced by
+`connectBluetoothHost(address)`, which checks adapter state and the Nearby
+devices permission, remembers the picked address across the permission prompt,
+and calls `BluetoothHidGamepad.connect(address)`.
+
+`BluetoothHidGamepad.connect()` starts the profile only if it is not running,
+then hands the address to `Api28.connect()`. The old `connectBonded()` loop and
+its backoff timer were removed: every host call is now a single `hid.connect()`
+to the address the user chose. `disconnect()` drops only that host and leaves
+the profile ready for another pick, while `stop()` still unregisters on app
+destruction. There is no blanket reconnect on disconnect, on app resume, or on
+discoverability.
+
+The settings card now has **SELECT HOST** and **DISCONNECT** above the existing
+**BLUETOOTH SETTINGS** and **MAKE DISCOVERABLE** actions. SELECT HOST opens a
+themed, above-sheet picker listing only bonded `COMPUTER`/`PHONE` devices by
+name and address suffix; with no bonded host it offers to open Bluetooth
+settings instead. The picker is read-only until a row is tapped, so it cannot
+cause a connection by itself. `BluetoothHidSupport.hasBondedHost()` and the
+`bt_pair_prompted` preference were removed because the first-launch prompt is
+no longer automatic.
+
+### Verification
+
+`:app:assembleDebug` passes. On a physical SM_S928B the explicit flow was
+checked after a fresh install: launching the app left `archlinux` disconnected;
+SELECT HOST listed the bonded computer and tapped once to connect it; the HID
+input node appeared on the host; DISCONNECT removed that node while leaving the
+phone's unrelated calls/audio profiles connected (per the earlier decision to
+leave those alone). The 9-byte report and button descriptor are unchanged from
+the mapping verified in the previous section.
+
+On a physical SM_S928B, UDP output was decoded
+for every mapped control in all three modes: manual steering ~32719 on left X,
+gas/brake analog L2/R2 at 242, all Racing buttons, FPS camera swipe on right
+X with decay to zero, fire/aim analog triggers, face actions, sprint and pause.
+Theme preview CANCEL/APPLY, all settings cards, mode chips and the studio card
+were verified through UI dumps; APPLY was re-tested at the previously occluded
+coordinate after the elevation fix.

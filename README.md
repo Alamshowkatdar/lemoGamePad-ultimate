@@ -2,7 +2,7 @@
 
 **Turn an Android phone into a gamepad for Windows or Linux PCs, or Android phone games.**
 
-Wi-Fi-to-PC · Bluetooth HID to Android phones · Bluetooth PAN · USB · PC screen preview · **browser pad**
+Wi-Fi-to-PC · Bluetooth HID gamepad (PC + Android) · USB · PC screen preview · **browser pad**
 
 by **Alam showkat**
 
@@ -13,7 +13,7 @@ by **Alam showkat**
 
 [**Download the latest release →**](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) · [Report an issue](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/issues)
 
-**App source version:** 1.6.12. Download the signed APK and the Windows/Linux server from the [latest release](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) — use **1.3.7.2 or newer** on Linux, which fixes the swapped X/Y face buttons. The release workflow also publishes a `SHA256SUMS.txt` so you can verify your download.
+**App source version:** 1.7.0. Download the signed APK and the Windows/Linux server from the [latest release](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) — use **1.3.7.2 or newer** on Linux, which fixes the swapped X/Y face buttons. The release workflow also publishes a `SHA256SUMS.txt` so you can verify your download.
 
 ---
 
@@ -33,18 +33,60 @@ the PC** — the server is a single `.exe`. On Linux the receiver needs no root
 either, only access to `/dev/uinput`.
 
 ```
-┌─────────────────┐   Wi-Fi / Bluetooth PAN / USB   ┌────────────────────────┐   ┌──────────────┐
-│  Android phone  │ ──────────────────────────────▶ │  lemoGamePad-server    │──▶│ virtual pads │
-│  gamepad + PiP  │ ◀────────────────────────────── │  (Windows .exe/Linux)  │   │  1-8 pads    │
-└─────────────────┘      PC screen JPEG stream      └────────────────────────┘   └──────────────┘
+┌─────────────────┐        Wi-Fi / USB          ┌────────────────────────┐   ┌──────────────┐
+│  Android phone  │ ──────────────────────────▶ │  lemoGamePad-server    │──▶│ virtual pads │
+│  gamepad + PiP  │ ◀────────────────────────── │  (Windows .exe/Linux)  │   │  1-8 pads    │
+└─────────────────┘      PC screen JPEG stream   └────────────────────────┘   └──────────────┘
          ▲                                                            ▲
          └──────────────── up to 8 phones ────────────────────────────┘
+
+Bluetooth is a separate, server-less path: the phone advertises a standard HID
+gamepad and a PC or Android host reads it directly after pairing.
 ```
 
 > **lemoGamePad ultimate™** — trademark of **Alam showkat**.
 > App package: `com.alamshowkat.lemogamepad`.
 
-### What's new in 1.6.12
+### What's new in 1.7.0
+
+- **Three controller experiences in one app.** Switch between **Gamepad**,
+  **Racing** and **FPS** from the CONTROL CENTRE. Each mode has its own layout,
+  hints and motion settings.
+- **Racing** adds gyro/tilt steering with calibration, sensitivity, dead zone and
+  smoothing, plus analog gas/brake pedals, nitro, handbrake, gears, camera and
+  reset. Steering drives the left stick, pedals drive analog L2/R2.
+- **FPS** adds a customisable right-hand camera touchpad with swipe aim, optional
+  gyro aim, and dedicated fire, aim, reload, jump, crouch, sprint and swap
+  controls. Camera/gyro aim drives the right stick.
+- **Gamepad** gets Xbox ABXY or PlayStation symbols, sticks, d-pad, shoulders,
+  triggers and Start/Select/Home, with a one-tap Xbox/PlayStation face switch.
+- **Face buttons keep their iconic colours in every theme** — Xbox A green,
+  B red, X blue, Y yellow; PlayStation Cross blue, Circle red, Square pink,
+  Triangle green.
+- **Ten themes with preview-before-apply** — Midnight Black, Cyberpunk, Arctic,
+  AMOLED, Racing Red, Xbox, PlayStation, Minimal, Retro Arcade and Stealth.
+  Each has its own border weight, glow/shadow, letter spacing and backdrop.
+- **Customization Studio** — drag, pinch-resize or hide any control, save named
+  layouts per mode, duplicate/reset, and import or export layouts as text.
+- **All output protocols are unchanged** — UDP on 9876, video TCP on 9877 and
+  the 9-byte Bluetooth HID report all keep the same wire format.
+
+### What's new in 1.6.13
+
+- **Bluetooth is now a real, automatic HID gamepad.** The old Bluetooth PAN
+  transport — tethering, `bnep`, "Join a Personal Area Network" — is gone. The
+  phone advertises **Lemo GamePad** as a standard HID controller for a PC or
+  Android host, registers itself on launch, and reconnects to a bonded host by
+  itself. Pairing is the only manual step.
+- **New HID report layout** built from scratch: 16 buttons, an 8-way hat switch
+  so DirectInput games get a real d-pad, four signed stick axes and analog
+  L2/R2. Reports are released (neutral) when the app is backgrounded.
+- **Wi-Fi and USB are untouched** — same server, same protocol, same eight
+  players. Only the Bluetooth transport chip, PAN discovery and the tethering
+  card were removed.
+
+<details>
+<summary>1.6.12</summary>
 
 - **The browser pad recovers from a network change** — the printed Web pad URL,
   the console QR and the saved `lemoGamePad-web-qr-<ip>.png` files used to be
@@ -54,6 +96,8 @@ either, only access to `/dev/uinput`.
   new addresses within about ten seconds, prints the current `Web pad` URL and
   rewrites the QR images.
 - Wire-compatible with 1.3 and later apps and servers.
+
+</details>
 
 <details>
 <summary>1.6.11</summary>
@@ -151,7 +195,12 @@ Everything is on the [latest release](https://github.com/Alamshowkatdar/lemoGame
 
 1. Install the PC receiver — [Windows](docs/INSTALL-WINDOWS.md) or [Linux](docs/INSTALL-LINUX.md).
 2. Install the [Android app](docs/ANDROID.md#install-the-android-app) and pair it with the QR code shown by the server.
-3. Pick a link — Wi-Fi (recommended), Bluetooth PAN, or USB — and play.
+3. Pick a link — Wi-Fi (recommended) or USB — and play.
+
+**Prefer no PC server?** The app is also a standard Bluetooth HID gamepad. Pair
+**Lemo GamePad** once from a PC or Android host and it appears as a real
+controller — no driver, tethering or PC program. See
+[Bluetooth gamepad](#bluetooth-gamepad-no-pc-server).
 
 **No Android app?** Open the **Web pad** URL printed by the server on any
 phone, tablet or laptop that is on the same Wi-Fi. It is a full touch/keyboard
@@ -163,6 +212,21 @@ See [Browser pad](docs/WEB.md).
 > to cross the internet. Never expose UDP 9876 / TCP 9877 / TCP 9878 to the
 > internet or use the server on an untrusted network. See
 > [SECURITY.md](SECURITY.md) and [Limitations](docs/LIMITATIONS.md).
+
+## Bluetooth gamepad (no PC server)
+
+The phone can also act as a normal Bluetooth HID gamepad. This path does not use
+`lemoGamePad-server`, the network protocol or USB/Wi-Fi tethering.
+
+1. Open the app (Android 9+). It registers **Lemo GamePad** automatically.
+2. On the host — Windows, Linux or another Android phone — open Bluetooth
+   settings and pair **Lemo GamePad** once.
+3. Play. The app reconnects to the bonded host on later launches, and keeps the
+   profile registered while it is running.
+
+On Windows the pad appears as a standard DirectInput HID controller, not an
+XInput one, so games that only read XInput should use the Wi-Fi/USB server link
+instead. This mode has no rumble, screen preview or multi-phone slots.
 
 ## Browser pad
 
@@ -227,4 +291,4 @@ licenses are listed in [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md).
 
 ---
 
-**lemoGamePad ultimate™ © Alam showkat** · v1.6.12
+**lemoGamePad ultimate™ © Alam showkat** · v1.7.0

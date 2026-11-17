@@ -25,14 +25,17 @@ import kotlin.math.max
 import kotlin.math.min
 
 /**
- * How the phone reaches the PC. All three carry the same UDP protocol:
- * USB and Bluetooth simply expose a private network interface, so no extra
- * PC-side driver or serial code is needed.
+ * How the phone reaches the PC. Both links carry the same UDP protocol:
+ * USB simply exposes a private network interface, so no extra PC-side driver
+ * or serial code is needed.
+ *
+ * Bluetooth is deliberately absent: it is no longer a network link. The phone
+ * advertises itself as a standard HID gamepad and the host reads it directly,
+ * with no PC server in between.
  */
 enum class Transport(val label: String, val hint: String) {
     AUTO("AUTO", "Find the PC on any usable connection"),
     WIFI("WI-FI", "Phone and PC on the same Wi-Fi network"),
-    BLUETOOTH("BLUETOOTH", "Pair first, then enable Bluetooth tethering"),
     USB("USB", "Enable USB tethering in the phone's hotspot menu"),
 }
 
@@ -58,7 +61,7 @@ enum class InputRate(val id: String, val label: String, val hint: String) {
  * datagrams back.
  *
  * Android 10+ pins ordinary sockets to the *default* network, which silently
- * drops traffic to a Bluetooth/USB tether. Every socket this class creates is
+ * drops traffic to a USB tether. Every socket this class creates is
  * therefore bound with [Network.bindSocket] to the network that matches the
  * selected [transport]. Sockets are rebuilt whenever the target or link
  * changes, and a watchdog rebuilds them after a drop so a phone can always
@@ -334,9 +337,9 @@ class Link(private val state: PadState, context: Context? = null) {
 
     /**
      * Creates a fresh socket bound to the link for the current transport.
-     * Tether interfaces often have no ConnectivityManager Network, so binding
-     * to the interface's own address is the fallback that makes USB and
-     * Bluetooth work on those ROMs.
+     * USB tether interfaces often have no ConnectivityManager Network, so
+     * binding to the interface's own address is the fallback that makes them
+     * work on those ROMs.
      */
     private fun rebind() {
         if (!running) return
@@ -418,7 +421,7 @@ class Link(private val state: PadState, context: Context? = null) {
     /**
      * Keep Wi-Fi out of power save while a controller link is live. Acquiring
      * is idempotent; release happens on stop, disconnect and when the chosen
-     * link is not Wi-Fi (USB/Bluetooth tether does not need it).
+     * link is not Wi-Fi (a USB tether does not need it).
      */
     @Suppress("DEPRECATION")
     private fun updateWifiLock(active: Boolean) {
@@ -470,11 +473,6 @@ class Link(private val state: PadState, context: Context? = null) {
     }
 
     private fun transportOf(caps: NetworkCapabilities): Transport? {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-            caps.hasTransport(NetworkCapabilities.TRANSPORT_BLUETOOTH)
-        ) {
-            return Transport.BLUETOOTH
-        }
         if (caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)) return Transport.USB
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
             caps.hasTransport(NetworkCapabilities.TRANSPORT_USB)
@@ -829,7 +827,7 @@ class Link(private val state: PadState, context: Context? = null) {
 
     /**
      * One usable way out of the phone: a ConnectivityManager network and/or a
-     * raw interface address. Tether interfaces (`bnep*`, `rndis*`, `ncm*`) are
+     * raw interface address. USB tether interfaces (`rndis*`, `ncm*`) are
      * often invisible to ConnectivityManager, so the address is the important
      * part.
      */
@@ -857,8 +855,8 @@ class Link(private val state: PadState, context: Context? = null) {
      *
      * Three passes, cheapest first: broadcast on the selected link, broadcast
      * on every other link, then a unicast sweep of each subnet. The sweep is
-     * what rescues networks whose router drops broadcast traffic, and USB /
-     * Bluetooth tethers whose interface Android never exposes as a Network.
+     * what rescues networks whose router drops broadcast traffic, and USB
+     * tethers whose interface Android never exposes as a Network.
      */
     fun discover(timeoutMs: Int = 2600, callback: (String?, String?) -> Unit) {
         thread(name = "vpad-discover", isDaemon = true) {
@@ -873,9 +871,9 @@ class Link(private val state: PadState, context: Context? = null) {
 
             var sent = broadcast(wanted, offers, min(deadline, SystemClock.uptimeMillis() + 780))
 
-            // The chip may say BLUETOOTH while the PC is actually on Wi-Fi
-            // (very common after fiddling with transports). Widen before
-            // giving up instead of reporting "nothing found".
+            // The chip may say USB while the PC is actually on Wi-Fi (very
+            // common after fiddling with transports). Widen before giving up
+            // instead of reporting "nothing found".
             var widened = false
             if (offers.isEmpty() && want != Transport.AUTO && everything.size > wanted.size) {
                 widened = true
@@ -1035,9 +1033,9 @@ class Link(private val state: PadState, context: Context? = null) {
             return null
         }
         try {
-            // A real Network object is the cleanest binding, but tethers rarely
-            // have one - binding the socket to the interface's own address is
-            // what makes USB / Bluetooth work at all on those ROMs.
+            // A real Network object is the cleanest binding, but USB tethers
+            // rarely have one - binding the socket to the interface's own
+            // address is what makes USB work at all on those ROMs.
             var bound = false
             if (p?.network != null) {
                 try {
@@ -1127,7 +1125,7 @@ class Link(private val state: PadState, context: Context? = null) {
             out.add(InetAddress.getByName("255.255.255.255"))
         } catch (_: Exception) {
         }
-        if (p.transport == null || p.transport == Transport.BLUETOOTH || p.transport == Transport.USB) {
+        if (p.transport == null || p.transport == Transport.USB) {
             for (extra in TETHER_BROADCASTS) {
                 try {
                     out.add(InetAddress.getByName(extra))
@@ -1262,7 +1260,7 @@ class Link(private val state: PadState, context: Context? = null) {
 
     /**
      * Works out which physical link a destination IP belongs to, so the HUD can
-     * say USB / BLUETOOTH / WI-FI instead of just showing an address.
+     * say USB or WI-FI instead of just showing an address.
      */
     fun transportName(): String {
         val h = host ?: return ""
@@ -1306,7 +1304,6 @@ class Link(private val state: PadState, context: Context? = null) {
 
     private fun labelOf(t: Transport): String = when (t) {
         Transport.WIFI -> "Wi-Fi"
-        Transport.BLUETOOTH -> "BT"
         Transport.USB -> "USB"
         else -> "LAN"
     }
@@ -1379,24 +1376,22 @@ class Link(private val state: PadState, context: Context? = null) {
         }
 
         /**
-         * Android tether subnets in case a ROM hides the interface from
-         * ConnectivityManager: USB is 192.168.42.x, Bluetooth PAN 44.x,
-         * some vendors use 43.x or the Windows ICS 137.x range.
+         * Android USB tether subnets in case a ROM hides the interface from
+         * ConnectivityManager: 192.168.42.x is the usual range, some vendors
+         * use 43.x or the Windows ICS 137.x range.
          */
         val TETHER_BROADCASTS = arrayOf(
             "192.168.42.255",
             "192.168.43.255",
-            "192.168.44.255",
             "192.168.137.255",
         )
     }
 }
 
-/** Interface names Android uses for Wi-Fi, Bluetooth PAN and USB tethering. */
+/** Interface names Android uses for Wi-Fi and USB tethering. */
 internal fun classifyInterface(name: String): Transport? {
     val n = name.lowercase()
     return when {
-        n.startsWith("bnep") || n.startsWith("bt-pan") || n.startsWith("bt0") -> Transport.BLUETOOTH
         n.startsWith("rndis") || n.startsWith("usb") || n.startsWith("ncm") -> Transport.USB
         n.startsWith("wlan") || n.startsWith("wl") || n.startsWith("ap") ||
             n.startsWith("swlan") || n.startsWith("p2p") ||

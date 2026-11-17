@@ -755,7 +755,7 @@ class VideoClient:
             # Bound kernel buffering so slow phones don't accumulate seconds of
             # stale video behind the one-frame application queue.
             self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 32 * 1024)
-            # Long enough for a weak Wi-Fi / Bluetooth link to drain one frame.
+            # Long enough for a weak Wi-Fi / USB link to drain one frame.
             self.sock.settimeout(5.0)
             while self.alive and self.server.running:
                 try:
@@ -788,16 +788,19 @@ class VideoServer:
     def __init__(
         self,
         port: int,
-        fps: int = 20,
-        width: int = 800,
-        quality: int = 50,
+        fps: int = 60,
+        width: int = 480,
+        quality: int = 42,
         max_viewers: int = 4,
     ):
         self.port = port
-        self.fps = max(1, min(fps, 30))
-        # The "high" profile is capped at 1920 px, so a larger balanced width
-        # would make the sharper profile lower-resolution than the default.
-        self.width = max(160, min(width, 1920))
+        # 60 fps is the smoothness-first ceiling. Allowing a higher CLI value
+        # would only make the capture loop encode frames the phone cannot show.
+        self.fps = max(1, min(fps, 60))
+        # All three profiles are derived from this balanced width. HIGH is
+        # 1.25x, LOW is 0.625x, so keeping the base moderate leaves headroom for
+        # a steady 60 fps encode instead of dropping frames at 1080p.
+        self.width = max(160, min(width, 1280))
         self.quality = max(20, min(quality, 90))
         self.max_viewers = max(1, max_viewers)
         self.enabled = False
@@ -817,17 +820,18 @@ class VideoServer:
             return len(self._clients)
 
     def _profile_options(self, profile: str) -> tuple[int, int, int]:
+        """All profiles target the same 60 fps cadence; only sharpness varies."""
         if profile == "low":
             return (
-                max(1, round(self.fps * 0.75)),
-                max(160, self.width // 2),
-                max(20, self.quality - 20),
+                self.fps,
+                max(160, round(self.width * 0.625)),
+                max(20, self.quality - 12),
             )
         if profile == "high":
             return (
-                min(30, max(self.fps, round(self.fps * 1.25))),
-                min(1920, max(self.width, round(self.width * 1.5))),
-                min(90, self.quality + 20),
+                self.fps,
+                min(1280, round(self.width * 1.25)),
+                min(75, self.quality + 10),
             )
         return self.fps, self.width, self.quality
 
@@ -978,8 +982,15 @@ class VideoServer:
             print(f"  !! {self.error}")
             return
 
-        resampling = getattr(Image, "Resampling", Image).BILINEAR
+        # Capture and JPEG encoding are on this thread; ask the OS to schedule
+        # it ahead of background work just like the UDP input loop.
+        _raise_thread_priority()
+        # BOX is roughly 40% faster than BILINEAR when downscaling a full
+        # 1080p grab, which is the difference between a steady 60 fps and 40.
+        resampling = getattr(Image, "Resampling", Image).BOX
         frame_index = 0
+        deadline = time.monotonic()
+        last_target_fps = 0
 
         try:
             capture, notes = open_screen_capture()
@@ -999,6 +1010,8 @@ class VideoServer:
                     # Nobody is watching: do not burn CPU capturing.
                     time.sleep(0.2)
                     frame_index = 0
+                    deadline = time.monotonic()
+                    last_target_fps = 0
                     continue
 
                 groups: dict[str, list[VideoClient]] = {}
@@ -1007,10 +1020,34 @@ class VideoServer:
                 options = {profile: self._profile_options(profile) for profile in groups}
                 target_fps = max(item[0] for item in options.values())
                 interval = 1.0 / target_fps
-                started = time.monotonic()
+                if target_fps != last_target_fps:
+                    deadline = time.monotonic()
+                    last_target_fps = target_fps
+
+                # Fixed cadence: sleep to the next 1/60 s slot instead of
+                # measuring the previous frame and sleeping the remainder.
+                # After a stall, jump to a future slot rather than firing a
+                # burst of stale frames that the phone would only discard.
+                now = time.monotonic()
+                if now < deadline:
+                    wait = deadline - now
+                    # Sleeping to the exact deadline leaves ~1 ms of scheduler
+                    # slack on Linux, enough to turn 60 fps into 55. Sleep until
+                    # 2 ms out, then spin the final slice.
+                    if wait > 0.003:
+                        time.sleep(wait - 0.002)
+                    while time.monotonic() < deadline:
+                        pass
+                else:
+                    missed = int((now - deadline) / interval) + 1
+                    deadline += missed * interval
 
                 try:
                     img = capture.grab()
+                    # A transient failure must not permanently disable the
+                    # browser /screen endpoint via a sticky error string.
+                    if self.error:
+                        self.error = ""
                     frame_index += 1
 
                     for profile, viewers in groups.items():
@@ -1043,11 +1080,14 @@ class VideoServer:
                         self.error = message
                         print(f"  !! {message}")
                     time.sleep(0.5)
+                    deadline = time.monotonic()
                     continue
 
-                elapsed = time.monotonic() - started
-                if elapsed < interval:
-                    time.sleep(interval - elapsed)
+                deadline += interval
+                lateness = time.monotonic() - deadline
+                if lateness > interval:
+                    skipped = int(lateness / interval) + 1
+                    deadline += skipped * interval
         finally:
             capture.close()
 
@@ -1195,9 +1235,9 @@ class Server:
         pad_kind: str,
         release_after: float = 1.5,
         video_port: Optional[int] = None,
-        video_fps: int = 20,
-        video_width: int = 800,
-        video_quality: int = 50,
+        video_fps: int = 60,
+        video_width: int = 640,
+        video_quality: int = 42,
         video_enabled: bool = True,
         qr_enabled: bool = True,
         max_phones: int = 8,
@@ -3237,9 +3277,9 @@ def main(argv=None) -> int:
         default="",
         help="fixed browser pairing key (default: random for each run)",
     )
-    ap.add_argument("--video-fps", type=int, default=20, help="screen stream frame rate (default 20)")
-    ap.add_argument("--video-width", type=int, default=800, help="stream width in pixels (default 800)")
-    ap.add_argument("--video-quality", type=int, default=50, help="JPEG quality 20-90 (default 50)")
+    ap.add_argument("--video-fps", type=int, default=60, help="screen stream frame rate, capped at 60 (default 60)")
+    ap.add_argument("--video-width", type=int, default=480, help="balanced-profile stream width in pixels (default 480)")
+    ap.add_argument("--video-quality", type=int, default=42, help="balanced-profile JPEG quality 20-90 (default 42)")
     ap.add_argument("--no-qr", action="store_true", help="do not print the pairing QR code")
     ap.add_argument(
         "--no-install-deps",

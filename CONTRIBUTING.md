@@ -19,7 +19,7 @@ Use the bug report template and include:
 
 - App version (shown in the settings footer) and server version (banner).
 - Windows or Linux, the exact OS version, and the transport in use (Wi-Fi,
-  Bluetooth PAN, USB).
+  USB, or Bluetooth HID).
 - What you expected and what happened.
 - The server console output, including the `ViGEmBus`, `Firewall`, and `uinput`
   lines, and the app's diagnostics line.

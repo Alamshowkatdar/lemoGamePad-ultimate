@@ -2,6 +2,71 @@
 
 Newest first. The reasoning behind each release is in [`docs/REVIEW.md`](docs/REVIEW.md).
 
+## 1.7.0
+
+- **Three controller modes.** The pad now offers **Gamepad**, **Racing** and
+  **FPS** experiences, selectable from the CONTROL CENTRE. Each mode keeps its
+  own named layout and its own motion settings.
+- **Racing mode.** Tilt/gyro steering with on-screen calibration, sensitivity,
+  dead zone and curve controls, plus analog gas and brake pedals, nitro,
+  handbrake, gear up/down, camera, reset, pause and view. Steering maps to left
+  X; gas/brake map to analog R2/L2.
+- **FPS mode.** A customisable right-side camera touchpad with swipe-to-aim,
+  optional gyro aim, and separate fire, aim, reload, jump, crouch, sprint and
+  swap controls. Aim maps to the right stick; fire and aim use analog R2/L2.
+- **Gamepad mode.** Xbox ABXY and PlayStation face symbols, two sticks, d-pad,
+  shoulders, analog triggers and Start/Select/Home, with a one-tap face-label
+  switch.
+- **Fixed iconic face colours in every theme** — Xbox A green, B red, X blue,
+  Y yellow; PlayStation Cross blue, Circle red, Square pink, Triangle green.
+  The palette tint never overrides them.
+- **Ten themes with preview before apply** — Midnight Black, Cyberpunk, Arctic,
+  AMOLED, Racing Red, Xbox, PlayStation, Minimal, Retro Arcade and Stealth. Themes
+  now drive border weight, glow/shadow, letter spacing and backdrop style.
+  Tapping a palette opens a canvas preview with APPLY/CANCEL; nothing is
+  committed until APPLY is tapped.
+- **Customization Studio.** Drag, pinch-resize and hide controls, save named
+  layouts per mode, duplicate or reset them, and import/export a layout as text.
+  Live opacity, face-spacing and layout controls update the pad behind the sheet.
+- **Wire formats unchanged.** UDP input stays on port 9876 with the same packet,
+  the PC screen stream stays on TCP 9877, and Bluetooth HID still uses the same
+  9-byte report. No PC server change is required.
+- **Bluetooth connection is now explicit.** Opening the app no longer registers
+  the HID profile or connects to a paired host. The Bluetooth card has **SELECT
+  HOST** and **DISCONNECT** controls; only the bonded computer or phone you pick
+  is contacted. Pairing is still a one-time step through **BLUETOOTH SETTINGS**
+  or **MAKE DISCOVERABLE**.
+- **Fixed Bluetooth HID button mapping on Linux/Android hosts.** The descriptor
+  used a generic button 1–16 range, which Linux maps to `BTN_GAMEPAD + N`, so
+  Square/Triangle, the shoulders, triggers, Back/Start and L3/R3 arrived on the
+  wrong evdev codes. It now declares each button usage explicitly in report-bit
+  order, so A/B/X/Y, L1/R1, L2/R2, Select/Start and LS/RS map correctly on
+  Linux evdev, Windows DirectInput and Android. The 9-byte report is unchanged.
+- `versionCode` is 28.
+
+## 1.6.13
+
+- **Bluetooth is a real, automatic HID gamepad now.** The old Bluetooth system
+  is gone: no Personal Area Network, no `bnep*` interface, no "Join a Personal
+  Area Network" step, no BLUETOOTH transport chip and no separate pairing card.
+  The phone can register as a standard **Lemo GamePad** HID device and reconnect
+  to a bonded PC or Android host. Pairing once is the only host-side step.
+  Superseded in 1.7.0: registration and connection are now explicit, so opening
+  the app does not connect by itself.
+- **HID rewritten from scratch** with a new 9-byte report: 16 buttons, an 8-way
+  hat switch (so DirectInput games receive a real d-pad instead of four stray
+  buttons), four signed 8-bit stick axes, and analog L2/R2 on Z/Rz. The host is
+  sent a neutral report on connect and on backgrounding so buttons cannot stick.
+- **Works with PC and Android hosts** — Windows/Linux see a DirectInput HID
+  controller; Android games see a standard external controller. No host app,
+  driver or Accessibility service is involved.
+- **Wi-Fi and USB are unchanged** — same server, same UDP protocol, same eight
+  players, same screen preview. Only the Bluetooth network transport was
+  removed.
+- `versionCode` is 27. Bluetooth HID requires Android 9+ on the controller
+  phone; the PC HID path has no rumble, screen preview or multi-phone slots, and
+  on Windows it is DirectInput rather than XInput.
+
 ## 1.6.12
 
 - **The browser pad stops advertising a dead address** — the printed Web pad

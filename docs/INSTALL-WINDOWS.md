@@ -37,7 +37,7 @@ Linux and Android have their own guides:
      (version 1.22.0), verifies its SHA-256 and runs the silent installer.
    - **Windows Firewall rules** — inbound UDP on the control port and TCP on the
      video port, for **all network profiles** (Domain, Private, Public), because
-     Windows often classifies USB tethering and Bluetooth PAN as *Public*.
+     Windows often classifies USB tethering as *Public*.
 3. **Windows will show one or two UAC prompts** ("Do you want to allow this app
    to make changes?"). Click **Yes**. This is required to install a driver and
    change firewall rules. Nothing else is elevated.

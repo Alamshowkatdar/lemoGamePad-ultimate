@@ -2,30 +2,75 @@ package com.alamshowkat.lemogamepad
 
 import android.annotation.TargetApi
 import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothClass
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothHidDevice
 import android.bluetooth.BluetoothHidDeviceAppSdpSettings
-import android.bluetooth.BluetoothProfile
 import android.bluetooth.BluetoothManager
+import android.bluetooth.BluetoothProfile
 import android.content.Context
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import java.util.concurrent.Executor
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import kotlin.math.roundToInt
 
+/** A bonded host the user can pick from the settings card. */
+data class BluetoothHost(val name: String, val address: String)
+
+/** Bonded computers/phones only; headsets and keyboards are not gamepad hosts. */
+internal fun bondedBluetoothDevices(context: Context): List<BluetoothDevice> {
+    val adapter = try {
+        context.getSystemService(BluetoothManager::class.java)?.adapter
+    } catch (_: Exception) {
+        null
+    }
+    return adapter?.bondedDevices.orEmpty().filter { device ->
+        try {
+            when (device.bluetoothClass?.majorDeviceClass) {
+                BluetoothClass.Device.Major.COMPUTER,
+                BluetoothClass.Device.Major.PHONE,
+                -> true
+                else -> false
+            }
+        } catch (_: SecurityException) {
+            false
+        } catch (_: Exception) {
+            false
+        }
+    }
+}
+
+internal fun BluetoothDevice.safeDisplayName(): String = try {
+    name?.takeIf { it.isNotBlank() } ?: "host"
+} catch (_: SecurityException) {
+    "host"
+} catch (_: Exception) {
+    "host"
+}
+
 /**
- * Exposes this phone as a standard Bluetooth HID gamepad for another Android
- * phone. The host pairs to this phone from its Bluetooth settings; no host app
- * or Accessibility permission is needed. Android 9 (API 28) or newer is
- * required because that is where [BluetoothHidDevice] was added.
+ * Exposes this phone as a standard Bluetooth HID gamepad.
  *
- * The report is a plain 8 byte input report (no report ID):
+ * Registering the HID profile makes the phone advertise a real gamepad, so a PC
+ * or Android host only has to pair "Lemo GamePad" once — there is no host app,
+ * driver, tethering toggle or Accessibility permission. Nothing happens on app
+ * launch: the user starts the gamepad explicitly and picks one bonded host with
+ * [connect]. The class never connects to every paired device on its own.
  *
- *     byte 0-1  buttons, little endian (see [HID_BUTTONS])
- *     byte 2-5  X, Y, Rx, Ry  (left / right stick, signed)
- *     byte 6    Z             (L2, 0-255)
- *     byte 7    Rz            (R2, 0-255)
+ * Android 9 (API 28) is the minimum because that is where
+ * [BluetoothHidDevice] was added. Some OEM Bluetooth stacks do not ship the HID
+ * device profile; [start] then reports that instead of pretending to work.
+ *
+ * The report is a plain 9 byte input report (no report ID):
+ *
+ *     byte 0-1  buttons, little endian (see [hidButtons])
+ *     byte 2    hat switch 0-7 clockwise from up, 8 = centred
+ *     byte 3-6  X, Y, Rx, Ry (left/right stick, signed -127..127)
+ *     byte 7    Z  (L2, 0-255)
+ *     byte 8    Rz (R2, 0-255)
  */
 internal class BluetoothHidGamepad(
     context: Context,
@@ -34,24 +79,28 @@ internal class BluetoothHidGamepad(
     private val appContext = context.applicationContext
 
     /**
-     * Callbacks for the HID profile run here. It is created per start() and
-     * shut down in stop(): before, a single pool lived for the process and its
-     * non-daemon worker kept the app alive after the gamepad was stopped.
+     * HID callbacks run here. The pool is created per start() and shut down in
+     * stop(), so no non-daemon worker outlives the gamepad.
      */
     private var executor: ExecutorService? = null
     private var api: Api28? = null
 
-    /** True only while a host phone is actually connected and listening. */
+    /** True while the HID profile is registered, even before a host connects. */
+    val isRunning: Boolean get() = api?.isRegistered == true
+
+    /** True only while a host is connected and listening for reports. */
     val isConnected: Boolean get() = api?.isConnected == true
+
+    val connectedName: String? get() = api?.connectedName
 
     /**
      * Registers the HID profile. Returns false when this phone cannot act as a
-     * controller (no adapter, Bluetooth off, or profile unsupported) so the
-     * caller does not pretend the gamepad is running.
+     * controller (no adapter, Bluetooth off, or profile unsupported). No host is
+     * contacted until [connect] is called with an address the user picked.
      */
     fun start(): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
-            onStatus("Bluetooth gamepad needs Android 9 or newer")
+            onStatus("!Bluetooth gamepad needs Android 9 or newer")
             return false
         }
         api?.let { return true }
@@ -74,6 +123,30 @@ internal class BluetoothHidGamepad(
         api?.takeIf { it.isConnected }?.send(state)
     }
 
+    /** Centres every axis and releases all buttons. */
+    fun sendNeutral() {
+        api?.sendNeutral()
+    }
+
+    /** Bonded computers/phones the user can choose to connect to. */
+    fun hosts(): List<BluetoothHost> = bondedBluetoothDevices(appContext)
+        .map { BluetoothHost(it.safeDisplayName(), it.address) }
+        .sortedBy { it.name.lowercase() }
+
+    /**
+     * Starts the profile if needed, then connects only to [address]. Registration
+     * is asynchronous, so the address is remembered until the profile is ready.
+     */
+    fun connect(address: String) {
+        if (api == null && !start()) return
+        api?.connect(address)
+    }
+
+    /** Disconnects the current host but keeps the profile ready for another pick. */
+    fun disconnect() {
+        api?.disconnect()
+    }
+
     fun stop() {
         api?.stop()
         api = null
@@ -87,6 +160,7 @@ internal class BluetoothHidGamepad(
         private val executor: Executor,
         private val onStatus: (String) -> Unit,
     ) {
+        private val handler = Handler(Looper.getMainLooper())
         private val adapter: BluetoothAdapter? = try {
             context.getSystemService(BluetoothManager::class.java)?.adapter
         } catch (_: Exception) {
@@ -95,40 +169,57 @@ internal class BluetoothHidGamepad(
 
         @Volatile private var device: BluetoothDevice? = null
         @Volatile private var hid: BluetoothHidDevice? = null
+        @Volatile private var lastAddress: String? = null
         @Volatile var isConnected = false
             private set
         @Volatile var isRegistered = false
             private set
 
+        val connectedName: String?
+            get() {
+                val target = device ?: return null
+                return target.safeDisplayName()
+            }
+
+        /** Address the user picked, applied once the HID profile is registered. */
+        @Volatile private var pendingAddress: String? = null
+
         private val callback = object : BluetoothHidDevice.Callback() {
-            override fun onAppStatusChanged(pluggedDevice: BluetoothDevice?, isRegistered: Boolean) {
-                this@Api28.isRegistered = isRegistered
-                if (!isRegistered) {
+            override fun onAppStatusChanged(pluggedDevice: BluetoothDevice?, registered: Boolean) {
+                isRegistered = registered
+                if (!registered) {
                     device = null
                     isConnected = false
+                    onStatus("Bluetooth gamepad stopped")
+                    return
                 }
-                onStatus(
-                    if (isRegistered) {
-                        "Gamepad ready — pair this phone from the game host’s Bluetooth settings"
-                    } else {
-                        "Bluetooth gamepad stopped"
-                    },
-                )
+                onStatus("Bluetooth gamepad ready — pick a host to connect")
+                pendingAddress?.let { connectRegistered(it) }
             }
 
             override fun onConnectionStateChanged(device: BluetoothDevice, state: Int) {
                 when (state) {
                     BluetoothProfile.STATE_CONNECTED -> {
                         this@Api28.device = device
+                        lastAddress = device.address
                         isConnected = true
-                        onStatus("Bluetooth gamepad connected to " + safeName(device))
+                        pendingAddress = null
+                        // A fresh host can otherwise keep the last pressed
+                        // button until the first report arrives.
+                        sendReport(NEUTRAL_REPORT)
+                        onStatus("Bluetooth gamepad connected to " + device.safeDisplayName())
                     }
                     BluetoothProfile.STATE_DISCONNECTED -> {
                         if (this@Api28.device?.address == device.address) {
                             this@Api28.device = null
                         }
                         isConnected = false
-                        onStatus("Bluetooth gamepad disconnected — pair the host again")
+                        lastAddress = try {
+                            device.address
+                        } catch (_: Exception) {
+                            lastAddress
+                        }
+                        onStatus("Bluetooth gamepad disconnected — pick a host to reconnect")
                     }
                 }
             }
@@ -144,12 +235,18 @@ internal class BluetoothHidGamepad(
                 id: Byte,
                 bufferSize: Int,
             ) {
-                val report = NEUTRAL_REPORT
-                val allowed = bufferSize.coerceAtLeast(0).coerceAtMost(report.size)
+                val allowed = bufferSize.coerceAtLeast(0).coerceAtMost(NEUTRAL_REPORT.size)
                 try {
-                    hid?.replyReport(device, type, id, report.copyOf(allowed))
+                    hid?.replyReport(device, type, id, NEUTRAL_REPORT.copyOf(allowed))
                 } catch (_: SecurityException) {
                 } catch (_: Exception) {
+                }
+            }
+
+            override fun onVirtualCableUnplug(device: BluetoothDevice) {
+                if (this@Api28.device?.address == device.address) {
+                    this@Api28.device = null
+                    isConnected = false
                 }
             }
         }
@@ -173,11 +270,13 @@ internal class BluetoothHidGamepad(
                         executor,
                         callback,
                     )
-                    if (!accepted) onStatus("Android could not register the Bluetooth gamepad")
-                } catch (e: SecurityException) {
-                    onStatus("Allow Nearby devices, then start the Bluetooth gamepad again")
-                } catch (e: Exception) {
-                    onStatus("Bluetooth gamepad is not supported on this phone")
+                    if (!accepted) {
+                        onStatus("!Android could not register the Bluetooth gamepad")
+                    }
+                } catch (_: SecurityException) {
+                    onStatus("!Allow Nearby devices, then start the Bluetooth gamepad again")
+                } catch (_: Exception) {
+                    onStatus("!Bluetooth gamepad is not supported on this phone")
                 }
             }
 
@@ -186,56 +285,121 @@ internal class BluetoothHidGamepad(
                 isConnected = false
                 device = null
                 hid = null
-                onStatus("Bluetooth gamepad service disconnected")
+                pendingAddress = null
+                onStatus("!Bluetooth gamepad service disconnected")
             }
         }
 
         fun start(): Boolean {
             val bt = adapter
             if (bt == null) {
-                onStatus("This phone has no Bluetooth adapter")
+                onStatus("!This phone has no Bluetooth adapter")
                 return false
             }
             val enabled = try {
                 bt.isEnabled
             } catch (_: SecurityException) {
-                onStatus("Allow Nearby devices, then start the Bluetooth gamepad again")
+                onStatus("!Allow Nearby devices, then start the Bluetooth gamepad again")
                 return false
             } catch (_: Exception) {
                 false
             }
             if (!enabled) {
-                onStatus("Turn on Bluetooth, then start the phone gamepad")
+                onStatus("!Turn on Bluetooth to use the Bluetooth gamepad")
                 return false
             }
             return try {
                 if (!bt.getProfileProxy(context, listener, BluetoothProfile.HID_DEVICE)) {
-                    onStatus("This phone does not provide Bluetooth gamepad mode")
+                    onStatus("!This phone does not provide Bluetooth gamepad mode")
                     false
                 } else {
                     onStatus("Starting Bluetooth gamepad…")
                     true
                 }
             } catch (_: SecurityException) {
-                onStatus("Allow Nearby devices, then start the Bluetooth gamepad again")
+                onStatus("!Allow Nearby devices, then start the Bluetooth gamepad again")
                 false
             } catch (_: Exception) {
-                onStatus("Bluetooth gamepad is not supported on this phone")
+                onStatus("!Bluetooth gamepad is not supported on this phone")
                 false
             }
         }
 
         fun send(state: PadState) {
-            val target = device ?: return
+            sendReport(report(state))
+        }
+
+        fun sendNeutral() {
+            sendReport(NEUTRAL_REPORT)
+        }
+
+        private fun sendReport(data: ByteArray) {
+            val target = device
+            val hid = hid
+            if (target == null || hid == null || !isConnected) return
             try {
-                hid?.sendReport(target, 0, report(state))
+                hid.sendReport(target, 0, data)
             } catch (_: SecurityException) {
-                onStatus("Bluetooth permission is missing")
+                onStatus("!Bluetooth permission is missing")
             } catch (_: Exception) {
             }
         }
 
+        /**
+         * Connects only to the host the user picked. Registration is async, so
+         * while [start] is still in flight the address is remembered and applied
+         * from onAppStatusChanged the moment the profile becomes ready.
+         */
+        fun connect(address: String) {
+            pendingAddress = address
+            if (isRegistered) connectRegistered(address)
+        }
+
+        /** Applies a pick once the profile is registered. */
+        private fun connectRegistered(address: String) {
+            val target = bondedHosts().firstOrNull { it.address == address }
+            if (target == null) {
+                onStatus("!Host is no longer paired — pair it again in Bluetooth settings")
+                pendingAddress = null
+                return
+            }
+            if (isConnected && device?.address == address) {
+                pendingAddress = null
+                return
+            }
+            val accepted = try {
+                hid?.connect(target) == true
+            } catch (_: SecurityException) {
+                onStatus("!Allow Nearby devices, then pick the host again")
+                false
+            } catch (_: Exception) {
+                false
+            }
+            if (accepted) {
+                pendingAddress = null
+                onStatus("Connecting to ${target.safeDisplayName()}…")
+            } else {
+                onStatus("Could not connect — make sure the host is on with Lemo GamePad selected")
+            }
+        }
+
+        /** Drops the current host; the profile stays registered for another pick. */
+        fun disconnect() {
+            pendingAddress = null
+            val target = device ?: return
+            try {
+                hid?.disconnect(target)
+            } catch (_: SecurityException) {
+                onStatus("!Allow Nearby devices to disconnect the gamepad")
+            } catch (_: Exception) {
+            }
+        }
+
+        /** Bonded PCs and phones only; headsets and keyboards are left alone. */
+        private fun bondedHosts(): List<BluetoothDevice> = bondedBluetoothDevices(context)
+
         fun stop() {
+            pendingAddress = null
             try {
                 hid?.unregisterApp()
                 adapter?.closeProfileProxy(BluetoothProfile.HID_DEVICE, hid)
@@ -249,23 +413,38 @@ internal class BluetoothHidGamepad(
             hid = null
         }
 
-        private fun safeName(device: BluetoothDevice): String = try {
-            device.name?.takeIf { it.isNotBlank() } ?: "game host"
-        } catch (_: SecurityException) {
-            "game host"
-        } catch (_: Exception) {
-            "game host"
-        }
-
         private fun report(state: PadState): ByteArray {
             val buttons = hidButtons(state.buttons)
             return byteArrayOf(
                 (buttons and 0xFF).toByte(),
                 ((buttons ushr 8) and 0xFF).toByte(),
-                axis(state.lx), axis(state.ly), axis(state.rx), axis(state.ry),
+                hat(state.buttons),
+                axis(state.lx),
+                axis(-state.ly),
+                axis(state.rx),
+                axis(-state.ry),
                 state.l2.coerceIn(0, 255).toByte(),
                 state.r2.coerceIn(0, 255).toByte(),
             )
+        }
+
+        /** Converts the on-screen d-pad bits into a HID hat switch value. */
+        private fun hat(b: Int): Byte {
+            val up = b and (1 shl Proto.UP) != 0
+            val right = b and (1 shl Proto.RIGHT) != 0
+            val down = b and (1 shl Proto.DOWN) != 0
+            val left = b and (1 shl Proto.LEFT) != 0
+            return when {
+                up && right -> 1
+                right && down -> 3
+                down && left -> 5
+                left && up -> 7
+                up -> 0
+                right -> 2
+                down -> 4
+                left -> 6
+                else -> 8
+            }.toByte()
         }
 
         /**
@@ -289,38 +468,71 @@ internal class BluetoothHidGamepad(
             put(Proto.START, 9)      // Start
             put(Proto.L3, 10)        // LS click
             put(Proto.R3, 11)        // RS click
-            put(Proto.UP, 12)
-            put(Proto.DOWN, 13)
-            put(Proto.LEFT, 14)
-            put(Proto.RIGHT, 15)
             return out
         }
 
         private fun axis(value: Int): Byte =
             (value.coerceIn(-32767, 32767) * 127f / 32767f).roundToInt().toByte()
 
-        companion object {
-            private val NEUTRAL_REPORT = ByteArray(8)
+        private companion object {
+            private val NEUTRAL_REPORT = byteArrayOf(
+                0, 0, 8, 0, 0, 0, 0, 0, 0,
+            )
 
             /**
-             * Generic Desktop / Game Pad: 16 buttons, four signed 8-bit axes
-             * (X, Y, Rx, Ry) and two unsigned triggers (Z, Rz).
+             * Generic Desktop / Game Pad: 16 buttons, one 8-way hat switch,
+             * four signed 8-bit axes (X, Y, Rx, Ry) and two unsigned triggers
+             * (Z, Rz). The hat switch is what DirectInput games read as a
+             * d-pad; mapping the directions to buttons alone left it dead.
              */
             private val REPORT_DESCRIPTOR = byteArrayOf(
                 0x05, 0x01,             // Usage Page (Generic Desktop)
                 0x09, 0x05,             // Usage (Game Pad)
                 0xA1.toByte(), 0x01,    // Collection (Application)
-                0xA1.toByte(), 0x00,    //   Collection (Physical)
-                0x05, 0x09,             //     Usage Page (Button)
-                0x19, 0x01,             //     Usage Minimum (1)
-                0x29, 0x10,             //     Usage Maximum (16)
-                0x15, 0x00,             //     Logical Minimum (0)
-                0x25, 0x01,             //     Logical Maximum (1)
-                0x95.toByte(), 0x10,    //     Report Count (16)
-                0x75, 0x01,             //     Report Size (1)
-                0x81.toByte(), 0x02,    //     Input (Data, Variable, Absolute)
-                0xC0.toByte(),          //   End Collection (Physical)
+                0x05, 0x09,             //   Usage Page (Button)
+                // Explicit usages, one per report bit, in the order the report
+                // packs them (A, B, X, Y, LB, RB, LT, RT, Back, Start, LS, RS).
+                // A 1..16 min/max looks simpler but Linux maps generic button N
+                // to BTN_GAMEPAD+N, i.e. 3->BTN_C, 4->BTN_X, 5->BTN_Y ... so
+                // X/Y/shoulders/Back/Start landed on the wrong evdev codes.
+                // These explicit values make Linux, Android and DirectInput all
+                // agree: bit 0 is usage 1 (BTN_A/A), bit 2 is usage 4 (BTN_X),
+                // bit 4 is usage 7 (BTN_TL/LB), and so on.
+                0x09, 0x01,             //   bit  0  A      -> BTN_A / KEYCODE_A
+                0x09, 0x02,             //   bit  1  B      -> BTN_B
+                0x09, 0x04,             //   bit  2  X      -> BTN_X
+                0x09, 0x05,             //   bit  3  Y      -> BTN_Y
+                0x09, 0x07,             //   bit  4  LB     -> BTN_TL
+                0x09, 0x08,             //   bit  5  RB     -> BTN_TR
+                0x09, 0x09,             //   bit  6  LT     -> BTN_TL2
+                0x09, 0x0A,             //   bit  7  RT     -> BTN_TR2
+                0x09, 0x0B,             //   bit  8  Back   -> BTN_SELECT
+                0x09, 0x0C,             //   bit  9  Start  -> BTN_START
+                0x09, 0x0E,             //   bit 10  LS     -> BTN_THUMBL
+                0x09, 0x0F,             //   bit 11  RS     -> BTN_THUMBR
+                0x09, 0x03,             //   bit 12  spare  -> BTN_C
+                0x09, 0x06,             //   bit 13  spare  -> BTN_Z
+                0x09, 0x0D,             //   bit 14  spare  -> BTN_MODE
+                0x09, 0x10,             //   bit 15  spare
+                0x15, 0x00,             //   Logical Minimum (0)
+                0x25, 0x01,             //   Logical Maximum (1)
+                0x95.toByte(), 0x10,    //   Report Count (16)
+                0x75, 0x01,             //   Report Size (1)
+                0x81.toByte(), 0x02,    //   Input (Data, Variable, Absolute)
                 0x05, 0x01,             //   Usage Page (Generic Desktop)
+                0x09, 0x39,             //   Usage (Hat switch)
+                0x15, 0x00,             //   Logical Minimum (0)
+                0x25, 0x07,             //   Logical Maximum (7)
+                0x35, 0x00,             //   Physical Minimum (0)
+                0x46, 0x3B, 0x01,       //   Physical Maximum (315)
+                0x65, 0x14,             //   Unit (Eng Rot: degrees)
+                0x75, 0x04,             //   Report Size (4)
+                0x95.toByte(), 0x01,    //   Report Count (1)
+                0x81.toByte(), 0x42,    //   Input (Data, Variable, Absolute, Null State)
+                0x65, 0x00,             //   Unit (None)
+                0x75, 0x04,             //   Report Size (4)
+                0x95.toByte(), 0x01,    //   Report Count (1)
+                0x81.toByte(), 0x03,    //   Input (Constant, Variable, Absolute)
                 0x09, 0x30,             //   Usage (X)
                 0x09, 0x31,             //   Usage (Y)
                 0x09, 0x33,             //   Usage (Rx)

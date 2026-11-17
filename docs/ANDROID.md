@@ -19,19 +19,22 @@ before installing it. Locally built APKs use your own key; see
 
 ## Choose how the phone talks to the PC
 
-All three modes use the same unencrypted local protocol and all three are
-supported by the same APK. Pick the one that fits your situation:
+The PC link has two transports. Both use the same unencrypted local protocol and
+are supported by the same APK:
 
 | Mode | Best for | Phone setting | PC setting | Typical latency |
 |---|---|---|---|---|
 | **Wi-Fi** | Normal home network, best range and speed | Wi-Fi on, same network as the PC | Nothing | 3–15 ms |
-| **Bluetooth** | No router / locked-down Wi-Fi / cable-free | Bluetooth **tethering** (PAN) | Join the phone's Personal Area Network | ~30 ms |
 | **USB** | Lowest latency, charging while playing, no radio interference | **USB tethering** | Nothing | ~3 ms |
 
-> **They are network links, not custom drivers.** Android's Bluetooth PAN and USB
-> tethering create a private network interface (`bnep*`, `rndis*`, `ncm*`,
-> `usb*`). The app sends the same UDP packets over that interface, so the PC needs
-> no extra software.
+> **They are network links, not custom drivers.** Android's USB tethering creates
+> a private network interface (`rndis*`, `ncm*`, `usb*`). The app sends the same
+> UDP packets over that interface, so the PC needs no extra software.
+>
+> **Bluetooth is not a PC transport any more.** The phone advertises a standard
+> HID gamepad that a PC or Android host reads directly — no server, no
+> tethering, no "Join a Personal Area Network". See
+> [Bluetooth HID gamepad](#bluetooth-hid-gamepad).
 
 ### 4a. Wi-Fi (recommended)
 
@@ -49,52 +52,12 @@ If the PC is not found even though both devices are on the same network, read
 the diagnostics line and the **Firewall** line in the server window, then see
 [Troubleshooting](TROUBLESHOOTING.md).
 
-### 4b. Bluetooth (PAN)
-
-Bluetooth works, but Windows initiates the PAN join — Android cannot dial the PC
-by itself. The app's Bluetooth card guides you through it.
-
-**On the phone**
-
-1. Turn Bluetooth on.
-2. Open the app → status pill → **BLUETOOTH** chip.
-3. If the card says *access is off*, tap **ALLOW NEARBY DEVICES** and accept the
-   Android 12+ **Nearby devices** prompt.
-4. Tap **PAIR WITH PC** to open the system Bluetooth page and pair with the PC.
-   Tap **DISCOVERABLE** if the PC cannot see the phone.
-5. Enable **Bluetooth tethering**:
-   **Settings → Network → Hotspot & tethering → Bluetooth tethering**
-   (wording varies by manufacturer). The app's **OPEN TETHERING SETTINGS**
-   button jumps straight there.
-
-**On the PC**
-
-6. Open **Settings → Bluetooth & devices → Devices**.
-7. Find the phone → **More options** → **Join a Personal Area Network**.
-8. The app's Bluetooth card now shows a live `bnep*` address, and the chip's
-   readiness dot turns green.
-
-**In the app**
-
-9. Tap **Scan network**, then **Connect**.
-
-**Bluetooth is a ~3 Mbps link.** Input is tiny and measures **~30 ms**, but the
-PC screen preview is a JPEG stream and will saturate the link:
-
-| Preview | Result on a Galaxy S24 Ultra |
-|---|---|
-| Off | 31 ms steady |
-| On | 927 ms → 6.5 s → `LINKING…` |
-| Back off | Recovers by itself |
-
-Keep **Screen preview** off, or at **SMALL**, while using Bluetooth.
-
-### 4c. USB (fastest, and charges the phone)
+### 4b. USB (fastest, and charges the phone)
 
 1. Connect the phone to the PC with a **data** USB cable (not a charge-only one).
 2. On the phone enable **USB tethering**:
    **Settings → Network → Hotspot & tethering → USB tethering**.
-   The app's **OPEN TETHERING SETTINGS** button jumps there.
+   The app's **USB TETHERING SETTINGS** button jumps there.
 3. In the app: status pill → **USB** chip → **Scan network** → **Connect**.
 4. Windows sees a new network adapter (`rndis*` / `ncm*`). No driver install is
    needed on Windows 10/11.
@@ -106,8 +69,8 @@ the server already cover it.
 ### Which chip should I use?
 
 - **AUTO** (default) probes every link and connects over whichever answers.
-- **WI-FI / BT / USB** start with that link, and *widen* to the others if it gets
-  no reply. If that happens the app tells you, for example
+- **WI-FI / USB** start with that link, and *widen* to the other if it gets no
+  reply. If that happens the app tells you, for example
   `WI-FI found no PC — linked over USB instead`, and the diagnostics line says
   `widened`. It never silently lies about the transport in use.
 
@@ -206,45 +169,51 @@ releases.
 
 Xbox letter order is preserved: △ = Y, ○ = B, ✕ = A, □ = X.
 
-### Phone-to-phone (Bluetooth HID)
+### Bluetooth HID gamepad
 
-You do not need a PC for this mode. One phone acts as the **controller**, the
-other is the **game host**. The controller phone advertises itself as a standard
-Bluetooth HID gamepad, so the host sees a real controller and no helper app or
-Accessibility service is involved.
+The phone can also be a standard Bluetooth HID gamepad for a **PC or Android
+phone**, with no server and no tethering. Android 9+ is required on the
+controller phone because that is where Android added the HID device profile.
 
-1. **Controller phone** (Android 9+): open the app → status pill →
-   **PHONE-TO-PHONE GAMEPAD** → **START GAMEPAD**. Accept the *Nearby devices*
-   prompt if Android asks.
-2. **Host phone**: **Settings → Bluetooth**, pair with **Lemo GamePad**.
-3. The card on the controller phone switches from
-   `○ Broadcasting as “Lemo GamePad”` to `● Connected`.
-4. Start the game on the host and play.
+1. Open the app. It registers **Lemo GamePad** automatically and, on the first
+   run, asks to be discoverable — accept the system prompt (or tap
+   **MAKE DISCOVERABLE** in the Bluetooth card).
+2. On the host: open Bluetooth settings, pair **Lemo GamePad**.
+3. Play. The card changes to `● Connected — <host> is receiving input`, and the
+   app reconnects to the bonded host by itself after a restart or a Bluetooth
+   drop.
 
-The app only sends a report when a control actually changes, and it parks the
-gamepad when you leave the app (sending one neutral report first), so a stuck
-button cannot survive backgrounding. Keep the controller app in the foreground
-while you play.
+The Bluetooth card also has **ALLOW NEARBY DEVICES** (Android 12+),
+**BLUETOOTH SETTINGS** and **MAKE DISCOVERABLE**. None of them is needed after
+the first pairing.
 
-The HID report carries 16 buttons, four signed 8-bit stick axes, and analog L2/R2:
+Keep the app in the foreground while you play: Android releases the HID profile
+when the app process stops. Leaving the app sends one neutral report first, so a
+stuck button cannot survive backgrounding.
 
-| On screen | HID button | Typical Android mapping |
+The HID report carries 16 buttons, an 8-way hat switch, four signed 8-bit stick
+axes, and analog L2/R2:
+
+| On screen | HID control | Typical host mapping |
 |---|---|---|
-| ✕ | 1 | A |
-| ○ | 2 | B |
-| □ | 3 | X |
-| △ | 4 | Y |
-| L1 / R1 | 5 / 6 | LB / RB |
-| L2 / R2 | 7 / 8 | LT / RT (also analog axis) |
-| SELECT / START | 9 / 10 | Back / Start |
-| L3 / R3 | 11 / 12 | Stick click |
-| D-pad | 13–16 | Up / Down / Left / Right |
+| ✕ | Button 1 | A |
+| ○ | Button 2 | B |
+| □ | Button 3 | X |
+| △ | Button 4 | Y |
+| L1 / R1 | Buttons 5 / 6 | LB / RB |
+| L2 / R2 | Buttons 7 / 8, axes Z / Rz | LT / RT (analog) |
+| SELECT / START | Buttons 9 / 10 | Back / Start |
+| L3 / R3 | Buttons 11 / 12 | Stick click |
+| D-pad | Hat switch | D-pad |
 
 Sticks go to X/Y (left) and Rx/Ry (right); L2 and R2 also map to the Z and Rz
 axes (0–255). The **PS** button is intentionally not exposed over HID, because
-host phones treat that button as *Home* and would leave your game. This mode is
-independent of the PC link: you can have both configured, and starting one does
-not stop the other.
+hosts treat that button as *Home* and would leave your game.
+
+On Windows the pad is a DirectInput HID controller, not XInput. Games that only
+read XInput still need the Wi-Fi/USB server link; this mode also has no rumble,
+screen preview or player slots. It is independent of the PC link, so both can be
+configured at once.
 
 ### Themes and animation
 
@@ -290,10 +259,9 @@ Every change applies immediately.
   Refreshes twice a second.
 - **CONNECT / RECONNECT / DISCONNECT** — connect, rebuild the current link, or
   stop and clear the address.
-- **Transport chips** — AUTO / WI-FI / BT / USB with readiness dots.
+- **Transport chips** — AUTO / WI-FI / USB with readiness dots.
 - **PC address / port**, **Scan network**, **Scan QR**, and the diagnostics line.
-- **Bluetooth pairing** — adapter state, bonded PCs, discoverable mode, PAN address.
-- **Phone-to-phone Bluetooth HID** — pair this phone as a standard gamepad with another Android phone (Android 9+), with a live *broadcasting / connected* line. No helper app or Accessibility permission is needed on the game host.
+- **Bluetooth gamepad** — automatically registered as **Lemo GamePad**; the card shows the live *ready / connected* state, opens Bluetooth settings and can make the phone discoverable again. Android 12+ asks once for **Nearby devices**.
 - **Appearance** — nine palettes in a two-column picker with colour previews, a cross-fade and an **Animated buttons** toggle.
 - **Face button labels** — PlayStation symbols or Xbox letters.
 - **Layouts** — save several named arrangements, switch between them, delete
@@ -322,25 +290,28 @@ Enable **PC screen** in settings and a small live window appears over the pad.
 - It shows `CONNECTING`, `LIVE` or `RECONNECTING`.
 
 The server captures the primary monitor only while a phone is watching, then
-sends JPEG frames over TCP on **control port + 1** (9877 by default). Quality is
-saved per phone: **LOW** uses less bandwidth (15 fps / 400 px / JPEG 30),
-**BALANCED** is the default (20 fps / 800 px / JPEG 50), and **HIGH** is sharper
-(25 fps / 1200 px / JPEG 70). These are default values; the PC command-line
-options tune the balanced profile. Updated PC servers honor each phone's choice;
+sends JPEG frames over TCP on **control port + 1** (9877 by default). The stream
+is tuned smoothness-first: all three quality choices target **60 fps** on a
+fixed cadence, and only sharpness changes. Defaults are **LOW** 300 px / JPEG 30,
+**BALANCED** 480 px / JPEG 42 (the default), and **HIGH** 600 px / JPEG 52.
+The PC command-line options tune the balanced profile and `--video-fps` is
+capped at 60. Updated PC servers honor each phone's choice;
 older servers keep their fixed settings and the phone will show a notice. The
 preview displays its current received FPS and selected quality. Slow phones do
 not block other viewers, and their send buffers are bounded to prevent long
-stale-video queues. The Android viewer also drops complete frames queued behind a slow decode.
+stale-video queues. The Android viewer drops complete frames queued behind a slow
+decode and reuses decoded bitmaps instead of allocating a new one per frame.
 
 ```powershell
-lemoGamePad-server.exe --video-width 480 --video-fps 8 --video-quality 45
+lemoGamePad-server.exe --video-width 480 --video-fps 60 --video-quality 45
 lemoGamePad-server.exe --no-video
 lemoGamePad-server.exe --video-port 9990
 ```
 
 The PC command-line options set the **BALANCED** profile. The phone's **LOW**
-choice halves the frame rate and width and lowers JPEG quality; **HIGH** raises
-them for a sharper image. Select LOW for Bluetooth PAN or a crowded Wi-Fi link.
+choice lowers width and JPEG quality; **HIGH** raises them for a sharper image.
+All three keep the same frame cadence, so LOW is the right pick for a crowded
+Wi-Fi or USB link rather than a slower 15 fps fallback.
 
 ### Customizing the pad
 
