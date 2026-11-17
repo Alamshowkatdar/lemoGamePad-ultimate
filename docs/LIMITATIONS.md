@@ -23,7 +23,12 @@
   emulators. `--pad ds4` makes all eight DirectInput devices; Linux can use all
   eight Xbox 360 pads.
 - Screen preview is one-way video only; it does not let you control the PC with
-  the phone's touchscreen.
+  the phone's touchscreen. All quality levels target 60 fps, but the realized
+  rate depends on the capture backend. On Windows and X11 the server captures
+  in-process with `mss` and can reach 60 fps; on Wayland it must launch `grim`
+  (or `spectacle`/`gnome-screenshot`) once per frame, which is far slower and
+  may deliver only a few fps. Use the LOW quality chip to reduce the encoded
+  size, or log into an X11 session, if that matters on a Wayland PC.
 - USB-to-PC relies on Android USB tethering (RNDIS). The Bluetooth HID gamepad
   is a separate, server-less mode: it requires Android 9+ on the controller
   phone and a host (PC or Android) that accepts standard HID gamepads. On

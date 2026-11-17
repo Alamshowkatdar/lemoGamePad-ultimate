@@ -68,6 +68,12 @@ gamepad and a PC or Android host reads it directly after pairing.
   Each has its own border weight, glow/shadow, letter spacing and backdrop.
 - **Customization Studio** — drag, pinch-resize or hide any control, save named
   layouts per mode, duplicate/reset, and import or export layouts as text.
+- **60 fps screen preview, smoothness first** — all quality levels share a
+  60 fps cadence; LOW/BALANCED/HIGH only change sharpness (300/480/600 px).
+  Capture uses BOX downscaling and fixed-cadence pacing, and the phone reuses
+  decoded bitmaps. The FPS badge shows the received rate. On Wayland, where
+  capture shells out to `grim`, the realized rate is limited by the screenshot
+  tool.
 - **All output protocols are unchanged** — UDP on 9876, video TCP on 9877 and
   the 9-byte Bluetooth HID report all keep the same wire format.
 

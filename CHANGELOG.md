@@ -42,6 +42,19 @@ Newest first. The reasoning behind each release is in [`docs/REVIEW.md`](docs/RE
   wrong evdev codes. It now declares each button usage explicitly in report-bit
   order, so A/B/X/Y, L1/R1, L2/R2, Select/Start and LS/RS map correctly on
   Linux evdev, Windows DirectInput and Android. The 9-byte report is unchanged.
+- **60 fps screen preview, smoothness first.** All three quality choices now
+  target the same 60 fps cadence; only sharpness varies. Defaults are LOW
+  300 px / JPEG 30, BALANCED 480 px / JPEG 42 and HIGH 600 px / JPEG 52, and
+  `--video-fps` is capped at 60. Capture uses a fixed-cadence deadline with a
+  short spin before each frame (so Linux does not round 60 fps down to 55),
+  BOX downscaling (~40% cheaper than BILINEAR) and a raised capture-thread
+  priority. The phone reuses decoded bitmaps instead of allocating one per
+  frame, drops complete frames queued behind a slow decode, and clears the FPS
+  badge when the link drops. Transient capture failures no longer permanently
+  disable the browser `/screen` endpoint. The server-side path measured ~59.9
+  fps with 1920x1080 input; on a Wayland PC that shells out to `grim` per frame,
+  capture still dominates and the realized rate is much lower (see
+  [LIMITATIONS.md](docs/LIMITATIONS.md)).
 - `versionCode` is 28.
 
 ## 1.6.13

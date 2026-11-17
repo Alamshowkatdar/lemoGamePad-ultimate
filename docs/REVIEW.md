@@ -1122,3 +1122,42 @@ X with decay to zero, fire/aim analog triggers, face actions, sprint and pause.
 Theme preview CANCEL/APPLY, all settings cards, mode chips and the studio card
 were verified through UI dumps; APPLY was re-tested at the previously occluded
 coordinate after the elevation fix.
+
+## 60 fps screen preview (1.7.0)
+
+The old stream capped at 30 fps and gave each quality profile a different rate,
+so HIGH forced a 25 fps capture on every viewer and BALANCED sat at 20. The
+phone's PiP is small, and the user asked for smoothness over sharpness, so all
+three profiles now share one 60 fps cadence and differ only in width and JPEG
+quality (LOW 300 px / q30, BALANCED 480 px / q42, HIGH 600 px / q52). `--video-fps`
+is capped at 60; a higher request would only make the server encode frames the
+phone cannot display.
+
+Three changes were needed to actually hit the cadence:
+
+- **Fixed deadlines instead of elapsed-time sleeps.** Sleeping `interval - elapsed`
+  accumulated scheduler slack and turned 60 fps into ~55 on Linux. The capture
+  loop now sleeps until 2 ms before the next slot, spins the last 2 ms, and
+  skips forward to a future slot after a stall so it never bursts stale frames.
+- **BOX downscaling.** Measured on a 1920x1080 source, BOX cost ~9 ms versus
+  ~15 ms for BILINEAR at BALANCED width — the difference between a steady 60 and
+  a jittery 55. The capture thread also calls the same priority raise as the UDP
+  loop so screen capture cannot starve input.
+- **Bitmap reuse on Android.** A bounds pass selects a same-sized bitmap the
+  main thread has already drawn, so a 60 fps stream no longer allocates roughly
+  40 MB/s of short-lived bitmaps and invites GC jank. The FPS badge is exposed
+  through `contentDescription` and resets when the link drops, so a frozen last
+  frame cannot keep reporting a stale rate.
+
+`VideoServer.error` is now cleared on the next successful capture; previously a
+single transient failure permanently disabled the browser `/screen` endpoint.
+
+### Verification
+
+`python test_video.py`, `python test_capture.py` and `python test_web.py` pass.
+With a synthetic 1920x1080 capture the steady-state server measured
+**59.86 fps** over 3 s at BALANCED (480 px / q42). On this development PC the
+real backend is Wayland `grim`, which launches a subprocess per frame and costs
+~180 ms/frame; a phone connected here correctly reported ~5 fps. That is a
+capture-backend limit, not a pacing limit — Windows/X11 use in-process `mss`
+and follow the measured path. See LIMITATIONS.md.
