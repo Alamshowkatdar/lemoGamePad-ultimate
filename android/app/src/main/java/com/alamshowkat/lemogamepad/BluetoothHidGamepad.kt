@@ -1,5 +1,6 @@
 package com.alamshowkat.lemogamepad
 
+import android.Manifest
 import android.annotation.TargetApi
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothClass
@@ -9,6 +10,7 @@ import android.bluetooth.BluetoothHidDeviceAppSdpSettings
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
 import android.content.Context
+import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -22,6 +24,14 @@ data class BluetoothHost(val name: String, val address: String)
 
 /** Bonded computers/phones only; headsets and keyboards are not gamepad hosts. */
 internal fun bondedBluetoothDevices(context: Context): List<BluetoothDevice> {
+    // Lint (and Android 12+) require an explicit check before touching the
+    // bonded-device list; callers handle a denied result by asking for access.
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+        context.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) !=
+        PackageManager.PERMISSION_GRANTED
+    ) {
+        return emptyList()
+    }
     val adapter = try {
         context.getSystemService(BluetoothManager::class.java)?.adapter
     } catch (_: Exception) {
