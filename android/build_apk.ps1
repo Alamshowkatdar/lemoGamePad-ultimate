@@ -1,8 +1,9 @@
-# Builds the VPad Android APK.
+# Builds the lemoGamePad ultimate Android APK.
 #   powershell -ExecutionPolicy Bypass -File .\build_apk.ps1
 #   powershell -ExecutionPolicy Bypass -File .\build_apk.ps1 -Debug
 #
-# Needs a JDK 17-21 and the Android SDK (platform 34 + build-tools 34).
+# Needs a JDK 17-21 and the Android SDK (platform 34 + build-tools 36 for the
+# published toolchain; older build-tools may work with older Gradle setups).
 
 param(
     [switch]$Debug

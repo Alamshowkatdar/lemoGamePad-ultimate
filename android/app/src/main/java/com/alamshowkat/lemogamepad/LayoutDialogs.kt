@@ -191,6 +191,32 @@ internal object LayoutDialogs {
         show(activity, root, card)
     }
 
+    /** Read-only, themed information card used for per-card contextual help. */
+    fun info(
+        activity: Activity,
+        theme: PadTheme,
+        title: String,
+        message: String,
+    ) {
+        val root = overlay(activity, theme) ?: return
+        val card = card(activity, theme)
+        card.addView(eyebrow(activity, theme, title))
+        card.addView(copy(activity, message, 12f, theme.textDim, top = px(activity, 8)))
+        val actions = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.END or Gravity.CENTER_VERTICAL
+            setPadding(0, px(activity, 16), 0, 0)
+        }
+        actions.addView(
+            button(activity, theme, "GOT IT", primary = true, color = theme.accent) {
+                remove(activity, root)
+            },
+            wrapParams(),
+        )
+        card.addView(actions)
+        show(activity, root, card)
+    }
+
     // ---------------------------------------------------------------- internals
     private fun overlay(activity: Activity, theme: PadTheme): FrameLayout? {
         val decor = activity.window?.decorView as? ViewGroup ?: return null

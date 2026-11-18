@@ -16,7 +16,7 @@
 | `WI-FI found no PC — linked over USB instead` | Wi-Fi answered with nothing while the USB tether did answer. Use the link that works. |
 | Bluetooth card says "access is off" | Tap **ALLOW NEARBY DEVICES** and accept the Android 12+ **Nearby devices** prompt. |
 | A PC or phone cannot see "Lemo GamePad" | Tap **MAKE DISCOVERABLE** in the Bluetooth card before adding the device on the host. Bluetooth must be on. |
-| The host paired but no controller appears | Remove the old pairing on the host, pair again, and keep the app open. Android 9+ is required; some OEM stacks do not ship HID device mode. |
+| The host paired but no controller appears | Open **BLUETOOTH GAMEPAD**, tap **SELECT HOST** on the bonded host, and keep the app open. Pairing alone no longer starts input. Android 9+ is required; some OEM stacks do not ship HID device mode. |
 | Bluetooth pad works only while the app is open | Expected: Android keeps the HID profile only while the app process is alive. Bring the app back to the foreground. |
 | USB shows "no interface yet" | Enable **USB tethering** (use **USB TETHERING SETTINGS**) and use a data cable. |
 | Windows marks the tether network "Public" | The server's rules cover every profile; if you added them manually, run `pc\allow_firewall.ps1` again. |

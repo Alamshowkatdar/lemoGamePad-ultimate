@@ -41,7 +41,7 @@ body:
     attributes:
       label: App version
       description: Shown at the bottom of the settings sheet.
-      placeholder: "1.4.0"
+      placeholder: "1.7.0"
     validations:
       required: true
 
@@ -49,8 +49,8 @@ body:
     id: server-version
     attributes:
       label: Server version and OS
-      description: The version in the server banner, plus the exact OS.
-      placeholder: "1.4.0 on Windows 11 23H2 / Ubuntu 24.04"
+      description: The server release/download name, plus the exact OS.
+      placeholder: "v1.7.0 server build on Windows 11 23H2 / Ubuntu 24.04"
     validations:
       required: true
 

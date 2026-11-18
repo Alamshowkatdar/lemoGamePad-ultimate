@@ -36,8 +36,8 @@ Linux and Android have their own guides:
      If it is missing, the server downloads the official Nefarius build
      (version 1.22.0), verifies its SHA-256 and runs the silent installer.
    - **Windows Firewall rules** — inbound UDP on the control port and TCP on the
-     video port, for **all network profiles** (Domain, Private, Public), because
-     Windows often classifies USB tethering as *Public*.
+     video and browser-pad ports, for **all network profiles** (Domain, Private,
+     Public), because Windows often classifies USB tethering as *Public*.
 3. **Windows will show one or two UAC prompts** ("Do you want to allow this app
    to make changes?"). Click **Yes**. This is required to install a driver and
    change firewall rules. Nothing else is elevated.
@@ -49,11 +49,13 @@ Linux and Android have their own guides:
    ----------------------------------------------------------
    Control port : 9876 (UDP)
    Screen stream: 9877 (TCP)
+   Browser pad  : 9878 (TCP, Wi-Fi only)
    Controllers  : up to 8 phones at once
    Pads 5-8     : DS4/DirectInput (XInput only allows four pads)
    ViGEmBus     : OK (virtual gamepad driver installed)
    PC IP        : 192.168.1.23
-   Firewall     : OK (UDP 9876 / TCP 9877 allowed)
+   Web pad      : http://192.168.1.23:9878/?k=ABC123
+   Firewall     : OK (UDP 9876 / TCP 9877 / TCP 9878 allowed)
    ...
    ```
 

@@ -190,38 +190,74 @@ class SwapRequest:
 class WindowsVirtualPad:
     """Virtual pad backed by ViGEmBus, the Windows kernel driver."""
 
+    MAX_UPDATE_RETRIES = 3
+
     def __init__(self, kind: str, on_rumble=None):
         self.kind = kind
         self.ok = False
         self.pad = None
+        self.vg = None
         self.on_rumble = on_rumble
         self.rumble_error = ""
+        self.error = ""
+        self._update_failures = 0
         self._lock = threading.Lock()
         self._last = InputState()
+        with self._lock:
+            self._create_pad_locked()
 
+    def _create_pad_locked(self) -> bool:
+        """Create (or recreate) the ViGEm pad; caller holds _lock."""
         try:
             import vgamepad as vg
         except Exception as exc:  # pragma: no cover
             self.error = f"vgamepad not available ({exc})"
-            return
+            self.ok = False
+            return False
 
         try:
-            if kind == "ds4":
-                self.pad = vg.VDS4Gamepad()
-                self.vg = vg
-                self._register_rumble(vg)
-            else:
-                self.pad = vg.VX360Gamepad()
-                self.vg = vg
-                self._register_rumble(vg)
+            pad = vg.VDS4Gamepad() if self.kind == "ds4" else vg.VX360Gamepad()
+            self.pad = pad
+            self.vg = vg
+            self.rumble_error = ""
+            self._register_rumble(vg)
             self.ok = True
             self.error = ""
+            return True
         except Exception as exc:  # pragma: no cover
             self.error = (
                 f"could not create virtual pad ({exc}). "
                 "Is ViGEmBus installed and is the driver running?"
             )
             self.pad = None
+            self.ok = False
+            return False
+
+    def _close_pad_locked(self) -> None:
+        """Unplug the current pad without re-entering _lock."""
+        pad, self.pad = self.pad, None
+        self.ok = False
+        if pad is None:
+            return
+        # vgamepad has no close(): __del__ removes and frees the ViGEm target
+        # when the last reference goes away. Drop the stored ctypes callback
+        # first so no self-reference keeps the pad alive past this call.
+        try:
+            pad.unregister_notification()
+        except Exception:
+            pass
+        try:
+            pad.cmp_func = None
+        except Exception:
+            pass
+        del pad
+
+    def _write_pad_locked(self, s: InputState) -> None:
+        if self.kind == "ds4":
+            self._apply_ds4(self.pad, s)
+        else:
+            self._apply_x360(self.pad, s)
+        self.pad.update()
 
     def _register_rumble(self, vg):
         # vgamepad's notification callback receives the motor speeds directly:
@@ -253,37 +289,36 @@ class WindowsVirtualPad:
         """Unplug the pad so Windows drops the device node instead of keeping
         a ghost "Unknown" controller after the server exits."""
         with self._lock:
-            pad, self.pad = self.pad, None
-            self.ok = False
-        if pad is None:
-            return
-        try:
-            if self.kind == "ds4":
-                pad.unregister_notification(self._ds4_notification)
-            else:
-                pad.unregister_notification(self._x360_notification)
-        except Exception:
-            pass
-        try:
-            pad.close()
-        except Exception:
-            pass
+            self._close_pad_locked()
 
     def apply(self, s: InputState) -> None:
         if not self.ok:
             self._last = s
             return
         with self._lock:
-            p = self.pad
             try:
-                if self.kind == "ds4":
-                    self._apply_ds4(p, s)
-                else:
-                    self._apply_x360(p, s)
-                p.update()
+                self._write_pad_locked(s)
+                # A clean frame ends the burst; only consecutive failures with
+                # no successful update in between should exhaust the retries.
+                self._update_failures = 0
             except Exception as exc:  # pragma: no cover
                 print(f"\n[!] pad update failed: {exc}")
-                self.ok = False
+                self._update_failures += 1
+                if self._update_failures <= self.MAX_UPDATE_RETRIES:
+                    # A transient driver hiccup must not permanently kill the
+                    # pad. Replug once per retry, then resend this same frame.
+                    failures = self._update_failures
+                    self._close_pad_locked()
+                    if self._create_pad_locked():
+                        try:
+                            self._write_pad_locked(s)
+                            self._update_failures = 0
+                        except Exception as retry_exc:
+                            print(f"\n[!] pad retry failed: {retry_exc}")
+                            self._update_failures = failures
+                else:
+                    self.ok = False
+                    self.error = f"virtual pad updates keep failing ({exc})"
             self._last = s
 
     def _apply_x360(self, p, s: InputState) -> None:
@@ -510,8 +545,8 @@ def create_virtual_pad(kind: str, on_rumble=None):
 class PadSlot:
     """
     One virtual controller slot. Up to eight phones can share a PC; each gets
-    its own pad, created lazily on its first input packet and reused when that
-    phone leaves so the controller index stays stable in games.
+    its own pad, created when the slot is assigned and unplugged when the
+    player moves away or leaves. Only occupied slots appear as gamepads.
     """
 
     def __init__(self, index: int, kind: str, on_rumble):
@@ -534,11 +569,26 @@ class PadSlot:
             self.on_rumble(self, small, large)
 
     def release(self) -> None:
+        """Neutralise the pad without unplugging it (brief idle phones)."""
         if self.pad is not None:
             try:
                 self.pad.apply(InputState())
             except Exception:
                 pass
+
+    def close(self) -> None:
+        """Unplug the pad so the OS stops listing an unused controller."""
+        pad, self.pad = self.pad, None
+        if pad is None:
+            return
+        try:
+            pad.apply(InputState())
+        except Exception:
+            pass
+        try:
+            pad.close()
+        except Exception:
+            pass
 
     def reset(self) -> None:
         self.release()
@@ -804,7 +854,10 @@ class VideoServer:
         self.quality = max(20, min(quality, 90))
         self.max_viewers = max(1, max_viewers)
         self.enabled = False
+        # Fatal listener/backend setup errors stay sticky. A transient grab
+        # failure is tracked separately so it cannot mask a failed TCP bind.
         self.error = ""
+        self.capture_error = ""
         self.capture_backend = ""
         self.running = False
         self._thread: Optional[threading.Thread] = None
@@ -818,6 +871,11 @@ class VideoServer:
     def viewers(self) -> int:
         with self._client_lock:
             return len(self._clients)
+
+    @property
+    def problem(self) -> str:
+        """Any current reason the screen stream cannot be offered."""
+        return self.error or self.capture_error
 
     def _profile_options(self, profile: str) -> tuple[int, int, int]:
         """All profiles target the same 60 fps cadence; only sharpness varies."""
@@ -1044,10 +1102,10 @@ class VideoServer:
 
                 try:
                     img = capture.grab()
-                    # A transient failure must not permanently disable the
-                    # browser /screen endpoint via a sticky error string.
-                    if self.error:
-                        self.error = ""
+                    # A transient recovery must not clear a fatal listener or
+                    # capture-backend error recorded during startup.
+                    if self.capture_error:
+                        self.capture_error = ""
                     frame_index += 1
 
                     for profile, viewers in groups.items():
@@ -1076,8 +1134,8 @@ class VideoServer:
                             client.offer(packet)
                 except Exception as exc:  # pragma: no cover
                     message = f"screen capture failed ({exc})"
-                    if message != self.error:
-                        self.error = message
+                    if message != self.capture_error:
+                        self.capture_error = message
                         print(f"  !! {message}")
                     time.sleep(0.5)
                     deadline = time.monotonic()
@@ -1167,10 +1225,10 @@ class Server:
     UDP control server for up to eight phones at once.
 
     Phones are keyed by their 32 bit token, which they keep for the whole
-    session, so a phone that drops off and comes back reuses the same peer and
-    the same virtual controller instead of creating a duplicate. Each peer owns
-    one [PadSlot]; pads are created lazily on the first input packet and are
-    reused after that so the controller order in games stays stable.
+    session, so a phone that drops off and comes back reuses the same peer. Each
+    peer owns one [PadSlot]. A slot's virtual pad is created when it is assigned
+    and unplugged when the player moves away or leaves, so switching to P2 does
+    not leave an idle P1 connected as a second gamepad.
 
     Eight is the supported maximum and the default. Windows' XInput API still
     exposes only four pads; with the default ``x360`` backend, slots 5-8
@@ -1236,7 +1294,7 @@ class Server:
         release_after: float = 1.5,
         video_port: Optional[int] = None,
         video_fps: int = 60,
-        video_width: int = 640,
+        video_width: int = 480,
         video_quality: int = 42,
         video_enabled: bool = True,
         qr_enabled: bool = True,
@@ -1251,10 +1309,11 @@ class Server:
         self.max_phones = max(1, min(int(max_phones), self.MAX_PHONES))
         self.slot_kinds = self._slot_kinds(pad_kind, self.max_phones)
         self.lock = threading.RLock()
-        # Serialises device creation. Games identify controllers by the order
-        # the OS enumerates them, so pads must be created from P1 upward even
-        # when two web tabs register at the same moment.
+        # Serialises pad creation/removal. Only the main loop changes which
+        # slots have a live device, after taking this lock and reading the
+        # dirty flag set by input/web threads.
         self._pad_lock = threading.Lock()
+        self._pads_dirty = False
         self.peers: dict[int, Peer] = {}
         self.slots = [
             PadSlot(index, self.slot_kinds[index], self._slot_rumble)
@@ -1262,7 +1321,8 @@ class Server:
         ]
         # Create the first pad up front so a missing driver is reported in the
         # banner instead of the first time a phone presses a button.
-        self._ensure_pads_through(0)
+        with self._pad_lock:
+            self.slots[0].ensure_pad()
 
         self.qr_enabled = qr_enabled
         self.web_port = int(web_port) if web_port else port + 2
@@ -1331,6 +1391,10 @@ class Server:
         # Collapsing a burst to its newest state is the single biggest win for
         # "latency spikes": the game never replays input from 150 ms ago.
         self._pending: dict[int, tuple[Peer, InputState]] = {}
+        # UDP, Web and main loop all touch _pending. Always take self.lock
+        # before this one; _flush_inputs swaps and releases it before using
+        # helpers that take self.lock.
+        self._pending_lock = threading.Lock()
         self._status_thread: Optional[threading.Thread] = None
         self.hostname = socket.gethostname()[:32]
         self.started = time.time()
@@ -1420,26 +1484,35 @@ class Server:
         return self._ip_cache
 
     # ------------------------------------------------------------------- peers
-    def _ensure_pads_through(self, index: int) -> None:
+    def _sync_pads(self) -> None:
         """
-        Create every virtual pad from P1 up to [index], in slot order.
+        Match live virtual pads to the slots that currently have a player.
 
-        Games number their controllers by the order the OS enumerates them,
-        not by our labels: if a phone asks for P5 while no other pad exists,
-        creating only slot 5 would make it the game's second controller. The
-        lower pads are therefore created first. They stay alive for the
-        lifetime of the server, so the order does not change later.
-
-        [index] is a zero-based slot index and is clamped to the configured
-        slots. Creation is serialised because phone packets and browser
-        WebSocket threads can both register a peer.
+        Called once per main-loop wakeup after slot ownership changes. Creating
+        and unplugging pads here, instead of from the UDP/WebSocket threads that
+        assign slots, keeps device order deterministic and avoids holding the
+        main lock while a driver creates a device.
         """
-        if not self.slots:
-            return
-        last = max(0, min(int(index), len(self.slots) - 1))
+        with self.lock:
+            if not self._pads_dirty:
+                return
+            self._pads_dirty = False
+            active = tuple(slot.index for slot in self.slots if slot.peer is not None)
+            if not active:
+                # Keep the idle P1 the banner probed, but never alongside an
+                # occupied slot: that idle pad is what looked like a second
+                # gamepad after moving to P2.
+                active = (0,)
         with self._pad_lock:
-            for slot in self.slots[:last + 1]:
-                slot.ensure_pad()
+            # Close first: moving P1 -> P2 must not leave P1 connected as an
+            # extra gamepad while P2 is being created.
+            for slot in self.slots:
+                if slot.index not in active and slot.pad is not None:
+                    slot.close()
+            for index in active:
+                slot = self.slots[index]
+                if slot.pad is None:
+                    slot.ensure_pad()
 
     def _slot_of(self, peer: Peer) -> Optional[PadSlot]:
         with self.lock:
@@ -1482,7 +1555,6 @@ class Server:
         a still-active address it does not own ("move").
         """
         moved_from = -1
-        ensure_index = None
         is_new = False
         with self.lock:
             peer = self.peers.get(token)
@@ -1496,7 +1568,8 @@ class Server:
                     peer.addr = addr
                     peer.applied_seq = None
                     peer.seq = 0
-                    self._pending.pop(token, None)
+                    with self._pending_lock:
+                        self._pending.pop(token, None)
                 if web_send is not None:
                     peer.web_send = web_send
                 peer.last_seen = now
@@ -1515,17 +1588,13 @@ class Server:
                     elif now < peer.move_guard:
                         pass
                     else:
-                        peer.stale_slot = 0
-                        target = self.slots[want_slot - 1]
-                        if target.peer is None:
+                        index = want_slot - 1
+                        if self.slots[index].peer is None:
                             old = self._slot_of(peer)
-                            if old is not None:
-                                old.reset()
-                                moved_from = old.index
-                            target.peer = peer
-                            peer.slot = target.index
-                            peer.name = f"{peer.label} {target.index + 1}"
-                            ensure_index = target.index
+                            # Use the same guarded path as swap/consent moves so
+                            # stale frames and move guards behave identically.
+                            if self._move_peer_locked(peer, index):
+                                moved_from = old.index if old is not None else -1
             else:
                 if len(self.peers) >= self.max_phones:
                     return None, False, "full"
@@ -1553,15 +1622,11 @@ class Server:
                 )
                 slot.peer = peer
                 self.peers[token] = peer
-                ensure_index = slot.index
+                self._pads_dirty = True
                 is_new = True
 
-        # Creating a ViGEm/uinput device can take tens of milliseconds; do it
-        # after releasing the lock so discovery/status/ping never wait for it.
-        # A move needs this too: a target slot that was never used has no pad,
-        # and _flush_inputs deliberately skips a slot without one.
-        if ensure_index is not None:
-            self._ensure_pads_through(ensure_index)
+        # Pad creation/removal happens in the main loop so it cannot race with
+        # another assignment. _flush_inputs skips a slot until its pad exists.
         if moved_from >= 0:
             self._log(
                 f"controller moved: {peer.describe()} "
@@ -1576,6 +1641,7 @@ class Server:
             slot = self._slot_of(peer)
             if slot is not None:
                 slot.reset()
+                self._pads_dirty = True
             peer.released = True
             for swap in list(self._swaps.values()):
                 if swap.requester is not peer and swap.target is not peer:
@@ -1603,7 +1669,7 @@ class Server:
     def _screen_info(self):
         """Where the browser screen relay can reach the local video server."""
         video = self.video
-        if video is None or not video.running or video.error:
+        if video is None or not video.running or video.problem:
             return None
         return {
             "host": "127.0.0.1",
@@ -1736,9 +1802,11 @@ class Server:
         target.peer = peer
         peer.slot = index
         peer.name = f"{peer.label} {index + 1}"
+        self._pads_dirty = True
         peer.applied_seq = None
         peer.move_guard = max(peer.move_guard, time.time() + 1.5)
-        self._pending.pop(peer.token, None)
+        with self._pending_lock:
+            self._pending.pop(peer.token, None)
         return True
 
     def _apply_swap_locked(self, swap: SwapRequest):
@@ -1769,11 +1837,13 @@ class Server:
         second.peer = requester
         requester.slot = second.index
         requester.name = f"{requester.label} {second.index + 1}"
+        self._pads_dirty = True
         for peer in (requester, target):
             peer.applied_seq = None
             peer.released = False
             peer.move_guard = max(peer.move_guard, time.time() + 1.5)
-            self._pending.pop(peer.token, None)
+            with self._pending_lock:
+                self._pending.pop(peer.token, None)
         return requester.slot + 1, target.slot + 1
 
     def _cancel_pending(self, requester: Peer) -> None:
@@ -1801,7 +1871,6 @@ class Server:
             return
         asks: list[SwapRequest] = []
         results: list[tuple[Peer, int, int, int]] = []
-        ensure_index = None
         with self.lock:
             if self.peers.get(requester.token) is not requester:
                 return
@@ -1842,8 +1911,7 @@ class Server:
                 if target is None:
                     # The pad is free: this is an ordinary move, not a swap.
                     cancel_existing()
-                    if self._move_peer_locked(requester, target_index):
-                        ensure_index = target_index
+                    self._move_peer_locked(requester, target_index)
                     results.append((requester, self._next_swap_id(),
                                     SLOT_ACCEPTED, target_slot))
                 elif target is requester:
@@ -1918,8 +1986,6 @@ class Server:
                         self._swaps[request_id] = swap
                         asks.append(swap)
 
-        if ensure_index is not None:
-            self._ensure_pads_through(ensure_index)
         for swap in asks:
             self._send_slot_ask(swap)
         for peer, request_id, code, slot in results:
@@ -2148,8 +2214,9 @@ class Server:
                 # Only advance the metric counter for packets that are actually
                 # newer. A late duplicate must not make the next forward gap
                 # look like a huge loss on the settings sparkline.
-                if prev and 0 < state.seq - prev < 300:
-                    peer.lost += state.seq - prev - 1
+                distance = (int(state.seq) - int(prev)) & 0xFFFF
+                if prev and 0 < distance < 300:
+                    peer.lost += distance - 1
                 peer.seq = state.seq
 
         if fresh:
@@ -2161,9 +2228,10 @@ class Server:
         # Keep only the newest state for this peer until the next flush. A
         # burst of queued datagrams then costs one pad update, not one per
         # packet, and the game always sees the freshest input.
-        queued = self._pending.get(token)
-        if queued is None or _seq_newer(state.seq, queued[1].seq):
-            self._pending[token] = (peer, state)
+        with self._pending_lock:
+            queued = self._pending.get(token)
+            if queued is None or _seq_newer(state.seq, queued[1].seq):
+                self._pending[token] = (peer, state)
         return peer
 
     def _wake_loop(self) -> None:
@@ -2191,9 +2259,10 @@ class Server:
         call. This is what turns a stalled link into a single catch-up frame
         instead of a visible replay of the last few hundred milliseconds.
         """
-        if not self._pending:
-            return
-        pending, self._pending = self._pending, {}
+        with self._pending_lock:
+            if not self._pending:
+                return
+            pending, self._pending = self._pending, {}
         for peer, state in pending.values():
             slot = self._slot_of(peer)
             if slot is None or slot.pad is None or slot.peer is not peer:
@@ -2286,6 +2355,9 @@ class Server:
                     self._drain_wake()
                 if self.sock in ready:
                     self._drain(now)
+            # Give newly assigned slots their pad and unplug pads whose player
+            # moved away before writing this batch's input.
+            self._sync_pads()
             # One pad update per phone per wakeup, using only the newest state
             # that arrived in this batch.
             self._flush_inputs(now)
@@ -2352,7 +2424,8 @@ class Server:
                     peer.addr = addr
                     peer.applied_seq = None
                     peer.seq = 0
-                    self._pending.pop(token, None)
+                    with self._pending_lock:
+                        self._pending.pop(token, None)
                 peer.last_seen = now
                 peer_present = True
                 assigned_slot = peer.slot + 1
@@ -2383,23 +2456,13 @@ class Server:
         Safe to call twice, and safe to call from the console-close handler.
         """
         for slot in self.slots:
-            pad = slot.pad
-            if pad is None:
-                continue
-            slot.pad = None
-            try:
-                pad.apply(InputState())
-            except Exception:
-                pass
-            try:
-                pad.close()
-            except Exception:
-                pass
+            slot.close()
 
     def shutdown(self) -> None:
         self.running = False
         self._wake_loop()
-        self._pending.clear()
+        with self._pending_lock:
+            self._pending.clear()
         with self.lock:
             peers = list(self.peers.values())
             self.peers.clear()
@@ -2525,8 +2588,8 @@ class Server:
         if self.qr_enabled:
             self._print_qr_codes(local_ips())
 
-        if self.video is not None and self.video.error:
-            print(f"  !! {self.video.error}")
+        if self.video is not None and self.video.problem:
+            print(f"  !! {self.video.problem}")
         if self.web is not None and self.web.error:
             print(f"  !! {self.web.error}")
         print()
@@ -2830,10 +2893,14 @@ def _run_elevated(program: str, params: str, workdir: str = "") -> int:
         shell32 = ctypes.windll.shell32
         shell32.ShellExecuteExW.argtypes = [ctypes.POINTER(SHELLEXECUTEINFOW)]
         shell32.ShellExecuteExW.restype = wintypes.BOOL
-        if not shell32.ShellExecuteExW(ctypes.byref(info)):
-            return -2 if ctypes.GetLastError() == ERROR_CANCELLED else -1
-
         kernel32 = ctypes.windll.kernel32
+        if not shell32.ShellExecuteExW(ctypes.byref(info)):
+            # ctypes.GetLastError() does not exist; read it from kernel32 before
+            # another call can overwrite the thread's last-error value.
+            kernel32.GetLastError.argtypes = []
+            kernel32.GetLastError.restype = wintypes.DWORD
+            return -2 if kernel32.GetLastError() == ERROR_CANCELLED else -1
+
         kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
         kernel32.WaitForSingleObject.restype = wintypes.DWORD
         kernel32.GetExitCodeProcess.argtypes = [
@@ -3289,11 +3356,16 @@ def main(argv=None) -> int:
     ap.add_argument("--list-ip", action="store_true", help="print local IPs and exit")
     args = ap.parse_args(argv)
 
-    if args.list_ip:
-        for ip in local_ips():
-            print(ip)
-        return 0
-
+    # Validate before --list-ip so a bad configuration is never silently
+    # accepted for that invocation.
+    if not 1 <= args.max_phones <= Server.MAX_PHONES:
+        ap.error(f"--max-phones must be between 1 and {Server.MAX_PHONES}")
+    if not 1 <= args.video_fps <= 60:
+        ap.error("--video-fps must be between 1 and 60 (60 is the ceiling)")
+    if not 160 <= args.video_width <= 1280:
+        ap.error("--video-width must be between 160 and 1280")
+    if not 20 <= args.video_quality <= 90:
+        ap.error("--video-quality must be between 20 and 90")
     if not 1 <= args.port <= 65535:
         ap.error("--port must be between 1 and 65535")
     if args.video_port is not None and not 1 <= args.video_port <= 65535:
@@ -3315,6 +3387,11 @@ def main(argv=None) -> int:
             # UDP and TCP can share a number, but using different ports keeps
             # firewall rules and logs unambiguous.
             ap.error("--web-port must differ from the control port")
+
+    if args.list_ip:
+        for ip in local_ips():
+            print(ip)
+        return 0
 
     if not sys.stdout.isatty():
         try:

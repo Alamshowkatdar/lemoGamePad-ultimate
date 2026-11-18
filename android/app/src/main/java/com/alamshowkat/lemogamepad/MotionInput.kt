@@ -11,14 +11,15 @@ import kotlin.math.atan2
 import kotlin.math.hypot
 
 /**
- * Accelerometer + gyroscope input for the racing and FPS layouts.
+ * Accelerometer + gyroscope input for the Gamepad layout.
  *
- * Only the sensors a mode actually needs are registered, and [stop] releases
- * them in `onPause`, so an idle pad never keeps a sensor awake.
+ * Tilt steering uses the accelerometer; gyro aiming uses the gyroscope. Only
+ * the sensors the user enables are registered, and [stop] releases them in
+ * `onPause`, so an idle pad never keeps a sensor awake.
  *
  * Coordinates are rotated into the current screen orientation before use:
  * the accelerometer gives a gravity-referenced tilt angle (no drift), and the
- * gyroscope gives angular deltas that drive FPS aiming.
+ * gyroscope gives angular deltas that add to right-stick aim.
  */
 class MotionInput(context: Context) {
 
@@ -77,7 +78,7 @@ class MotionInput(context: Context) {
         return note
     }
 
-    /** Enables the sensors the current mode needs. Safe to call repeatedly. */
+    /** Enables the sensors the user has switched on. Safe to call repeatedly. */
     fun setEnabled(steering: Boolean, aim: Boolean) {
         val changed = steering != steeringWanted || aim != aimWanted
         steeringWanted = steering
@@ -115,16 +116,16 @@ class MotionInput(context: Context) {
 
     private fun updateRegistration() {
         val wantAccel = steeringWanted && hasAccelerometer
-        val wantGyro = (aimWanted || steeringWanted) && hasGyroscope
+        val wantGyro = aimWanted && hasGyroscope
         val needed = wantAccel || wantGyro
         if (!needed) {
             stop()
             listener?.onAvailability(hasAccelerometer, hasGyroscope)
             return
         }
-        // A mode switch can change which sensors are needed while the view is
-        // already running (racing needs accel, FPS aim only needs the gyro).
-        // Re-register whenever the set differs, not just on the first start.
+        // Toggling tilt steering or gyro aim changes which sensors are needed
+        // while the view is already running. Re-register whenever the set
+        // differs, not just on the first start.
         if (registered && (wantAccel != accelRegistered || wantGyro != gyroRegistered)) {
             stop()
         }

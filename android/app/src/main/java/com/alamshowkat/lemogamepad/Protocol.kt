@@ -48,7 +48,7 @@ object Proto {
     /** PONG length when the server also reports the pad it assigned. */
     const val PONG_WITH_SLOT_SIZE = HEADER_SIZE + 7
 
-    /** The PC screen stream listens on the UDP port + 1 (9877 by default). */
+    /** The PC screen stream listens TCP on the control UDP port + 1 (9877). */
     const val VIDEO_PORT_OFFSET = 1
 
     /**

@@ -17,7 +17,7 @@ hobby project, so clear bug reports are as valuable as pull requests.
 
 Use the bug report template and include:
 
-- App version (shown in the settings footer) and server version (banner).
+- App version (settings footer) and the release/download name of the PC server.
 - Windows or Linux, the exact OS version, and the transport in use (Wi-Fi,
   USB, or Bluetooth HID).
 - What you expected and what happened.
@@ -30,8 +30,8 @@ Please do not paste keystore contents, private keys, or the contents of
 
 ## Development setup
 
-The project has no runtime dependency beyond the Python standard library on the
-PC and the Android framework on the phone.
+The PC server uses the packages listed in `pc/requirements.txt`; the Android
+app uses only the Android framework and the bundled ZXing jar.
 
 ### PC server (Python 3.9+)
 
@@ -81,6 +81,7 @@ python3 test_latency.py    # receive path, coalescing, ordering, PONG stats
 python3 test_capture.py    # screen-capture backend selection
 python3 test_video.py      # needs a desktop session for real capture
 python3 test_linux_pad.py  # Linux only, needs /dev/uinput
+python3 test_web.py        # browser pad HTTP/WebSocket + pairing key
 ```
 
 CI runs the PC suites on Linux and builds the debug APK. There is no Android

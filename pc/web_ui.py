@@ -60,16 +60,18 @@ def asset_dir() -> str:
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
 
 
-def _clamp(value, low: int, high: int) -> int:
+def _clamp(value, low: int, high: int, fallback: int = 0) -> int:
     try:
         number = int(value)
     except (TypeError, ValueError):
-        return low if low > 0 else 0
+        # An invalid axis or slot must mean neutral/zero, not a negative
+        # endpoint that happens to be the lower bound.
+        return fallback
     return max(low, min(high, number))
 
 
 def _accept_key(key: str) -> str:
-    digest = hashlib.sha1((key + WS_GUID).encode("ascii")).digest()
+    digest = hashlib.sha1((key + WS_GUID).encode("utf-8")).digest()
     return base64.b64encode(digest).decode("ascii")
 
 
@@ -288,7 +290,12 @@ class _Handler(BaseHTTPRequestHandler):
         parsed = urllib.parse.urlsplit(self.path)
         query = urllib.parse.parse_qs(parsed.query)
         given = (query.get("k") or [""])[0]
-        has_key = bool(given) and hmac.compare_digest(given, self.web.key)
+        # compare_digest() only accepts ASCII str on Python 3; a non-ASCII key
+        # raised TypeError and killed the request without a response. Compare
+        # UTF-8 bytes so a bad key is simply refused with 401.
+        has_key = bool(given) and hmac.compare_digest(
+            given.encode("utf-8", "ignore"), self.web.key.encode("utf-8", "ignore")
+        )
 
         if parsed.path == "/ws":
             if not has_key:

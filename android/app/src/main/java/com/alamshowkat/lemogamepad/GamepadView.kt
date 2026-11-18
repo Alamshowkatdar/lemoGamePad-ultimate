@@ -19,8 +19,10 @@ import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.round
 import kotlin.math.roundToInt
 import kotlin.math.sin
+import kotlin.random.Random
 
 // Node kinds. File-level so the nested Node class can use them.
 private const val K_DPAD = 0
@@ -30,10 +32,88 @@ private const val K_FACE = 3
 private const val K_PILL = 4
 private const val K_PS = 5
 private const val K_SHOULDER = 6
+// Kept so old saved layouts keep their numeric IDs; no new nodes use these.
 private const val K_PEDAL = 7
 private const val K_STEER = 8
 private const val K_TOUCHPAD = 9
 private const val K_ACTION = 10
+
+// Swipe-pad feedback. Points are stored in pad-normalised coordinates so the
+// streak survives layout moves and rotation.
+private const val SWIPE_TRAIL_POINTS = 16
+private const val SWIPE_TRAIL_MS = 320f
+private const val SWIPE_FOLLOW_MS = 70f
+private const val SWIPE_RETURN_MS = 150f
+private const val SWIPE_FADE_MS = 420f
+
+// Mouse aim: touch speed becomes a right-axis velocity. It follows the finger
+// quickly and stops shortly after the finger stops, like relative mouse aim in
+// a game. No mouse HID report is involved; the output is still the right stick.
+private const val MOUSE_FOLLOW_MS = 26f
+private const val MOUSE_RETURN_MS = 70f
+private const val MOUSE_FADE_MS = 220f
+private const val MOUSE_MOVE_HOLD_MS = 120L
+private const val MOUSE_ACTIVE_DECAY = 0.95f
+private const val MOUSE_RETURN_DECAY = 0.55f
+// A typical finger sweep is only a few hundred px/s. These gains make that
+// sweep produce a useful right-stick deflection instead of a tiny nudge; the
+// sensitivity slider scales the whole range.
+private const val MOUSE_GAIN_BASE = 240f
+private const val MOUSE_GAIN_SPAN = 960f
+private const val SWIPE_DECAY = 0.86f
+
+// Aim trainer: a short, self-contained drill. Output is suspended while it is
+// open, so the same touch/gyro paths can move the reticle without driving a game.
+private const val TRAINER_TARGETS = 10
+private const val TRAINER_NEXT_DELAY_MS = 260L
+private const val TRAINER_TARGET_RADIUS_DP = 22f
+private const val TRAINER_RETICLE_RADIUS_DP = 12f
+private const val TRAINER_SPAN = 0.72f
+// A free reticle stays where it is dragged. Gyro adds angular movement to that
+// same position; these gains are much smaller than the stick-velocity gain used
+// by live output, which would otherwise slam the reticle to the edge.
+private const val TRAINER_GYRO_GAIN_BASE = 0.25f
+private const val TRAINER_GYRO_GAIN_SPAN = 0.75f
+private const val TRAINER_TAP_SLOP_DP = 8f
+private const val TRAINER_FEEDBACK_MS = 700L
+
+/** Transient alignment line drawn while a control is being dragged. */
+private data class EditorGuide(val vertical: Boolean, val position: Float)
+
+/** Copyable layout attributes. Identity and button mapping stay fixed. */
+private data class NodeLayoutState(
+    val fx: Float,
+    val fy: Float,
+    val scale: Float,
+    val hidden: Boolean,
+    val locked: Boolean,
+    val customized: Boolean,
+)
+
+/** Measured result of one calibration run, used to suggest concrete settings. */
+data class AimTrainerResult(
+    val hits: Int,
+    val shots: Int,
+    val accuracy: Int,
+    val steadiness: Int,
+    /** Time-weighted mean error while the reticle was near the target. */
+    val driftX: Float,
+    val driftY: Float,
+    /** Axis sign changes, used to detect overshoot. */
+    val crossesX: Int,
+    val crossesY: Int,
+    /** Settings at the moment the run ended, in the same units as preferences. */
+    val touchpadSensitivity: Int,
+    val aimSensitivity: Int,
+    val gyroRevertX: Boolean,
+    val gyroRevertY: Boolean,
+    val gyroAim: Boolean,
+    val touchpadMouseMode: Boolean,
+    /** Which input actually moved the reticle during this run. */
+    val usedTouch: Boolean,
+    val usedGyro: Boolean,
+    val summary: String,
+)
 
 /**
  * Stroke paint whose width follows the active palette's border weight, so a
@@ -70,36 +150,84 @@ class GamepadView(context: Context) : View(context) {
     var onHaptic: ((Int) -> Unit)? = null
     var onLayoutChanged: (() -> Unit)? = null
     var onToast: ((String) -> Unit)? = null
-
-    /** Fired after [mode] changed, so the activity can load that mode's layout. */
-    var onModeChanged: ((ControllerMode) -> Unit)? = null
+    /** Notifies the activity so it can hide/restore the screen PiP. */
+    var onAimTrainerChanged: ((Boolean) -> Unit)? = null
+    /** Delivers the end-of-run summary so the activity can show it once. */
+    var onAimTrainerFinished: ((String) -> Unit)? = null
+    /** Delivers the same run as measurable data for one-tap recommendations. */
+    var onAimTrainerResult: ((AimTrainerResult) -> Unit)? = null
 
     /**
-     * Which experience is on screen. Every mode reuses the same [PadState], so
-     * the PC server and the Bluetooth HID host never see a different format.
+     * When enabled the right stick and its click are replaced by a swipe pad.
+     * The pad can use BGMI-style swipes or relative game-mouse aim; gyro aim
+     * drives the same right-stick axes in either mode. The wire format stays
+     * identical for the PC server and the Bluetooth HID host.
      */
-    var mode: ControllerMode = ControllerMode.GAMEPAD
+    var touchpadEnabled = false
         set(value) {
             if (field == value) return
             field = value
+            clearAim()
             buildNodes()
-            layoutControls()
-            applyMotionPrefs()
+            publish(redraw = false)
+            invalidate()
+        }
+
+    /**
+     * Switches the touchpad between BGMI swipes and relative game-mouse aim.
+     * Mouse mode maps finger speed to right-stick velocity, so moving the finger
+     * turns the camera and stopping it stops the camera. It is not an absolute
+     * desktop pointer; the controller output is unchanged.
+     */
+    var touchpadMouseMode = false
+        set(value) {
+            if (field == value) return
+            field = value
+            touchAimX = 0f
+            touchAimY = 0f
+            camLastAt = 0L
+            syncAim()
+            touchpadNode?.clearSwipe()
+            publish(redraw = false)
             invalidate()
         }
 
     // ------------------------------------------------------------- motion input
     private var motion: MotionInput? = null
+    /** Sensors register only between startMotion() and stopMotion(). */
+    private var motionStarted = false
 
     var gyroSteering = false
         set(value) {
             field = value
-            applyMotionPrefs()
+            if (motionStarted) applyMotionPrefs()
         }
     var gyroAim = false
         set(value) {
             field = value
-            applyMotionPrefs()
+            if (motionStarted) applyMotionPrefs()
+        }
+
+    /** Flips only the gyro's left/right aim direction. */
+    var gyroRevertX = false
+        set(value) {
+            if (field == value) return
+            field = value
+            gyroAimX = 0f
+            syncAim()
+            publish(redraw = false)
+            invalidate()
+        }
+
+    /** Flips only the gyro's up/down aim direction. */
+    var gyroRevertY = false
+        set(value) {
+            if (field == value) return
+            field = value
+            gyroAimY = 0f
+            syncAim()
+            publish(redraw = false)
+            invalidate()
         }
 
     /** 0 = gentle (needs a big tilt), 1 = twitchy (a small tilt steers). */
@@ -150,17 +278,107 @@ class GamepadView(context: Context) : View(context) {
     private var tiltDeg = 0f
     /** Steering value after dead zone and curve, -1..1. */
     private var steerValue = 0f
-    /** Camera impulse from the touchpad and gyro, -1..1. */
+    /** Combined right-axis aim from the touchpad and gyro, -1..1. */
     private var aimX = 0f
     private var aimY = 0f
+
+    /** Separate sources let each keep its own decay while adding to [aimX]/[aimY]. */
+    private var touchAimX = 0f
+    private var touchAimY = 0f
+    private var gyroAimX = 0f
+    private var gyroAimY = 0f
+
     private var camLastX = 0f
     private var camLastY = 0f
+    private var camLastAt = 0L
 
     var sensorStatus: String = ""
         private set
 
     val currentSteer: Float get() = steerValue
     val currentTilt: Float get() = tiltDeg
+
+    /**
+     * Modal aim drill. While active, touches drive the reticle through the same
+     * aim sources as the pad, every output packet is held neutral, and Back or
+     * the on-screen DONE button closes it.
+     */
+    var aimTrainerActive: Boolean = false
+        set(value) {
+            if (field == value) return
+            field = value
+            if (value) {
+                trainerBegin()
+                // publish() is already gated; this emits one neutral state so a
+                // connected PC/host never keeps a stale button or axis held.
+                resetInputs()
+            } else {
+                val summary = trainerSummary()
+                val result = trainerBuildResult(summary)
+                trainerReset()
+                resetInputs()
+                onAimTrainerFinished?.invoke(summary)
+                onAimTrainerResult?.invoke(result)
+            }
+            onAimTrainerChanged?.invoke(value)
+        }
+
+    private var trainerNeutralSent = false
+    private var trainerHits = 0
+    private var trainerShots = 0
+    private var trainerTotalMs = 0f
+    private var trainerOnTargetMs = 0f
+    private var trainerTargetX = 0f
+    private var trainerTargetY = 0f
+    private var trainerTargetVisible = false
+    private var trainerNextAt = 0L
+    /** Persistent aim point in trainer-normalised coordinates: +X right, +Y up. */
+    private var trainerReticleX = 0f
+    private var trainerReticleY = 0f
+    private var trainerHitX = 0f
+    private var trainerHitY = 0f
+    private var trainerFlash = 0f
+    private var trainerMissFlash = 0f
+    private var trainerFeedback = ""
+    private var trainerFeedbackUntil = 0L
+    private var trainerComplete = false
+    private var trainerSummaryText = ""
+    private var trainerPointerId = -1
+    private var trainerDownX = 0f
+    private var trainerDownY = 0f
+    private var trainerLastX = 0f
+    private var trainerLastY = 0f
+    private var trainerMoved = false
+    private var trainerErrSumX = 0f
+    private var trainerErrSumY = 0f
+    private var trainerErrMs = 0f
+    private var trainerTouchDelta = 0f
+    private var trainerGyroDelta = 0f
+    private var trainerPrevErrX = 0f
+    private var trainerPrevErrY = 0f
+    private var trainerHasPrevErr = false
+    private var trainerCrossX = 0
+    private var trainerCrossY = 0
+    private val trainerDoneRect = RectF()
+
+    /** Clears every aim source and the touchpad's last sample. */
+    private fun clearAim() {
+        aimX = 0f
+        aimY = 0f
+        touchAimX = 0f
+        touchAimY = 0f
+        gyroAimX = 0f
+        gyroAimY = 0f
+        camLastX = 0f
+        camLastY = 0f
+        camLastAt = 0L
+    }
+
+    /** Adds the touchpad and gyro impulses into the published right axes. */
+    private fun syncAim() {
+        aimX = (touchAimX + gyroAimX).coerceIn(-1f, 1f)
+        aimY = (touchAimY + gyroAimY).coerceIn(-1f, 1f)
+    }
 
     /** Centres tilt steering on how the phone is being held right now. */
     fun calibrateTilt() {
@@ -231,6 +449,9 @@ class GamepadView(context: Context) : View(context) {
             editNode = null
             editPointer = -1
             pinchPointer = -1
+            editBefore = null
+            selectedNodes.clear()
+            activeGuides.clear()
             invalidate()
         }
 
@@ -254,6 +475,9 @@ class GamepadView(context: Context) : View(context) {
         /** True once the user moves or resizes a face button. */
         var customized = false
 
+        /** Locked controls cannot be picked up, hidden, or transformed. */
+        var locked = false
+
         // resolved geometry, recalculated on every size/layout change
         var cx = 0f
         var cy = 0f
@@ -274,10 +498,77 @@ class GamepadView(context: Context) : View(context) {
         /** Analog 0..1 travel for a pedal, and the raw manual steering value. */
         var value = 0f
 
-        /** Touchpad feedback: last finger offset and how recently it moved. */
+        /** Touchpad feedback: eased target, fade and a short swipe history. */
         var trailX = 0f
         var trailY = 0f
         var trail = 0f
+        val swipeX = FloatArray(SWIPE_TRAIL_POINTS)
+        val swipeY = FloatArray(SWIPE_TRAIL_POINTS)
+        val swipeAge = FloatArray(SWIPE_TRAIL_POINTS) { SWIPE_TRAIL_MS }
+        private var swipeHead = 0
+        private var swipeCount = 0
+
+        // Reused by drawTouchpad() so an animating ribbon allocates nothing.
+        val sampleX = FloatArray(SWIPE_TRAIL_POINTS)
+        val sampleY = FloatArray(SWIPE_TRAIL_POINTS)
+        val sampleLife = FloatArray(SWIPE_TRAIL_POINTS)
+
+        fun pushSwipe(x: Float, y: Float) {
+            swipeX[swipeHead] = x
+            swipeY[swipeHead] = y
+            swipeAge[swipeHead] = 0f
+            swipeHead = (swipeHead + 1) % SWIPE_TRAIL_POINTS
+            swipeCount = min(swipeCount + 1, SWIPE_TRAIL_POINTS)
+        }
+
+        fun lastSwipe(): Pair<Float, Float>? {
+            if (swipeCount == 0) return null
+            val i = (swipeHead - 1 + SWIPE_TRAIL_POINTS) % SWIPE_TRAIL_POINTS
+            return swipeX[i] to swipeY[i]
+        }
+
+        /**
+         * Copies chronological, still-visible points into reusable arrays and
+         * returns the count. Drawing uses the real age so the streak thins
+         * smoothly instead of jumping when a new point is pushed.
+         */
+        fun fillSwipeSamples(): Int {
+            var count = 0
+            for (i in 0 until swipeCount) {
+                val idx = (swipeHead - swipeCount + i + SWIPE_TRAIL_POINTS) % SWIPE_TRAIL_POINTS
+                val age = swipeAge[idx]
+                if (age < SWIPE_TRAIL_MS) {
+                    sampleX[count] = swipeX[idx]
+                    sampleY[count] = swipeY[idx]
+                    sampleLife[count] = 1f - age / SWIPE_TRAIL_MS
+                    count++
+                }
+            }
+            return count
+        }
+
+        /** Advances the streak and reports whether any point is still visible. */
+        fun ageSwipe(dt: Float): Boolean {
+            var alive = false
+            for (i in 0 until SWIPE_TRAIL_POINTS) {
+                if (swipeAge[i] >= SWIPE_TRAIL_MS) continue
+                swipeAge[i] += dt
+                if (swipeAge[i] < SWIPE_TRAIL_MS) alive = true
+            }
+            if (!alive) swipeCount = 0
+            return alive
+        }
+
+        fun clearSwipe() {
+            for (i in 0 until SWIPE_TRAIL_POINTS) swipeAge[i] = SWIPE_TRAIL_MS
+            swipeHead = 0
+            swipeCount = 0
+            trailX = 0f
+            trailY = 0f
+            trail = 0f
+            kx = 0f
+            ky = 0f
+        }
 
         // 0 = idle, 1 = fully pressed. Drives the springy press animation.
         var pressT = 0f
@@ -320,7 +611,6 @@ class GamepadView(context: Context) : View(context) {
     private var dpadNode: Node? = null
     private var leftStick: Node? = null
     private var rightStick: Node? = null
-    private var steerNode: Node? = null
     private var touchpadNode: Node? = null
 
     // --------------------------------------------------------------- paints
@@ -338,6 +628,12 @@ class GamepadView(context: Context) : View(context) {
     }
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.LEFT }
     private val bgPaint = Paint()
+    private val trainerFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val trainerLine = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+    }
+    private val trainerText = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER }
     private val rect = RectF()
     private val path = Path()
 
@@ -387,6 +683,24 @@ class GamepadView(context: Context) : View(context) {
     private var pinchStartDist = 1f
     private var pinchStartScale = 1f
 
+    /** Controls selected by the current edit gesture or multi-select taps. */
+    private val selectedNodes = LinkedHashSet<Node>()
+    private val dragStart = HashMap<Node, Pair<Float, Float>>()
+    private val pinchStartScales = HashMap<Node, Float>()
+    private val activeGuides = ArrayList<EditorGuide>()
+    private val clipboard = LinkedHashMap<String, NodeLayoutState>()
+
+    /** Snapshot taken before an in-progress drag, pushed only if it changed. */
+    private var editBefore: String? = null
+    private val undoStack = ArrayDeque<String>()
+    private val redoStack = ArrayDeque<String>()
+
+    var snapEnabled = false
+    var guidesEnabled = true
+    var safeAreaEnabled = false
+    var multiSelectEnabled = false
+    var safeArea = RectF()
+
     /** Old 1.0 layout: face cluster as one node [fx, fy, scale, hidden]. */
     private var legacyFace: FloatArray? = null
 
@@ -401,7 +715,7 @@ class GamepadView(context: Context) : View(context) {
 
     private val longPressRunnable = Runnable {
         val n = editNode ?: return@Runnable
-        if (moved) return@Runnable
+        if (moved || n.locked) return@Runnable
         n.hidden = true
         onHaptic?.invoke(20)
         onToast?.invoke("${n.label} hidden · SHOW ALL restores it")
@@ -423,8 +737,8 @@ class GamepadView(context: Context) : View(context) {
     }
 
     /**
-     * Builds the controls of the current [mode]. Keys are stable per mode, so
-     * a saved layout is applied to the right node after a rebuild.
+     * Builds the single Gamepad layout. Keys are stable so a saved layout is
+     * applied to the right node after the swipe pad is toggled.
      */
     private fun buildNodes() {
         nodes.clear()
@@ -433,14 +747,9 @@ class GamepadView(context: Context) : View(context) {
         dpadNode = null
         leftStick = null
         rightStick = null
-        steerNode = null
         touchpadNode = null
 
-        when (mode) {
-            ControllerMode.GAMEPAD -> buildGamepadNodes()
-            ControllerMode.RACING -> buildRacingNodes()
-            ControllerMode.FPS -> buildFpsNodes()
-        }
+        buildGamepadNodes()
         rebuildPlayOrder()
         layoutControls()
     }
@@ -448,7 +757,13 @@ class GamepadView(context: Context) : View(context) {
     private fun buildGamepadNodes() {
         dpadNode = Node("dpad", K_DPAD, -1, "D-PAD", 0.115f, 0.585f)
         leftStick = Node("ls", K_STICK_L, -1, "LEFT STICK", 0.265f, 0.75f)
-        rightStick = Node("rs", K_STICK_R, -1, "RIGHT STICK", 0.705f, 0.75f)
+        if (touchpadEnabled) {
+            touchpadNode = Node("touchpad", K_TOUCHPAD, -1, "SWIPE AIM", 0.705f, 0.75f).apply {
+                bw = 0.32f; bh = 0.30f
+            }
+        } else {
+            rightStick = Node("rs", K_STICK_R, -1, "RIGHT STICK", 0.705f, 0.75f)
+        }
 
         // A / B / X / Y (or the PS symbols) are four independent controls now.
         // homeDx/homeDy are offsets in H units, so the cluster keeps even pixel
@@ -474,13 +789,10 @@ class GamepadView(context: Context) : View(context) {
         val l3 = Node("l3", K_PILL, Proto.L3, "L3", 0.265f, 0.925f).apply {
             bw = 0.055f; bh = 0.033f
         }
-        val r3 = Node("r3", K_PILL, Proto.R3, "R3", 0.705f, 0.925f).apply {
-            bw = 0.055f; bh = 0.033f
-        }
 
         nodes += dpadNode!!
         nodes += leftStick!!
-        nodes += rightStick!!
+        if (touchpadEnabled) nodes += touchpadNode!! else nodes += rightStick!!
         nodes += tri
         nodes += cir
         nodes += cro
@@ -497,109 +809,11 @@ class GamepadView(context: Context) : View(context) {
         nodes += start
         nodes += ps
         nodes += l3
-        nodes += r3
-    }
-
-    /**
-     * Racing: a steering bar (tilt or thumb) on the bottom, progressive
-     * throttle/brake pedals, and the remaining actions as round buttons.
-     * Throttle is R2 and brake is L2, so the pedals report analog travel to
-     * both the UDP server and the HID host.
-     */
-    private fun buildRacingNodes() {
-        steerNode = Node("steer", K_STEER, -1, "STEER", 0.5f, 0.885f).apply {
-            bw = 0.34f; bh = 0.058f
+        if (!touchpadEnabled) {
+            nodes += Node("r3", K_PILL, Proto.R3, "R3", 0.705f, 0.925f).apply {
+                bw = 0.055f; bh = 0.033f
+            }
         }
-        val gas = Node("gas", K_PEDAL, Proto.R2, "THROTTLE", 0.915f, 0.63f).apply {
-            bw = 0.085f; bh = 0.16f
-        }
-        val brake = Node("brake", K_PEDAL, Proto.L2, "BRAKE", 0.085f, 0.63f).apply {
-            bw = 0.085f; bh = 0.16f
-        }
-        val nitro = Node("nitro", K_ACTION, Proto.R1, "NITRO", 0.86f, 0.31f).apply {
-            bw = 0.074f
-        }
-        val hand = Node("hand", K_ACTION, Proto.L1, "H-BRAKE", 0.14f, 0.31f).apply {
-            bw = 0.074f
-        }
-        val gearUp = Node("gearUp", K_ACTION, Proto.TRIANGLE, "GEAR +", 0.72f, 0.195f).apply {
-            bw = 0.058f
-        }
-        val gearDown = Node("gearDown", K_ACTION, Proto.CROSS, "GEAR −", 0.72f, 0.345f).apply {
-            bw = 0.058f
-        }
-        val cam = Node("cam", K_ACTION, Proto.SQUARE, "CAMERA", 0.245f, 0.195f).apply {
-            bw = 0.058f
-        }
-        val reset = Node("reset", K_ACTION, Proto.CIRCLE, "RESET", 0.365f, 0.195f).apply {
-            bw = 0.058f
-        }
-        val pause = Node("pause", K_PILL, Proto.START, "PAUSE", 0.585f, 0.195f).apply {
-            bw = 0.062f; bh = 0.036f
-        }
-        val view = Node("select", K_PILL, Proto.SELECT, "VIEW", 0.585f, 0.105f).apply {
-            bw = 0.062f; bh = 0.034f
-        }
-
-        nodes += steerNode!!
-        nodes += gas
-        nodes += brake
-        nodes += nitro
-        nodes += hand
-        nodes += gearUp
-        nodes += gearDown
-        nodes += cam
-        nodes += reset
-        nodes += pause
-        nodes += view
-    }
-
-    /**
-     * FPS: left thumb for movement, a camera pad on the right (swipe, plus
-     * optional gyro aim), a large fire button and the usual actions.
-     */
-    private fun buildFpsNodes() {
-        leftStick = Node("ls", K_STICK_L, -1, "MOVE", 0.155f, 0.72f).apply {
-            bw = 0.145f
-        }
-        touchpadNode = Node("cam", K_TOUCHPAD, -1, "CAMERA", 0.615f, 0.60f).apply {
-            bw = 0.35f; bh = 0.33f
-        }
-        val fire = Node("fire", K_ACTION, Proto.R2, "FIRE", 0.895f, 0.755f).apply {
-            bw = 0.105f
-        }
-        val aim = Node("aim", K_ACTION, Proto.L2, "AIM", 0.885f, 0.485f).apply {
-            bw = 0.078f
-        }
-        val reload = Node("reload", K_ACTION, Proto.SQUARE, "RELOAD", 0.755f, 0.215f).apply {
-            bw = 0.058f
-        }
-        val jump = Node("jump", K_ACTION, Proto.CROSS, "JUMP", 0.63f, 0.215f).apply {
-            bw = 0.058f
-        }
-        val crouch = Node("crouch", K_ACTION, Proto.CIRCLE, "CROUCH", 0.505f, 0.215f).apply {
-            bw = 0.058f
-        }
-        val swap = Node("swap", K_ACTION, Proto.TRIANGLE, "SWAP", 0.38f, 0.215f).apply {
-            bw = 0.058f
-        }
-        val sprint = Node("sprint", K_ACTION, Proto.L3, "SPRINT", 0.30f, 0.90f).apply {
-            bw = 0.058f
-        }
-        val pause = Node("pause", K_PILL, Proto.START, "PAUSE", 0.505f, 0.925f).apply {
-            bw = 0.062f; bh = 0.032f
-        }
-
-        nodes += leftStick!!
-        nodes += touchpadNode!!
-        nodes += fire
-        nodes += aim
-        nodes += reload
-        nodes += jump
-        nodes += crouch
-        nodes += swap
-        nodes += sprint
-        nodes += pause
     }
 
     /** Small controls are hit-tested before the sticks so actions stay reachable. */
@@ -614,7 +828,6 @@ class GamepadView(context: Context) : View(context) {
             }
         }
         playOrder += faceNodes
-        steerNode?.let { playOrder += it }
         leftStick?.let { playOrder += it }
         touchpadNode?.let { playOrder += it }
         rightStick?.let { playOrder += it }
@@ -847,6 +1060,7 @@ class GamepadView(context: Context) : View(context) {
             drawHud(canvas)
             drawWatermark(canvas)
         }
+        if (aimTrainerActive) drawAimTrainer(canvas)
 
         if (animating) postInvalidateOnAnimation()
     }
@@ -904,30 +1118,73 @@ class GamepadView(context: Context) : View(context) {
             animating = true
         }
 
-        if (aimX != 0f || aimY != 0f) {
-            // A swipe throws the camera stick off centre, then it glides back.
-            val k = Math.pow(0.86, step.toDouble()).toFloat()
-            aimX *= k
-            aimY *= k
-            if (abs(aimX) < 0.008f) aimX = 0f
-            if (abs(aimY) < 0.008f) aimY = 0f
+        val now = SystemClock.uptimeMillis()
+        var aimChanged = false
+
+        // Gyro aim keeps its existing glide. Touch aim gets a mode-specific
+        // decay: BGMI swipes linger, mouse aim stops as soon as motion stops.
+        if (gyroAimX != 0f || gyroAimY != 0f) {
+            val k = Math.pow(SWIPE_DECAY.toDouble(), step.toDouble()).toFloat()
+            gyroAimX *= k
+            gyroAimY *= k
+            if (abs(gyroAimX) < 0.008f) gyroAimX = 0f
+            if (abs(gyroAimY) < 0.008f) gyroAimY = 0f
+            aimChanged = true
+        }
+
+        if (touchAimX != 0f || touchAimY != 0f) {
+            val moving = touchpadMouseMode && (touchpadNode?.pointer ?: -1) != -1 &&
+                now - camLastAt <= MOUSE_MOVE_HOLD_MS
+            val base = when {
+                !touchpadMouseMode -> SWIPE_DECAY
+                moving -> MOUSE_ACTIVE_DECAY
+                else -> MOUSE_RETURN_DECAY
+            }
+            val k = Math.pow(base.toDouble(), step.toDouble()).toFloat()
+            touchAimX *= k
+            touchAimY *= k
+            if (abs(touchAimX) < 0.004f) touchAimX = 0f
+            if (abs(touchAimY) < 0.004f) touchAimY = 0f
+            aimChanged = true
+        }
+
+        if (aimChanged) {
+            syncAim()
             publish(redraw = false)
-            if (aimX != 0f || aimY != 0f || touchpadNode?.pointer != -1) animating = true
+            if (aimX != 0f || aimY != 0f || (touchpadNode?.pointer ?: -1) != -1) animating = true
+        }
+
+        if (aimTrainerActive) {
+            // The trainer reticle is persistent: only flashes and target spawns
+            // need a redraw here, never an aim-source decay.
+            stepAimTrainer(now, dt)
+            animating = true
         }
 
         val pad = touchpadNode
-        if (pad != null && (pad.trail > 0f || pad.kx != 0f || pad.ky != 0f)) {
+        if (pad != null) {
+            // Ease the contact dot toward the finger instead of snapping to
+            // every MotionEvent, then glide it home after release. Mouse mode
+            // uses shorter times so the pointer feels immediate.
+            val followMs = if (touchpadMouseMode) MOUSE_FOLLOW_MS else SWIPE_FOLLOW_MS
+            val returnMs = if (touchpadMouseMode) MOUSE_RETURN_MS else SWIPE_RETURN_MS
+            val fadeMs = if (touchpadMouseMode) MOUSE_FADE_MS else SWIPE_FADE_MS
+            val follow = 1f - Math.exp((-dt / followMs).toDouble()).toFloat()
+            pad.kx += (pad.trailX - pad.kx) * follow
+            pad.ky += (pad.trailY - pad.ky) * follow
+            if (abs(pad.kx) < 0.001f) pad.kx = 0f
+            if (abs(pad.ky) < 0.001f) pad.ky = 0f
+
+            val streakAlive = pad.ageSwipe(dt)
             if (pad.pointer == -1) {
-                pad.trail = (pad.trail - dt / 420f).coerceAtLeast(0f)
-                pad.kx *= 0.90f
-                pad.ky *= 0.90f
-                if (abs(pad.kx) < 0.01f) pad.kx = 0f
-                if (abs(pad.ky) < 0.01f) pad.ky = 0f
-                if (pad.trail > 0f || pad.kx != 0f || pad.ky != 0f) animating = true
+                pad.trail = (pad.trail - dt / fadeMs).coerceAtLeast(0f)
+                val home = Math.exp((-dt / returnMs).toDouble()).toFloat()
+                pad.trailX *= home
+                pad.trailY *= home
             } else {
                 pad.trail = 1f
-                animating = true
             }
+            if (pad.trail > 0f || pad.kx != 0f || pad.ky != 0f || streakAlive) animating = true
         }
 
         if (themeT < 1f) {
@@ -1487,7 +1744,7 @@ class GamepadView(context: Context) : View(context) {
         )
     }
 
-    /** FPS camera pad: swipe to swing the camera, gyro may add to it. */
+    /** Swipe aim pad: swipe to swing the view, gyro may add to it. */
     private fun drawTouchpad(canvas: Canvas, n: Node) {
         val accent = theme.accent2
         val active = n.pointer != -1
@@ -1495,47 +1752,87 @@ class GamepadView(context: Context) : View(context) {
 
         rect.set(n.cx - n.hw, n.cy - n.hh, n.cx + n.hw, n.cy + n.hh)
         fillPaint.shader = null
-        fillPaint.color = withAlpha(theme.surface, if (active) 235 else 200)
+        fillPaint.color = withAlpha(theme.surface, if (active) 238 else 208)
         canvas.drawRoundRect(rect, radius, radius, fillPaint)
 
-        strokePaint.color = withAlpha(accent, if (active) 225 else 80)
-        strokePaint.strokeWidth = dp(if (active) 2.2f else 1.3f)
+        // Soft inner wash keeps the pad readable on light and dark palettes
+        // without adding another outline or decorative pattern.
+        val inset = dp(2f)
+        rect.inset(inset, inset)
+        fillPaint.color = withAlpha(theme.surfaceAlt, if (theme.dark) 26 else 42)
+        canvas.drawRoundRect(rect, radius, radius, fillPaint)
+        rect.inset(-inset, -inset)
+
+        strokePaint.color = withAlpha(accent, if (active) 210 else 72)
+        strokePaint.strokeWidth = dp(1f + 0.9f * theme.border.coerceIn(0.6f, 1.8f))
         canvas.drawRoundRect(rect, radius, radius, strokePaint)
 
-        // Quiet alignment grid.
-        strokePaint.color = withAlpha(theme.text, if (active) 26 else 16)
-        strokePaint.strokeWidth = dp(1f)
-        for (i in 1..3) {
-            val x = n.cx - n.hw + n.hw * 2f * (i / 4f)
-            val y = n.cy - n.hh + n.hh * 2f * (i / 4f)
-            canvas.drawLine(x, n.cy - n.hh + dp(6f), x, n.cy + n.hh - dp(6f), strokePaint)
-            canvas.drawLine(n.cx - n.hw + dp(6f), y, n.cx + n.hw - dp(6f), y, strokePaint)
+        // One quiet centre point replaces the old grid and crosshair.
+        fillPaint.color = withAlpha(theme.textDim, if (active) 105 else 62)
+        canvas.drawCircle(n.cx, n.cy, dp(if (active) 2.8f else 2.2f), fillPaint)
+
+        val sampleCount = n.fillSwipeSamples()
+        if (sampleCount >= 2) {
+            fun sx(x: Float) = n.cx + x * n.hw * 0.82f
+            fun sy(y: Float) = n.cy + y * n.hh * 0.82f
+
+            // Draw each piece as a short quad through its newest point. The
+            // endpoints are midpoints, so neighbouring pieces join smoothly
+            // while still carrying their own age-based fade and width.
+            for (i in 1 until sampleCount) {
+                val x0 = (sx(n.sampleX[i - 1]) + sx(n.sampleX[i])) / 2f
+                val y0 = (sy(n.sampleY[i - 1]) + sy(n.sampleY[i])) / 2f
+                val x1 = sx(n.sampleX[i])
+                val y1 = sy(n.sampleY[i])
+                val hasNext = i + 1 < sampleCount
+                val x2 = if (!hasNext) x1 else (x1 + sx(n.sampleX[i + 1])) / 2f
+                val y2 = if (!hasNext) y1 else (y1 + sy(n.sampleY[i + 1])) / 2f
+                val life = (n.sampleLife[i] * n.trail).coerceIn(0f, 1f)
+
+                path.reset()
+                path.moveTo(x0, y0)
+                path.quadTo(x1, y1, x2, y2)
+                strokePaint.color = glow(withAlpha(accent, (26 * life).toInt()))
+                strokePaint.strokeWidth = dp(8f + 7f * life)
+                canvas.drawPath(path, strokePaint)
+                strokePaint.color = withAlpha(accent, (52 + 156 * life).toInt())
+                strokePaint.strokeWidth = dp(1.1f + 2.1f * life)
+                canvas.drawPath(path, strokePaint)
+            }
         }
 
-        // Crosshair.
-        strokePaint.color = withAlpha(theme.text, if (active) 130 else 80)
-        strokePaint.strokeWidth = dp(1.2f)
-        val gap = n.hh * 0.10f
-        val arm = n.hh * 0.20f
-        canvas.drawLine(n.cx - gap - arm, n.cy, n.cx - gap, n.cy, strokePaint)
-        canvas.drawLine(n.cx + gap, n.cy, n.cx + gap + arm, n.cy, strokePaint)
-        canvas.drawLine(n.cx, n.cy - gap - arm, n.cx, n.cy - gap, strokePaint)
-        canvas.drawLine(n.cx, n.cy + gap, n.cx, n.cy + gap + arm, strokePaint)
-
-        // Swipe trail and contact dot.
+        val tx = n.cx + n.kx * n.hw * 0.82f
+        val ty = n.cy + n.ky * n.hh * 0.82f
         if (n.trail > 0f) {
-            val tx = n.cx + n.kx * n.hw * 0.82f
-            val ty = n.cy + n.ky * n.hh * 0.82f
-            strokePaint.color = withAlpha(accent, (110 * n.trail).toInt())
-            strokePaint.strokeWidth = dp(2f)
-            canvas.drawLine(n.cx, n.cy, tx, ty, strokePaint)
-            glowPaint.color = glow(withAlpha(accent, (70 * n.trail).toInt()))
-            canvas.drawCircle(tx, ty, n.hh * 0.16f * (0.7f + n.trail * 0.5f), glowPaint)
-            fillPaint.color = withAlpha(accent, (200 * n.trail).toInt())
-            canvas.drawCircle(tx, ty, n.hh * 0.055f, fillPaint)
+            val newestLife = if (sampleCount > 0) n.sampleLife[sampleCount - 1] else n.trail
+            val mark = newestLife * n.trail
+            glowPaint.color = glow(withAlpha(accent, (70 * mark).toInt()))
+            canvas.drawCircle(tx, ty, n.hh * (0.10f + 0.05f * mark), glowPaint)
+            if (touchpadMouseMode) {
+                val s = n.hh * 0.07f
+                path.reset()
+                path.moveTo(tx, ty - s)
+                path.lineTo(tx + s, ty + s)
+                path.lineTo(tx, ty + s * 0.42f)
+                path.lineTo(tx - s, ty + s)
+                path.close()
+                fillPaint.color = withAlpha(accent, (225 * n.trail).toInt())
+                canvas.drawPath(path, fillPaint)
+                strokePaint.color = withAlpha(theme.bgBottom, (130 * n.trail).toInt())
+                strokePaint.strokeWidth = dp(1f)
+                canvas.drawPath(path, strokePaint)
+            } else {
+                fillPaint.color = withAlpha(accent, (225 * n.trail).toInt())
+                canvas.drawCircle(tx, ty, n.hh * (0.05f + 0.015f * mark), fillPaint)
+            }
         }
 
-        val label = if (gyroAim) "CAMERA · GYRO" else "CAMERA"
+        val label = when {
+            touchpadMouseMode && gyroAim -> "MOUSE · GYRO"
+            touchpadMouseMode -> "MOUSE AIM"
+            gyroAim -> "SWIPE · GYRO"
+            else -> "SWIPE AIM"
+        }
         drawTracked(
             canvas, label, n.cx, n.cy - n.hh + dp(12f), n.hh * 0.095f,
             withAlpha(accent, if (active) 235 else 170), n.hh * 0.012f, true,
@@ -1550,11 +1847,8 @@ class GamepadView(context: Context) : View(context) {
         }
     }
 
-    /** Manual steering and gyro both read through here. */
-    private fun effectiveSteer(): Float {
-        val n = steerNode ?: return 0f
-        return if (n.pointer != -1) n.value.coerceIn(-1f, 1f) else if (gyroSteering) steerValue else 0f
-    }
+    /** Tilt steering is active only while a calibrated tilt is off centre. */
+    private fun effectiveSteer(): Float = if (gyroSteering) steerValue else 0f
 
     private fun drawPill(canvas: Canvas, n: Node) {
         val accent = theme.accent
@@ -1679,14 +1973,16 @@ class GamepadView(context: Context) : View(context) {
             h * 0.19f, withAlpha(theme.text, 150),
         )
 
-        // Mode badge, centred under the status pill so a long server name can
-        // never collide with it. Racing shows the live tilt angle.
+        // Badge centred under the status pill so a long server name can never
+        // collide with it. Surface whichever motion input is active.
         val badge = when {
-            mode == ControllerMode.RACING && gyroSteering ->
-                "RACING · ${tiltDeg.roundToInt()}°"
-            mode == ControllerMode.FPS && gyroAim -> "FPS · GYRO"
-            mode == ControllerMode.RACING && steerNode?.pointer != -1 -> "RACING · MANUAL"
-            else -> mode.label
+            gyroSteering && abs(tiltDeg) >= 1f -> "GYRO · ${tiltDeg.roundToInt()}°"
+            touchpadEnabled && touchpadMouseMode && gyroAim -> "MOUSE + GYRO"
+            touchpadEnabled && touchpadMouseMode -> "MOUSE AIM"
+            touchpadEnabled && gyroAim -> "SWIPE + GYRO"
+            touchpadEnabled -> "SWIPE AIM"
+            gyroAim || gyroSteering -> "GYRO READY"
+            else -> "GAMEPAD"
         }
         val bsize = fitTrackedSize(badge, W * 0.42f, H * 0.0172f)
         val badgeY = hudRect.bottom + bsize * 0.92f
@@ -1767,31 +2063,82 @@ class GamepadView(context: Context) : View(context) {
 
     // --------------------------------------------------------------- edit overlay
     private fun drawEditOverlay(canvas: Canvas) {
+        if (safeAreaEnabled && !safeArea.isEmpty) {
+            dashPaint.color = withAlpha(theme.warn, 150)
+            dashPaint.strokeWidth = dp(1.3f)
+            dashPaint.pathEffect = DashPathEffect(floatArrayOf(dp(9f), dp(7f)), 0f)
+            canvas.drawRect(safeArea, dashPaint)
+            dashPaint.pathEffect = null
+            val labelSize = H * 0.015f
+            drawTracked(
+                canvas, "SAFE AREA", safeArea.centerX(),
+                (safeArea.top - dp(9f)).coerceIn(labelSize, H),
+                labelSize, withAlpha(theme.warn, 190), labelSize * 0.1f, true,
+            )
+        }
+
+        if (snapEnabled) {
+            val step = gridStep()
+            dashPaint.color = withAlpha(theme.muted, 55)
+            dashPaint.strokeWidth = dp(0.7f)
+            dashPaint.pathEffect = DashPathEffect(floatArrayOf(dp(2f), dp(6f)), 0f)
+            var gx = step
+            while (gx < W) {
+                canvas.drawLine(gx, 0f, gx, H, dashPaint)
+                gx += step
+            }
+            var gy = step
+            while (gy < H) {
+                canvas.drawLine(0f, gy, W, gy, dashPaint)
+                gy += step
+            }
+            dashPaint.pathEffect = null
+        }
+
         for (n in nodes) {
             if (n.hidden) continue
             val ex = n.extW() + dp(7f)
             val ey = n.extH() + dp(7f)
             rect.set(n.cx - ex, n.cy - ey, n.cx + ex, n.cy + ey)
-            val selected = n === editNode
+            val selected = selectedNodes.contains(n)
 
             if (selected) {
                 fillPaint.shader = null
                 fillPaint.color = withAlpha(theme.accent, 24)
                 canvas.drawRoundRect(rect, dp(12f), dp(12f), fillPaint)
             }
-            dashPaint.color = withAlpha(if (selected) theme.accent else theme.muted, if (selected) 230 else 105)
+            dashPaint.color = withAlpha(
+                if (n.locked) theme.warn else if (selected) theme.accent else theme.muted,
+                if (selected || n.locked) 230 else 105,
+            )
             dashPaint.strokeWidth = if (selected) dp(1.8f) else dp(1.1f)
             dashPaint.pathEffect = DashPathEffect(floatArrayOf(dp(7f), dp(5f)), 0f)
             canvas.drawRoundRect(rect, dp(12f), dp(12f), dashPaint)
             dashPaint.pathEffect = null
 
-            val label = "${n.label}  ${(n.scale * 100f).toInt()}%"
+            val suffix = when {
+                n.locked -> "  LOCKED"
+                selected -> "  SELECTED"
+                else -> ""
+            }
+            val label = "${n.label}  ${(n.scale * 100f).toInt()}%$suffix"
             val size = H * 0.017f
             val tracking = size * 0.09f
             val tw = trackedWidth(label, size, tracking, true)
             val lx = rect.centerX().coerceIn(tw / 2f + dp(4f), W - tw / 2f - dp(4f))
             val ly = if (rect.top > H * 0.10f) rect.top - dp(10f) else rect.bottom + dp(14f)
             drawTracked(canvas, label, lx, ly, size, withAlpha(theme.text, 195), tracking, true)
+        }
+
+        if (activeGuides.isNotEmpty()) {
+            dashPaint.color = withAlpha(theme.ok, 200)
+            dashPaint.strokeWidth = dp(1.2f)
+            dashPaint.pathEffect = DashPathEffect(floatArrayOf(dp(10f), dp(5f)), 0f)
+            for (g in activeGuides) {
+                if (g.vertical) canvas.drawLine(g.position, 0f, g.position, H, dashPaint)
+                else canvas.drawLine(0f, g.position, W, g.position, dashPaint)
+            }
+            dashPaint.pathEffect = null
         }
 
         drawTracked(
@@ -1820,8 +2167,7 @@ class GamepadView(context: Context) : View(context) {
     }
 
     fun resetInputs() {
-        aimX = 0f
-        aimY = 0f
+        clearAim()
         steerValue = 0f
         for (n in nodes) {
             n.pressed = false
@@ -1833,7 +2179,7 @@ class GamepadView(context: Context) : View(context) {
             n.kx = 0f
             n.ky = 0f
             n.value = 0f
-            n.trail = 0f
+            if (n.kind == K_TOUCHPAD) n.clearSwipe() else n.trail = 0f
             n.ripple = 0f
             for (i in 0 until 4) {
                 n.armT[i] = 0f
@@ -1854,6 +2200,11 @@ class GamepadView(context: Context) : View(context) {
 
     // ----------------------------------------------------------------- touch
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (aimTrainerActive) {
+            handleAimTrainerTouch(event)
+            invalidate()
+            return true
+        }
         if (editMode) {
             handleEditTouch(event)
             return true
@@ -1975,10 +2326,10 @@ class GamepadView(context: Context) : View(context) {
                     n.value = 0f
                     n.pressed = false
                 }
-                K_TOUCHPAD -> {
-                    n.kx = 0f
-                    n.ky = 0f
-                }
+                // Leave the eased dot and swipe streak to fade out in
+                // stepAnimations; snapping home here makes the release jump.
+                // Mouse aim stops its velocity decay immediately on release.
+                K_TOUCHPAD -> camLastAt = 0L
                 else -> n.pressed = false
             }
             publish()
@@ -2086,24 +2437,64 @@ class GamepadView(context: Context) : View(context) {
     private fun beginCamera(n: Node, x: Float, y: Float) {
         camLastX = x
         camLastY = y
+        camLastAt = SystemClock.uptimeMillis()
+        val sx = ((x - n.cx) / n.hw).coerceIn(-1f, 1f)
+        val sy = ((y - n.cy) / n.hh).coerceIn(-1f, 1f)
+        n.clearSwipe()
+        n.trailX = sx
+        n.trailY = sy
+        n.kx = sx
+        n.ky = sy
         n.trail = 1f
-        n.kx = 0f
-        n.ky = 0f
+        n.pushSwipe(sx, sy)
+        // A fresh mouse contact starts from rest; a BGMI swipe continues the
+        // previous impulse so quick repeated swipes still chain naturally.
+        if (touchpadMouseMode) {
+            touchAimX = 0f
+            touchAimY = 0f
+            syncAim()
+            publish(redraw = false)
+        }
         tap()
         startAnimating()
     }
 
-    /** Swipe distance becomes a temporary camera-stick deflection. */
+    /**
+     * BGMI mode turns accumulated swipe distance into a camera impulse. Mouse
+     * mode turns finger speed into right-axis velocity instead, so aim tracks
+     * the movement and stops when the finger stops.
+     */
     private fun moveCamera(n: Node, x: Float, y: Float) {
         val dx = x - camLastX
         val dy = y - camLastY
+        val now = SystemClock.uptimeMillis()
+        val dt = if (camLastAt == 0L) 16f else (now - camLastAt).toFloat().coerceIn(4f, 80f)
         camLastX = x
         camLastY = y
-        val gain = (0.7f + 2.8f * touchpadSensitivity) / max(1f, n.hw)
-        aimX = (aimX + dx * gain).coerceIn(-1f, 1f)
-        aimY = (aimY + dy * gain).coerceIn(-1f, 1f)
-        n.kx = ((x - n.cx) / n.hw).coerceIn(-1f, 1f)
-        n.ky = ((y - n.cy) / n.hh).coerceIn(-1f, 1f)
+        camLastAt = now
+
+        if (touchpadMouseMode) {
+            val gain = MOUSE_GAIN_BASE + MOUSE_GAIN_SPAN * touchpadSensitivity
+            val vx = (dx / dt * gain / max(1f, n.hw)).coerceIn(-1f, 1f)
+            val vy = (dy / dt * gain / max(1f, n.hh)).coerceIn(-1f, 1f)
+            val follow = 1f - Math.exp((-dt / MOUSE_FOLLOW_MS).toDouble()).toFloat()
+            touchAimX = (touchAimX + (vx - touchAimX) * follow).coerceIn(-1f, 1f)
+            touchAimY = (touchAimY + (vy - touchAimY) * follow).coerceIn(-1f, 1f)
+        } else {
+            val gain = (0.7f + 2.8f * touchpadSensitivity) / max(1f, n.hw)
+            touchAimX = (touchAimX + dx * gain).coerceIn(-1f, 1f)
+            touchAimY = (touchAimY + dy * gain).coerceIn(-1f, 1f)
+        }
+        syncAim()
+
+        val sx = ((x - n.cx) / n.hw).coerceIn(-1f, 1f)
+        val sy = ((y - n.cy) / n.hh).coerceIn(-1f, 1f)
+        n.trailX = sx
+        n.trailY = sy
+        val last = n.lastSwipe()
+        if (last == null || hypot(sx - last.first, sy - last.second) > 0.04f) {
+            n.pushSwipe(sx, sy)
+        }
         n.trail = 1f
         publish()
         startAnimating()
@@ -2116,7 +2507,24 @@ class GamepadView(context: Context) : View(context) {
                 val i = event.actionIndex
                 val x = event.getX(i)
                 val y = event.getY(i)
-                val n = nodeAt(x, y) ?: return
+                val n = nodeAt(x, y)
+                if (n == null) {
+                    if (multiSelectEnabled && selectedNodes.isNotEmpty()) {
+                        selectedNodes.clear()
+                        invalidate()
+                    }
+                    return
+                }
+                if (n.locked) {
+                    onToast?.invoke("${n.label} is locked · unlock to edit")
+                    return
+                }
+                if (multiSelectEnabled) {
+                    selectedNodes.add(n)
+                } else {
+                    selectedNodes.clear()
+                    selectedNodes.add(n)
+                }
                 editNode = n
                 editPointer = event.getPointerId(i)
                 if (n.hidden) {
@@ -2128,6 +2536,11 @@ class GamepadView(context: Context) : View(context) {
                 downX = x
                 downY = y
                 moved = false
+                beginEditChange()
+                dragStart.clear()
+                for (s in selectedNodes) {
+                    if (!s.locked) dragStart[s] = s.cx to s.cy
+                }
                 removeCallbacks(longPressRunnable)
                 postDelayed(longPressRunnable, 520L)
                 onHaptic?.invoke(8)
@@ -2144,6 +2557,10 @@ class GamepadView(context: Context) : View(context) {
                             event.getY(i) - event.getY(ei),
                         ).coerceAtLeast(1f)
                     }
+                    pinchStartScales.clear()
+                    for (s in selectedNodes) {
+                        if (!s.locked) pinchStartScales[s] = s.scale
+                    }
                     pinchStartScale = editNode?.scale ?: 1f
                     moved = true
                     removeCallbacks(longPressRunnable)
@@ -2159,8 +2576,13 @@ class GamepadView(context: Context) : View(context) {
                             event.getX(pi) - event.getX(ei),
                             event.getY(pi) - event.getY(ei),
                         )
-                        n.scale = (pinchStartScale * (d / pinchStartDist)).coerceIn(0.55f, 1.9f)
-                        if (n.kind == K_FACE) n.customized = true
+                        val ratio = (d / pinchStartDist).coerceIn(0.3f, 3.5f)
+                        for (s in selectedNodes) {
+                            if (s.locked) continue
+                            val base = pinchStartScales[s] ?: s.scale
+                            s.scale = (base * ratio).coerceIn(0.55f, 1.9f)
+                            if (s.kind == K_FACE) s.customized = true
+                        }
                         layoutControls()
                         invalidate()
                     }
@@ -2174,13 +2596,30 @@ class GamepadView(context: Context) : View(context) {
                     moved = true
                     removeCallbacks(longPressRunnable)
                 }
-                if (moved) {
-                    n.fx = ((x + dragOffX) / W).coerceIn(0f, 1f)
-                    n.fy = ((y + dragOffY) / H).coerceIn(0f, 1f)
-                    if (n.kind == K_FACE) n.customized = true
-                    layoutControls()
-                    invalidate()
+                if (!moved) return
+                activeGuides.clear()
+                var targetX = (x + dragOffX).coerceIn(0f, W)
+                var targetY = (y + dragOffY).coerceIn(0f, H)
+                if (snapEnabled) {
+                    val step = gridStep()
+                    targetX = round(targetX / step) * step
+                    targetY = round(targetY / step) * step
                 }
+                if (guidesEnabled) {
+                    val snapped = snapToGuides(n, targetX, targetY)
+                    targetX = snapped.first
+                    targetY = snapped.second
+                }
+                val start = dragStart[n] ?: (n.cx to n.cy)
+                val dx = targetX - start.first
+                val dy = targetY - start.second
+                for ((node, origin) in dragStart) {
+                    node.fx = ((origin.first + dx) / W).coerceIn(0f, 1f)
+                    node.fy = ((origin.second + dy) / H).coerceIn(0f, 1f)
+                    if (node.kind == K_FACE) node.customized = true
+                }
+                layoutControls()
+                invalidate()
             }
             MotionEvent.ACTION_POINTER_UP -> {
                 val id = event.getPointerId(event.actionIndex)
@@ -2195,14 +2634,97 @@ class GamepadView(context: Context) : View(context) {
                 if (id == pinchPointer) pinchPointer = -1
                 if (id == editPointer) finishEdit()
             }
-            MotionEvent.ACTION_CANCEL -> {
-                removeCallbacks(longPressRunnable)
-                editNode = null
-                editPointer = -1
-                pinchPointer = -1
-                invalidate()
+            MotionEvent.ACTION_CANCEL -> finishEdit()
+        }
+    }
+
+    private fun gridStep(): Float = max(8f, dp(18f))
+
+    /** Aligns the dragged control with other controls and the canvas midpoint. */
+    private fun snapToGuides(primary: Node, x: Float, y: Float): Pair<Float, Float> {
+        activeGuides.clear()
+        if (!guidesEnabled) return x to y
+        val threshold = dp(6f)
+        val xs = ArrayList<Float>()
+        val ys = ArrayList<Float>()
+        xs += W / 2f
+        ys += H / 2f
+        for (n in nodes) {
+            if (n === primary || n.hidden || n.locked) continue
+            val ex = n.extW()
+            val ey = n.extH()
+            xs += n.cx
+            xs += n.cx - ex
+            xs += n.cx + ex
+            ys += n.cy
+            ys += n.cy - ey
+            ys += n.cy + ey
+        }
+        var outX = x
+        var outY = y
+        var bestX: Float? = null
+        var bestDX = threshold
+        for (c in xs) {
+            val d = abs(c - x)
+            if (d <= bestDX) {
+                bestDX = d
+                bestX = c
             }
         }
+        var bestY: Float? = null
+        var bestDY = threshold
+        for (c in ys) {
+            val d = abs(c - y)
+            if (d <= bestDY) {
+                bestDY = d
+                bestY = c
+            }
+        }
+        if (bestX != null) {
+            outX = bestX
+            activeGuides += EditorGuide(true, outX)
+        }
+        if (bestY != null) {
+            outY = bestY
+            activeGuides += EditorGuide(false, outY)
+        }
+        return outX to outY
+    }
+
+    private fun beginEditChange() {
+        if (editBefore == null) editBefore = layoutSnapshot()
+    }
+
+    /** Commits the snapshot taken when the current drag began, if it changed. */
+    private fun commitPendingEdit() {
+        val before = editBefore ?: return
+        editBefore = null
+        layoutControls()
+        val after = layoutSnapshot()
+        if (after == before) return
+        pushHistory(before)
+        onLayoutChanged?.invoke()
+        invalidate()
+    }
+
+    /** Applies a tool action as one undoable step. */
+    private fun commitLayoutChange(change: () -> Unit) {
+        commitPendingEdit()
+        val before = layoutSnapshot()
+        change()
+        layoutControls()
+        val after = layoutSnapshot()
+        if (after == before) return
+        pushHistory(before)
+        onLayoutChanged?.invoke()
+        invalidate()
+    }
+
+    private fun pushHistory(snapshot: String) {
+        if (undoStack.lastOrNull() == snapshot) return
+        undoStack.addLast(snapshot)
+        while (undoStack.size > 40) undoStack.removeFirst()
+        redoStack.clear()
     }
 
     private fun finishEdit() {
@@ -2211,14 +2733,16 @@ class GamepadView(context: Context) : View(context) {
         editPointer = -1
         pinchPointer = -1
         moved = false
-        layoutControls()
-        onLayoutChanged?.invoke()
-        invalidate()
+        activeGuides.clear()
+        dragStart.clear()
+        pinchStartScales.clear()
+        commitPendingEdit()
     }
 
     private fun nodeAt(x: Float, y: Float): Node? {
         for (i in nodes.indices.reversed()) {
             val n = nodes[i]
+            if (n.locked) continue
             val ex = n.extW() + dp(10f)
             val ey = n.extH() + dp(10f)
             if (x >= n.cx - ex && x <= n.cx + ex && y >= n.cy - ey && y <= n.cy + ey) return n
@@ -2228,7 +2752,6 @@ class GamepadView(context: Context) : View(context) {
 
     // ------------------------------------------------------------- motion input
     private fun handleTilt(degrees: Float) {
-        if (mode != ControllerMode.RACING) return
         tiltDeg = degrees
         val maxTilt = 38f - 26f * steerSensitivity
         val raw = (degrees / maxTilt).coerceIn(-1f, 1f)
@@ -2245,10 +2768,26 @@ class GamepadView(context: Context) : View(context) {
     }
 
     private fun handleGyro(yaw: Float, pitch: Float) {
-        if (mode != ControllerMode.FPS || !gyroAim) return
+        if (!gyroAim) return
+        if (aimTrainerActive) {
+            // In the drill, gyro nudges the persistent reticle instead of a
+            // decaying right-stick impulse, so it stays where you stop rotating.
+            val gain = TRAINER_GYRO_GAIN_BASE + TRAINER_GYRO_GAIN_SPAN * aimSensitivity
+            val xSign = if (gyroRevertX) -1f else 1f
+            val ySign = if (gyroRevertY) -1f else 1f
+            trainerReticleX = (trainerReticleX + yaw * gain * xSign).coerceIn(-TRAINER_SPAN, TRAINER_SPAN)
+            trainerReticleY = (trainerReticleY + pitch * gain * ySign).coerceIn(-TRAINER_SPAN, TRAINER_SPAN)
+            trainerGyroDelta += abs(yaw) + abs(pitch)
+            startAnimating()
+            invalidate()
+            return
+        }
         val gain = 1.3f + 4.6f * aimSensitivity
-        aimX = (aimX + yaw * gain).coerceIn(-1f, 1f)
-        aimY = (aimY + pitch * gain).coerceIn(-1f, 1f)
+        val xSign = if (gyroRevertX) -1f else 1f
+        val ySign = if (gyroRevertY) -1f else 1f
+        gyroAimX = (gyroAimX + yaw * gain * xSign).coerceIn(-1f, 1f)
+        gyroAimY = (gyroAimY + pitch * gain * ySign).coerceIn(-1f, 1f)
+        syncAim()
         if (aimX != 0f || aimY != 0f) {
             publish(redraw = false)
             startAnimating()
@@ -2256,26 +2795,42 @@ class GamepadView(context: Context) : View(context) {
         invalidate()
     }
 
-    /** Registers only the sensors the current mode actually uses. */
+    /** Registers only the sensors enabled for tilt steering and gyro aim. */
     private fun applyMotionPrefs() {
-        motion?.setEnabled(
-            mode == ControllerMode.RACING && gyroSteering,
-            mode == ControllerMode.FPS && gyroAim,
-        )
+        motion?.setEnabled(gyroSteering, gyroAim)
         sensorStatus = motion?.status().orEmpty()
     }
 
     fun startMotion() {
+        motionStarted = true
         applyMotionPrefs()
         motion?.start()
     }
 
     fun stopMotion() {
+        motionStarted = false
         motion?.stop()
     }
 
     // ---------------------------------------------------------------- publish
     private fun publish(redraw: Boolean = true) {
+        if (aimTrainerActive) {
+            // Gyro callbacks and aim decay keep calling publish() with no
+            // touch at all. Hold every output neutral for the whole drill,
+            // bumping only once when the suspension begins.
+            state.buttons = 0
+            state.lx = 0
+            state.ly = 0
+            state.rx = 0
+            state.ry = 0
+            state.l2 = 0
+            state.r2 = 0
+            if (!trainerNeutralSent) {
+                trainerNeutralSent = true
+                state.bump()
+            }
+            return
+        }
         var b = 0
         for (n in nodes) {
             when (n.kind) {
@@ -2294,21 +2849,25 @@ class GamepadView(context: Context) : View(context) {
 
         state.buttons = b
 
-        if (mode == ControllerMode.RACING) {
-            val steer = effectiveSteer()
-            state.lx = (steer * 32767f).roundToInt()
-            state.ly = 0
-        } else {
-            val (lx, ly) = leftStick?.let { axes(it) } ?: (0 to 0)
-            state.lx = lx
-            state.ly = ly
-        }
+        // Tilt takes over left X only while it is off centre; the physical
+        // stick still drives movement when the phone is held level.
+        val (lx, ly) = leftStick?.let { axes(it) } ?: (0 to 0)
+        val steer = effectiveSteer()
+        state.lx = if (steer != 0f) (steer * 32767f).roundToInt() else lx
+        state.ly = ly
 
-        if (mode == ControllerMode.FPS) {
-            state.rx = (aimX * 32767f).roundToInt()
-            state.ry = (-aimY * 32767f).roundToInt()
+        // The swipe pad replaces right-stick aim when enabled. Without it,
+        // gyro aim is added on top of the stick and fades back to centre.
+        val aimRx = (aimX * 32767f).roundToInt()
+        val aimRy = (-aimY * 32767f).roundToInt()
+        val (rx, ry) = rightStick?.let { axes(it) } ?: (0 to 0)
+        if (touchpadEnabled && touchpadNode != null) {
+            state.rx = aimRx
+            state.ry = aimRy
+        } else if (gyroAim && (aimX != 0f || aimY != 0f)) {
+            state.rx = (rx + aimRx).coerceIn(-32767, 32767)
+            state.ry = (ry + aimRy).coerceIn(-32767, 32767)
         } else {
-            val (rx, ry) = rightStick?.let { axes(it) } ?: (0 to 0)
             state.rx = rx
             state.ry = ry
         }
@@ -2358,12 +2917,21 @@ class GamepadView(context: Context) : View(context) {
                 .append((n.fy * 10000f).toInt()).append(',')
                 .append((n.scale * 1000f).toInt()).append(',')
                 .append(if (n.hidden) 1 else 0)
+            // Trailing field keeps every existing 4-field layout byte-identical.
+            if (n.locked) sb.append(",1")
         }
         return sb.toString()
     }
 
+    /** Applies a saved snapshot without touching undo history. */
     fun applyLayout(data: String?) {
+        applyLayoutData(data)
+        clearLayoutHistory()
+    }
+
+    private fun applyLayoutData(data: String?) {
         if (data.isNullOrBlank()) return
+        legacyFace = null
         val parsed = HashMap<String, IntArray>()
         for (chunk in data.split(';')) {
             val pair = chunk.split(':', limit = 2)
@@ -2375,7 +2943,16 @@ class GamepadView(context: Context) : View(context) {
                 v[1].toIntOrNull() ?: 0,
                 v[2].toIntOrNull() ?: 1000,
                 if (v.getOrNull(3) == "1") 1 else 0,
+                if (v.getOrNull(4) == "1") 1 else 0,
             )
+        }
+
+        // Keep a customised right-stick placement when swapping to or from the
+        // swipe pad, but never inherit a hidden flag.
+        if (touchpadEnabled && touchpadNode != null && !parsed.containsKey("touchpad")) {
+            parsed["rs"]?.let { parsed["touchpad"] = intArrayOf(it[0], it[1], it[2], 0, it.getOrNull(4) ?: 0) }
+        } else if (!touchpadEnabled && rightStick != null && !parsed.containsKey("rs")) {
+            parsed["touchpad"]?.let { parsed["rs"] = intArrayOf(it[0], it[1], it[2], 0, it.getOrNull(4) ?: 0) }
         }
 
         // 1.0 saved the four face buttons as a single "face" node.
@@ -2398,7 +2975,8 @@ class GamepadView(context: Context) : View(context) {
             n.fy = fy
             n.scale = scale
             n.hidden = v[3] == 1
-            // A saved layout that still sits exactly on this mode's defaults
+            n.locked = v.getOrNull(4) == 1
+            // A saved layout that still sits exactly on the defaults
             // must not lock the face cluster out of the spacing slider.
             val moved = abs(fx - n.defFx) > 0.0008f || abs(fy - n.defFy) > 0.0008f
             n.customized = moved || n.hidden || abs(scale - 1f) > 0.01f
@@ -2407,24 +2985,530 @@ class GamepadView(context: Context) : View(context) {
         invalidate()
     }
 
-    fun resetLayout() {
+    fun resetLayout() = commitLayoutChange {
         legacyFace = null
-        aimX = 0f
-        aimY = 0f
+        clearAim()
         for (n in nodes) {
             n.scale = 1f
             n.hidden = false
+            n.locked = false
             n.customized = false
             n.fx = n.defFx
             n.fy = n.defFy
         }
-        layoutControls()
-        invalidate()
+        selectedNodes.clear()
     }
 
-    fun showAll() {
+    fun showAll() = commitLayoutChange {
         for (n in nodes) n.hidden = false
+    }
+
+    fun canUndo(): Boolean = undoStack.isNotEmpty()
+    fun canRedo(): Boolean = redoStack.isNotEmpty()
+    fun hasSelection(): Boolean = selectedNodes.isNotEmpty()
+    fun selectionLocked(): Boolean =
+        selectedNodes.isNotEmpty() && selectedNodes.all { it.locked }
+
+    fun clearLayoutHistory() {
+        undoStack.clear()
+        redoStack.clear()
+        editBefore = null
+    }
+
+    fun undoLayout(): Boolean {
+        commitPendingEdit()
+        if (undoStack.isEmpty()) return false
+        val current = layoutSnapshot()
+        val previous = undoStack.removeLast()
+        redoStack.addLast(current)
+        applyLayoutData(previous)
+        onLayoutChanged?.invoke()
         invalidate()
+        return true
+    }
+
+    fun redoLayout(): Boolean {
+        commitPendingEdit()
+        if (redoStack.isEmpty()) return false
+        val current = layoutSnapshot()
+        val next = redoStack.removeLast()
+        undoStack.addLast(current)
+        applyLayoutData(next)
+        onLayoutChanged?.invoke()
+        invalidate()
+        return true
+    }
+
+    /** Copies position/scale/visibility/lock from every selected control. */
+    fun copySelected(): Int {
+        val targets = selectedNodes.filter { !it.locked }
+        if (targets.isEmpty()) {
+            onToast?.invoke("Tap a control to copy first")
+            return 0
+        }
+        clipboard.clear()
+        for (n in targets) {
+            clipboard[n.key] = NodeLayoutState(
+                n.fx, n.fy, n.scale, n.hidden, n.locked, n.customized,
+            )
+        }
+        onToast?.invoke("Copied ${clipboard.size} control(s)")
+        return clipboard.size
+    }
+
+    /**
+     * Pastes by key, or in key order onto the current selection. Button bits and
+     * identities never change, so this cannot alter the HID report mapping.
+     */
+    fun pasteSelected(): Int {
+        if (clipboard.isEmpty()) {
+            onToast?.invoke("Copy a control first")
+            return 0
+        }
+        val targets = if (selectedNodes.isNotEmpty()) {
+            selectedNodes.sortedBy { it.key }
+        } else {
+            clipboard.keys.mapNotNull { key -> nodeForPasteKey(key) }
+        }
+        val usable = targets.filter { !it.locked }
+        if (usable.isEmpty()) {
+            onToast?.invoke("Unlock a target before pasting")
+            return 0
+        }
+        val entries = clipboard.entries.sortedBy { it.key }
+        var applied = 0
+        commitLayoutChange {
+            for (i in entries.indices) {
+                val target = usable.getOrNull(i) ?: break
+                val s = entries[i].value
+                target.fx = s.fx
+                target.fy = s.fy
+                target.scale = s.scale
+                target.hidden = s.hidden
+                target.locked = s.locked
+                target.customized = s.customized
+                applied++
+            }
+        }
+        onToast?.invoke("Pasted $applied control(s)")
+        return applied
+    }
+
+    private fun nodeForPasteKey(key: String): Node? = nodes.firstOrNull { it.key == key }
+        ?: when (key) {
+            "rs" -> nodes.firstOrNull { it.key == "touchpad" }
+            "touchpad" -> nodes.firstOrNull { it.key == "rs" }
+            else -> null
+        }
+
+    fun toggleLockSelected(): Boolean {
+        val targets = selectedNodes.ifEmpty { listOfNotNull(editNode) }
+        if (targets.isEmpty()) {
+            onToast?.invoke("Tap a control to lock first")
+            return false
+        }
+        val lock = targets.any { !it.locked }
+        commitLayoutChange {
+            for (n in targets) n.locked = lock
+        }
+        onToast?.invoke(if (lock) "Locked ${targets.size} control(s)" else "Unlocked ${targets.size} control(s)")
+        return lock
+    }
+
+    fun mirrorSelected(): Int {
+        val targets = if (selectedNodes.isNotEmpty()) {
+            selectedNodes.toList()
+        } else {
+            nodes.toList()
+        }.filter { !it.locked }
+        if (targets.isEmpty()) {
+            onToast?.invoke("Unlock a control before mirroring")
+            return 0
+        }
+        commitLayoutChange {
+            for (n in targets) {
+                if (n.kind == K_FACE) n.customized = true
+                n.fx = 1f - n.fx
+            }
+        }
+        onToast?.invoke("Mirrored ${targets.size} control(s)")
+        return targets.size
+    }
+
+    // ------------------------------------------------------------- aim trainer
+    private fun trainerBegin() {
+        clearAim()
+        trainerHits = 0
+        trainerShots = 0
+        trainerTotalMs = 0f
+        trainerOnTargetMs = 0f
+        trainerTargetVisible = false
+        trainerNextAt = 0L
+        trainerReticleX = 0f
+        trainerReticleY = 0f
+        trainerHitX = 0f
+        trainerHitY = 0f
+        trainerFlash = 0f
+        trainerMissFlash = 0f
+        trainerFeedback = ""
+        trainerFeedbackUntil = 0L
+        trainerComplete = false
+        trainerSummaryText = ""
+        trainerPointerId = -1
+        trainerMoved = false
+        trainerErrSumX = 0f
+        trainerErrSumY = 0f
+        trainerErrMs = 0f
+        trainerTouchDelta = 0f
+        trainerGyroDelta = 0f
+        trainerHasPrevErr = false
+        trainerCrossX = 0
+        trainerCrossY = 0
+        trainerDoneRect.set(0f, 0f, 0f, 0f)
+        trainerNeutralSent = false
+        trainerSpawnTarget(SystemClock.uptimeMillis())
+    }
+
+    private fun trainerReset() {
+        trainerTargetVisible = false
+        trainerPointerId = -1
+        trainerMoved = false
+        trainerComplete = false
+        trainerDoneRect.set(0f, 0f, 0f, 0f)
+    }
+
+    private fun trainerSummary(): String =
+        trainerSummaryText.ifBlank { trainerBuildSummary() }
+
+    private fun trainerSpawnTarget(now: Long) {
+        var x = 0f
+        var y = 0f
+        // Keep the target away from wherever the persistent reticle currently sits.
+        for (attempt in 0 until 12) {
+            x = Random.nextFloat() * 2f * TRAINER_SPAN - TRAINER_SPAN
+            y = Random.nextFloat() * 2f * TRAINER_SPAN - TRAINER_SPAN
+            if (hypot(x - trainerReticleX, y - trainerReticleY) > 0.38f || attempt == 11) break
+        }
+        trainerTargetX = x
+        trainerTargetY = y
+        trainerTargetVisible = true
+        trainerPrevErrX = trainerReticleX - x
+        trainerPrevErrY = trainerReticleY - y
+        trainerHasPrevErr = true
+        trainerNextAt = now
+    }
+
+    private fun startTrainerPointer(id: Int, x: Float, y: Float) {
+        trainerPointerId = id
+        trainerDownX = x
+        trainerDownY = y
+        trainerLastX = x
+        trainerLastY = y
+        trainerMoved = false
+    }
+
+    private fun handleAimTrainerTouch(event: MotionEvent) {
+        val action = event.actionMasked
+        val i = event.actionIndex.coerceAtMost((event.pointerCount - 1).coerceAtLeast(0))
+        val x = event.getX(i)
+        val y = event.getY(i)
+        val id = event.getPointerId(i)
+        when (action) {
+            MotionEvent.ACTION_DOWN -> {
+                if (trainerDoneRect.contains(x, y)) {
+                    aimTrainerActive = false
+                    return
+                }
+                if (trainerPointerId == -1) startTrainerPointer(id, x, y)
+            }
+            MotionEvent.ACTION_POINTER_DOWN -> {
+                if (trainerPointerId == -1) startTrainerPointer(id, x, y)
+            }
+            MotionEvent.ACTION_MOVE -> {
+                val index = event.findPointerIndex(trainerPointerId)
+                if (trainerComplete || index < 0 || trainerPointerId == -1) return
+                val nx = event.getX(index)
+                val ny = event.getY(index)
+                val dx = nx - trainerLastX
+                val dy = ny - trainerLastY
+                trainerLastX = nx
+                trainerLastY = ny
+                if (!trainerMoved &&
+                    hypot(nx - trainerDownX, ny - trainerDownY) > dp(TRAINER_TAP_SLOP_DP)
+                ) {
+                    trainerMoved = true
+                }
+                if (dx != 0f || dy != 0f) applyTrainerAim(dx, dy)
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> {
+                if (id != trainerPointerId) return
+                val wasTap = !trainerMoved
+                trainerPointerId = -1
+                if (wasTap) trainerFire()
+            }
+            MotionEvent.ACTION_CANCEL -> trainerPointerId = -1
+        }
+    }
+
+    /**
+     * Moves the persistent aim point directly, the way relative mouse aim moves
+     * a cursor: what you drag is where the reticle stays. Reuses the touchpad
+     * sensitivity so the drill reflects the live aim setup.
+     */
+    private fun applyTrainerAim(dx: Float, dy: Float) {
+        val reach = max(1f, min(W, H) * TRAINER_SPAN)
+        val gain = (0.7f + 2.8f * touchpadSensitivity) / reach
+        trainerReticleX = (trainerReticleX + dx * gain).coerceIn(-TRAINER_SPAN, TRAINER_SPAN)
+        // Screen Y grows downwards; trainerReticleY is positive upwards.
+        trainerReticleY = (trainerReticleY - dy * gain).coerceIn(-TRAINER_SPAN, TRAINER_SPAN)
+        trainerTouchDelta += abs(dx) + abs(dy)
+        startAnimating()
+    }
+
+    private fun stepAimTrainer(now: Long, dt: Float) {
+        if (trainerFlash > 0f) trainerFlash = (trainerFlash - dt / 320f).coerceAtLeast(0f)
+        if (trainerMissFlash > 0f) trainerMissFlash = (trainerMissFlash - dt / 260f).coerceAtLeast(0f)
+        if (trainerFeedback.isNotEmpty() && now > trainerFeedbackUntil) trainerFeedback = ""
+        if (trainerComplete) return
+        if (!trainerTargetVisible) {
+            if (now >= trainerNextAt) trainerSpawnTarget(now)
+            return
+        }
+
+        val errX = trainerReticleX - trainerTargetX
+        val errY = trainerReticleY - trainerTargetY
+        val reach = max(1f, min(W, H) * TRAINER_SPAN)
+        val onTarget = hypot(errX, errY) <= dp(TRAINER_TARGET_RADIUS_DP) / reach
+
+        trainerTotalMs += dt
+        if (onTarget) trainerOnTargetMs += dt
+        if (abs(errX) < 0.6f && abs(errY) < 0.6f) {
+            trainerErrSumX += errX * dt
+            trainerErrSumY += errY * dt
+            trainerErrMs += dt
+        }
+        if (trainerHasPrevErr) {
+            if (trainerPrevErrX * errX < 0f && abs(trainerPrevErrX) > 0.03f && abs(errX) > 0.03f) {
+                trainerCrossX++
+            }
+            if (trainerPrevErrY * errY < 0f && abs(trainerPrevErrY) > 0.03f && abs(errY) > 0.03f) {
+                trainerCrossY++
+            }
+        }
+        trainerPrevErrX = errX
+        trainerPrevErrY = errY
+        trainerHasPrevErr = true
+    }
+
+    /** Tap-to-fire: a tap scores only when the persistent reticle is on target. */
+    private fun trainerFire() {
+        if (trainerComplete || !trainerTargetVisible) return
+        val now = SystemClock.uptimeMillis()
+        trainerShots++
+        val reach = max(1f, min(W, H) * TRAINER_SPAN)
+        val onTarget = hypot(
+            trainerReticleX - trainerTargetX,
+            trainerReticleY - trainerTargetY,
+        ) <= dp(TRAINER_TARGET_RADIUS_DP) / reach
+        trainerFeedbackUntil = now + TRAINER_FEEDBACK_MS
+        if (onTarget) {
+            trainerFeedback = "HIT"
+            trainerRegisterHit(now)
+        } else {
+            trainerFeedback = "MISS"
+            trainerMissFlash = 1f
+            onHaptic?.invoke(8)
+        }
+    }
+
+    private fun trainerRegisterHit(now: Long) {
+        trainerHits++
+        trainerFlash = 1f
+        trainerHitX = trainerTargetX
+        trainerHitY = trainerTargetY
+        onHaptic?.invoke(20)
+        trainerTargetVisible = false
+        if (trainerHits >= TRAINER_TARGETS) {
+            trainerComplete = true
+            trainerSummaryText = trainerBuildSummary()
+            onHaptic?.invoke(28)
+        } else {
+            trainerNextAt = now + TRAINER_NEXT_DELAY_MS
+        }
+    }
+
+    private fun trainerBuildSummary(): String {
+        val steady = if (trainerTotalMs > 0f) {
+            (trainerOnTargetMs * 100f / trainerTotalMs).roundToInt().coerceIn(0, 100)
+        } else {
+            0
+        }
+        val accuracy = if (trainerShots > 0) {
+            (trainerHits * 100f / trainerShots).roundToInt().coerceIn(0, 100)
+        } else {
+            0
+        }
+        val avgX = if (trainerErrMs > 0f) trainerErrSumX / trainerErrMs else 0f
+        val avgY = if (trainerErrMs > 0f) trainerErrSumY / trainerErrMs else 0f
+        val advice = when {
+            trainerCrossX >= 2 || trainerCrossY >= 2 ->
+                "You pass the target — lower aim sensitivity."
+            abs(avgX) > 0.12f && abs(avgY) > 0.12f ->
+                "Both axes drift — try both Revert switches."
+            abs(avgX) > 0.12f ->
+                "Horizontal drift — try Revert left/right aim."
+            abs(avgY) > 0.12f ->
+                "Vertical drift — try Revert up/down aim."
+            accuracy >= 80 && steady >= 50 -> "Steady aim — this setup looks aligned."
+            else -> "Drag to move the reticle, then tap to fire."
+        }
+        return "$trainerHits/$TRAINER_TARGETS targets · $accuracy% shots · $steady% on target\n$advice"
+    }
+
+    private fun trainerBuildResult(summary: String): AimTrainerResult {
+        val steady = if (trainerTotalMs > 0f) {
+            (trainerOnTargetMs * 100f / trainerTotalMs).roundToInt().coerceIn(0, 100)
+        } else {
+            0
+        }
+        val accuracy = if (trainerShots > 0) {
+            (trainerHits * 100f / trainerShots).roundToInt().coerceIn(0, 100)
+        } else {
+            0
+        }
+        return AimTrainerResult(
+            hits = trainerHits,
+            shots = trainerShots,
+            accuracy = accuracy,
+            steadiness = steady,
+            driftX = if (trainerErrMs > 0f) trainerErrSumX / trainerErrMs else 0f,
+            driftY = if (trainerErrMs > 0f) trainerErrSumY / trainerErrMs else 0f,
+            crossesX = trainerCrossX,
+            crossesY = trainerCrossY,
+            touchpadSensitivity = (touchpadSensitivity * 100f).roundToInt().coerceIn(0, 100),
+            aimSensitivity = (aimSensitivity * 100f).roundToInt().coerceIn(0, 100),
+            gyroRevertX = gyroRevertX,
+            gyroRevertY = gyroRevertY,
+            gyroAim = gyroAim,
+            touchpadMouseMode = touchpadMouseMode,
+            usedTouch = trainerTouchDelta > 0f,
+            usedGyro = trainerGyroDelta > 0f,
+            summary = summary,
+        )
+    }
+
+    private fun drawAimTrainer(canvas: Canvas) {
+        val t = theme
+        trainerFill.color = withAlpha(t.bgTop, 238)
+        canvas.drawRect(0f, 0f, W, H, trainerFill)
+
+        val cx = W / 2f
+        val cy = H / 2f
+        val reach = max(1f, min(W, H) * TRAINER_SPAN)
+        trainerLine.strokeWidth = dp(1f)
+        trainerLine.color = withAlpha(t.accent, 75)
+        canvas.drawRoundRect(
+            cx - reach - dp(12f), cy - reach - dp(12f),
+            cx + reach + dp(12f), cy + reach + dp(12f),
+            dp(18f), dp(18f), trainerLine,
+        )
+
+        val doneW = dp(78f)
+        val doneH = dp(34f)
+        val doneX = W - doneW - dp(14f)
+        val doneY = dp(14f)
+        trainerDoneRect.set(doneX, doneY, doneX + doneW, doneY + doneH)
+        trainerFill.color = withAlpha(t.surfaceAlt, 240)
+        canvas.drawRoundRect(trainerDoneRect, dp(10f), dp(10f), trainerFill)
+        trainerLine.color = withAlpha(t.accent, 170)
+        canvas.drawRoundRect(trainerDoneRect, dp(10f), dp(10f), trainerLine)
+        trainerText.color = t.text
+        trainerText.textSize = dp(11f)
+        canvas.drawText("DONE", trainerDoneRect.centerX(), doneY + doneH * 0.66f, trainerText)
+
+        trainerText.color = t.accent
+        trainerText.textSize = dp(12f)
+        canvas.drawText("AIM TRAINER  ·  $trainerHits/$TRAINER_TARGETS", cx, dp(38f), trainerText)
+        trainerText.color = withAlpha(t.muted, 225)
+        trainerText.textSize = dp(10f)
+        canvas.drawText(
+            if (trainerComplete) "Run complete · DONE to close"
+            else "Drag to move the reticle · tap to fire",
+            cx,
+            H - dp(22f),
+            trainerText,
+        )
+
+        if (trainerComplete) {
+            val lines = trainerSummaryText.split('\n')
+            val boxW = min(W - dp(48f), dp(330f))
+            val boxH = dp(126f)
+            rect.set(cx - boxW / 2f, cy - boxH / 2f, cx + boxW / 2f, cy + boxH / 2f)
+            trainerFill.color = withAlpha(t.surface, 248)
+            canvas.drawRoundRect(rect, dp(16f), dp(16f), trainerFill)
+            trainerLine.color = withAlpha(t.accent, 200)
+            trainerLine.strokeWidth = dp(1.5f)
+            canvas.drawRoundRect(rect, dp(16f), dp(16f), trainerLine)
+            trainerText.color = t.accent
+            trainerText.textSize = dp(13f)
+            canvas.drawText("RUN COMPLETE", cx, rect.top + dp(30f), trainerText)
+            trainerText.color = t.text
+            trainerText.textSize = dp(11f)
+            for ((index, line) in lines.withIndex()) {
+                canvas.drawText(line, cx, rect.top + dp(58f) + index * dp(24f), trainerText)
+            }
+            return
+        }
+
+        // Hit burst is drawn even after the target disappears, so the shot has
+        // the same visual confirmation as a game hit marker.
+        if (trainerFlash > 0f) {
+            val hx = cx + trainerHitX * reach
+            val hy = cy - trainerHitY * reach
+            trainerLine.color = withAlpha(t.ok, (180 * trainerFlash).toInt())
+            trainerLine.strokeWidth = dp(3f)
+            canvas.drawCircle(hx, hy, dp(TRAINER_TARGET_RADIUS_DP) + (1f - trainerFlash) * dp(34f), trainerLine)
+        }
+
+        if (trainerTargetVisible) {
+            val tx = cx + trainerTargetX * reach
+            val ty = cy - trainerTargetY * reach
+            val tr = dp(TRAINER_TARGET_RADIUS_DP)
+            trainerFill.color = withAlpha(t.accent2, 55)
+            canvas.drawCircle(tx, ty, tr, trainerFill)
+            trainerLine.color = withAlpha(t.accent2, 230)
+            trainerLine.strokeWidth = dp(2f)
+            canvas.drawCircle(tx, ty, tr, trainerLine)
+            trainerLine.color = withAlpha(t.accent2, 110)
+            trainerLine.strokeWidth = dp(1f)
+            canvas.drawCircle(tx, ty, tr * 0.5f, trainerLine)
+        }
+
+        val rx = cx + (trainerReticleX * reach).coerceIn(-reach, reach)
+        val ry = cy - (trainerReticleY * reach).coerceIn(-reach, reach)
+        val rr = dp(TRAINER_RETICLE_RADIUS_DP)
+        if (trainerMissFlash > 0f) {
+            trainerLine.color = withAlpha(FIRE_RED, (170 * trainerMissFlash).toInt())
+            trainerLine.strokeWidth = dp(2f)
+            canvas.drawCircle(rx, ry, rr + (1f - trainerMissFlash) * dp(18f), trainerLine)
+        }
+        trainerLine.color = withAlpha(t.text, 235)
+        trainerLine.strokeWidth = dp(1.6f)
+        canvas.drawCircle(rx, ry, rr, trainerLine)
+        trainerLine.color = withAlpha(t.accent, 230)
+        trainerLine.strokeWidth = dp(2f)
+        canvas.drawLine(rx - rr - dp(6f), ry, rx - rr + dp(2f), ry, trainerLine)
+        canvas.drawLine(rx + rr - dp(2f), ry, rx + rr + dp(6f), ry, trainerLine)
+        canvas.drawLine(rx, ry - rr - dp(6f), rx, ry - rr + dp(2f), trainerLine)
+        canvas.drawLine(rx, ry + rr - dp(2f), rx, ry + rr + dp(6f), trainerLine)
+        trainerFill.color = t.accent
+        canvas.drawCircle(rx, ry, dp(2.5f), trainerFill)
+
+        if (trainerFeedback.isNotEmpty()) {
+            trainerText.color = if (trainerFeedback == "HIT") t.ok else FIRE_RED
+            trainerText.textSize = dp(14f)
+            canvas.drawText(trainerFeedback, rx, ry - rr - dp(24f), trainerText)
+        }
     }
 
     // ----------------------------------------------------------------- misc

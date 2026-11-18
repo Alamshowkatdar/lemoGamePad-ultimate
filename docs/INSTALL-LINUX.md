@@ -39,7 +39,7 @@ sudo sh pc/linux/install-linux.sh
 It installs the distribution packages (Python 3 with venv/pip, the evdev build
 dependencies and a Wayland capture helper), loads the `uinput` module, installs
 the udev rule, adds your user to the `input` group, creates `pc/.venv`,
-pip-installs `pc/requirements.txt`, opens UDP 9876 / TCP 9877 when `ufw` or
+pip-installs `pc/requirements.txt`, opens UDP 9876 / TCP 9877 / TCP 9878 when `ufw` or
 `firewalld` is active, and adds a **lemoGamePad ultimate** entry to the
 application menu. It is safe to rerun, and `pc/linux/install-uinput.sh` still
 works as an alias for older instructions.
@@ -80,9 +80,10 @@ Linux notes:
   `grim` or X11. Set `LEMO_CAPTURE=mss|grim|spectacle|gnome-screenshot` to force a
   backend. On a headless machine the server still works as a gamepad and prints
   why capture is unavailable.
-- `install-linux.sh` opens UDP `9876` and TCP `9877` when `ufw` or `firewalld` is
-  active. Other firewall setups are left alone; if phones cannot reach the PC,
-  allow those two ports yourself.
+- `install-linux.sh` opens UDP `9876` and TCP `9877` (screen stream) plus TCP
+  `9878` (browser pad) when `ufw` or `firewalld` is active. Other firewall
+  setups are left alone; if phones cannot reach the PC, allow those three ports
+  yourself.
 - Rumble uses the standard evdev force-feedback API, so games that rumble
   through SDL work without per-game configuration.
 

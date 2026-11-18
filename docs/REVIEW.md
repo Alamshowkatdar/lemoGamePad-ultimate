@@ -232,8 +232,9 @@ Linux, and the wire protocol, Android app, and Windows path are untouched.
   instead of disconnecting the phone (the timeout also rose from 0.75 s to 5 s).
 - **Quality acknowledgement echoes the profile actually used**, not an unknown
   request byte.
-- **Server defaults now match the CLI** (20 fps / 800 px / quality 50), so
-  direct construction and `--video-*` agree.
+- **Server defaults matched the CLI at 1.4.0** (20 fps / 800 px / quality 50).
+  The current 60 fps smoothness-first defaults are 60 / 480 / 42; direct
+  construction and `--video-*` still agree.
 
 ### Linux notes
 
@@ -453,7 +454,8 @@ devices is possible in ViGEm, but the game can never open more than four.
 ### Design
 
 - **Default 8.** The constructor and the command line now default to eight
-  slots. Pads are still created lazily, so unused slots cost nothing.
+  slots. Pads exist only for occupied slots and are unplugged when a player
+  leaves, so unused slots cost nothing and never appear as extra gamepads.
 - **Mixed backends on Windows.** With the default `--pad x360`, slots 1–4 stay
   Xbox 360/XInput and slots 5–8 automatically use the DualShock 4/HID backend.
   The extra pads are visible to DirectInput, Raw Input, emulators and tools
@@ -707,26 +709,30 @@ reconnected.
 
 ### Fix
 
-- `_ensure_pads_through(index)` creates every pad from P1 up to the requested
-  slot, in slot order. The constructor calls it for P1 so a missing driver
-  still appears in the banner.
-- `_register_peer` runs it for a new peer and for a move, after releasing the
-  main lock so discovery, status and ping do not wait for ViGEm/uinput.
-- A dedicated `_pad_lock` serialises creation: phone packets and browser
-  WebSocket threads can both register peers, and two registrations creating
-  pads out of order would reintroduce the mismatch.
-- The existing-peer branch now falls through to the shared creation path, and
+- `_sync_pads()` runs once per main-loop wakeup after slot ownership changes.
+  It unplugs pads for empty slots first, then creates pads for occupied slots
+  in slot order. The constructor still probes P1 up front so a missing driver
+  appears in the banner; while no player is connected, that idle P1 is the only
+  pad.
+- Slot assignment only sets `_pads_dirty` under the main lock. Device creation
+  and removal stay on the main loop, so UDP and WebSocket threads cannot race
+  and no driver call blocks discovery, status or ping.
+- A dedicated `_pad_lock` serialises the device work and keeps slot order
+  deterministic when two players connect at once.
+- The existing-peer branch still falls through to the guarded move path, and
   the `is_new` flag replaces the old `ensure is not None and moved_from < 0`
   expression.
 
-Pads created for lower slots stay alive for the lifetime of the server, so the
-enumeration order cannot change when a phone leaves or reconnects.
+Keeping lower pads alive used to stabilise enumeration, but it also meant one
+phone moving from P1 to P2 left two gamepads in the OS device list. Active-only
+pads remove that ghost controller; a reconnect recreates the pad for the slot
+the player actually chose.
 
 ### Result
 
-- On Linux, eight requests create eight distinct real devices
+- On Linux, eight connected peers create eight distinct real devices
   (`/dev/input/event18`–`event25` in the test environment), and a live move
-  from P1 to P8 leaves the old slot empty and the new pad receiving input.
+  from P1 to P8 unplugs P1 instead of leaving two pads connected.
 - Eight simultaneous browser WebSocket clients receive P1–P8 in order.
 - Windows still exposes at most four pads to XInput-only games (a Windows API
   limit). Pads 5–8 use the DS4/HID backend for DirectInput/Raw Input games and
@@ -735,10 +741,11 @@ enumeration order cannot change when a phone leaves or reconnects.
 ### Tests
 
 - `pc/test_multi.py::test_pad_creation_order` replaces the pad factory with a
-  fake and asserts that a P5 request creates exactly P1–P5, never P6–P8.
-- `test_requested_slot` now waits for the moved-to pad and sends a button
-  press, so a move that leaves `pad is None` fails instead of silently
-  dropping input.
+  fake and asserts that a P5 request replaces the idle P1 probe, leaves P1–P4
+  unplugged, and never creates P6–P8.
+- `test_requested_slot` now waits for the moved-to pad, sends a button press,
+  and checks that the live pad count matches the peer count, so a stale pad or
+  a move that leaves `pad is None` fails instead of silently dropping input.
 
 ## Player swap consent (1.6.9)
 
@@ -1008,18 +1015,23 @@ warnings). A full `:app:assembleDebug` was run after the version bump. The
 remaining `grep -ri "bluetooth|PAN|bnep|tether"` hits are either Wi-Fi/USB
 tethering (still real) or the new HID documentation.
 
-## Premium controller modes (1.7.0)
+## Premium controller modes (1.7.0, superseded)
 
-1.7.0 turns the single gamepad canvas into three purpose-built experiences
+> Kept for release history only. These modes and their layouts were removed in
+> the current build; the single-layout design is described in **Single-layout
+> gyro and swipe aim** at the end of this document. Everything below is written
+> in past tense even where a sentence describes code that no longer exists.
+
+1.7.0 turned the single gamepad canvas into three purpose-built experiences
 while leaving every wire format alone. The design constraint throughout was
-that the PC never has to learn a new protocol: all three modes still publish
+that the PC never had to learn a new protocol: all three modes published
 the same `PadState` through `Link`, so UDP on 9876, the TCP video stream on
 9877 and the 9-byte HID report are byte-for-byte compatible with 1.6.13.
 
 ### Mode-specific mappings
 
-Each `ControllerMode` maps its controls onto the **same** `Proto` bits and axes
-rather than inventing new ones:
+Each old `ControllerMode` mapped its controls onto the **same** `Proto` bits and
+axes rather than inventing new ones:
 
 | Mode | Control | Wire |
 | --- | --- | --- |
@@ -1033,10 +1045,10 @@ rather than inventing new ones:
 | FPS | reload / jump / crouch / swap | SQR / CROSS / CIR / TRI |
 | FPS | sprint / pause | L3 / START |
 
-`MotionInput` re-registers only when the *set* of required sensors changes, so
-switching between tilt steering and gyro aim does not churn the sensor
-listeners. It centres on the first sample and also exposes an explicit
-`calibrate()` for the Racing calibration action. Both handlers clear their
+`MotionInput` re-registered only when the *set* of required sensors changed, so
+switching between tilt steering and gyro aim did not churn the sensor
+listeners. It centred on the first sample and also exposed an explicit
+`calibrate()` for the Racing calibration action. Both handlers cleared their
 registration flags on `stop()`.
 
 ### Theme system
@@ -1056,10 +1068,11 @@ landscape and taps there are swallowed.
 
 ### Layouts
 
-`LayoutStore` scopes named layouts per mode. A node is only marked customized
-when it is actually moved, resized or hidden, so loading a default-position
-layout does not break face-button spacing. Live prefs (`pad_alpha`,
-`face_spacing`) stay global; geometry is per mode.
+`LayoutStore` scoped named layouts per mode in 1.7.0. A node is only marked
+customized when it is actually moved, resized or hidden, so loading a
+default-position layout does not break face-button spacing. Live prefs
+(`pad_alpha`, `face_spacing`) stayed global; geometry was per mode. The current
+build uses one Gamepad layout instead (see the final section).
 
 ### Bluetooth HID descriptor fix
 
@@ -1116,7 +1129,7 @@ leave those alone). The 9-byte report and button descriptor are unchanged from
 the mapping verified in the previous section.
 
 On a physical SM_S928B, UDP output was decoded
-for every mapped control in all three modes: manual steering ~32719 on left X,
+for every mapped control in the three released modes: manual steering ~32719 on left X,
 gas/brake analog L2/R2 at 242, all Racing buttons, FPS camera swipe on right
 X with decay to zero, fire/aim analog triggers, face actions, sprint and pause.
 Theme preview CANCEL/APPLY, all settings cards, mode chips and the studio card
@@ -1161,3 +1174,112 @@ real backend is Wayland `grim`, which launches a subprocess per frame and costs
 ~180 ms/frame; a phone connected here correctly reported ~5 fps. That is a
 capture-backend limit, not a pacing limit — Windows/X11 use in-process `mss`
 and follow the measured path. See LIMITATIONS.md.
+
+## Single-layout gyro, swipe and mouse aim (Unreleased)
+
+The three-mode experiment made the common case harder: a user who wanted gyro
+steering in a racing game and gyro aim in a shooter had to swap experiences and
+maintain separate layouts. The runtime cannot identify the foreground game, so
+the modes were removed rather than pretending to auto-detect one.
+
+The remaining Gamepad layout publishes both motion streams at once from one
+setting:
+
+| Input | Wire | Behaviour |
+| --- | --- | --- |
+| Tilt | left X | Overrides the left stick only while the calibrated tilt is outside the dead zone; level returns control to the stick. |
+| Gyro rotation | right X/Y | Adds to right-stick aim and decays to centre; works with or without the aim pad. Each axis can be reversed independently with the revert options. |
+| Aim pad (BGMI) | right X/Y | Replaces the right stick and R3 when enabled. Relative swipes add a decaying camera impulse. |
+| Aim pad (mouse) | right X/Y | Same replacement, but finger speed becomes a right-axis velocity that stops with the finger. |
+
+The pad's own feedback is a 16-point normalised streak. New points are added
+only after ~4 % of the pad width of travel, so a slow drag does not flood the
+history. In BGMI mode the contact dot follows those points through a 70 ms
+exponential ease; after release the target returns over 150 ms while the streak
+thins and fades over 320/420 ms. Mouse mode uses 26/70/220 ms timings and a
+cursor marker so the pad feels immediate. Points are stored in pad-normalised
+coordinates, so rotation and layout edits do not distort them. The streak is
+now drawn as joined quadratic pieces whose width and alpha come from each
+point's actual age, not just its position in the ring buffer, so old tail
+sections fade smoothly while the head stays bright. The old crosshair and
+alignment grid were removed in favour of one quiet centre dot; the pad's fill,
+border and glow all resolve through the active theme, including its border
+weight and shadow strength.
+
+Touch and gyro aim are kept in separate source values so they retain their own
+decay time constants before being summed into the published right axes. BGMI
+swipes keep the original ~100 ms glide; gyro aim keeps the same decay in both
+modes. Mouse aim samples finger velocity (`dx/dt`, normalised by pad width),
+smoothes it over 26 ms, and decays quickly once motion stops. The velocity gain
+is deliberately high so a few-hundred-pixel-per-second sweep reaches a useful
+right-stick deflection, and the active decay is held for 120 ms after the last
+motion sample so a game does not miss a short aim stroke. No synthetic mouse
+report or absolute pointer position is involved: a game still sees a right
+stick whose deflection is proportional to how fast the finger is moving, which
+is how relative game-mouse aim maps onto a controller input.
+
+The two revert options are applied at the source in `handleGyro()`: the X option
+negates yaw and the Y option negates pitch before the gain is applied. They are
+independent and persisted separately, so reversing only an unwanted axis does
+not disturb the other one.
+
+`publish()` picks the right-stick source explicitly. With the aim pad enabled
+there is no physical right stick, so the combined aim impulse is the whole
+right-axis output. Otherwise gyro aim is added to the stick and clamped, then
+fades away, so a normal gamepad still behaves like one when the phone is still.
+The `Proto` record, UDP port 9876, video TCP port 9877 and the 9-byte HID report
+are untouched.
+
+`ControllerMode.kt` was deleted. `LayoutStore` now uses the original
+`layout`/`layout_active`/`layouts` keys directly; stale per-mode keys are simply
+ignored. `applyLayout()` maps a saved `rs` entry onto the new `touchpad` key when
+the swipe pad is switched on, and back again when it is switched off, without
+carrying over a hidden flag. This keeps a customised right-side placement across
+the toggle.
+
+`MotionInput` now registers the accelerometer only for tilt steering and the
+gyroscope only for gyro aim. The accelerometer is the drift-free steering
+source; the gyroscope supplies angular deltas. Both can be registered together
+on the one layout.
+
+### Verification
+
+`:app:lintDebug` and `:app:assembleDebug` pass offline. The PC protocol tests
+(`test_capture.py`, `test_web.py`, `test_multi.py`, `test_latency.py` and
+`test_linux_pad.py`) still pass. The PC server also received reliability fixes
+in this pass; the wire protocol did not change.
+
+On the connected SM_S928B, the new `touchpad_mouse` preference persisted and the
+settings toggle was reachable. With the pad enabled and a 200 px swipe over
+500 ms, UDP input packets showed BGMI mode peaking at `rx=17932` and settling by
+~1.17 s, while mouse mode peaked at `rx=4991` and returned to zero by ~0.73 s.
+That matches the design: BGMI accumulates swipe distance, mouse mode publishes
+finger speed and stops promptly. BGMI swipe and gyro tuning were left unchanged
+when mouse mode is off.
+
+## Downloads site and one connection card (Unreleased)
+
+The project needed one public place to send people who ask where the APK and PC
+server are. `docs/index.html` is a dependency-free static page: download cards
+point at the existing release assets, the setup guides are reproduced in short
+form on the page, and each section links to the longer Markdown guide in the
+repository. It deliberately does **not** host the browser pad. That pad has to be
+served by the player's own PC so the WebSocket stays on the local network; a
+public HTTPS page cannot open `ws://PC-IP:9878`, and relaying input through a
+website would add latency and a new trust boundary.
+
+Inside the app, `STATUS` and `LIVE LINK DASHBOARD` were two cards showing the
+same `link.rttHistory()`. They are now one `CONNECTION STATUS` card with one
+graph and one compact PATH/RTT/LOSS/VIDEO block. The connection settings card is
+still separate because it contains fields and chips, not live readouts.
+
+The battery-saver switch is deliberately not a "hide the connection" switch. It
+pauses the RTT graph and detailed stat refresh and slows the settings poll from
+500 ms to 1.2 s, but the status dot, transport state, scan, connect, reconnect and
+disconnect controls stay visible and live. The preference is persisted under
+`battery_saver_live_stats`.
+
+Connection Doctor's first step now gives the actual Windows and Linux commands
+and offers **GET PC SERVER** and **SETUP GUIDE** buttons. Both use
+`ACTION_VIEW` with a `Uri`, wrapped so a device without a browser shows a toast
+instead of crashing.

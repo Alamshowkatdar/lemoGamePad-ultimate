@@ -10,6 +10,7 @@ pc/
   linux_pad.py              Linux backend: creates a standard evdev pad via /dev/uinput
   simulate_client.py        fake controller for testing without a phone
   test_multi.py             multi-phone suite: discovery, slots, rumble, reconnect
+  test_latency.py           receive path, coalescing, ordering, PONG stats
   test_linux_pad.py         Linux pad + force-feedback test (no phone/game needed)
   test_video.py             screen stream (incl. multi-viewer) + QR smoke test
   test_capture.py           screen-capture backend selection (fake Wayland tools)
@@ -40,12 +41,17 @@ android/
     MainActivity.kt         lifecycle, transports, QR, PiP, edit mode
     SettingsPanel.kt        themed settings sheet + shared preference keys
     BluetoothHidSupport.kt  adapter state, permissions, discoverable mode
-    BluetoothHidGamepad.kt   automatic standard HID gamepad for PC/Android hosts
+    BluetoothHidGamepad.kt  standard HID gamepad for explicitly picked PC/Android hosts
     GamepadView.kt          themed canvas controller, edit mode, multitouch
-    Theme.kt                nine palettes, cross-fade, branding
+    Theme.kt                ten palettes, cross-fade, branding
     Link.kt                 UDP sender, ping/rumble, discovery, transports
     ScreenView.kt           draggable PC-screen PiP client
     ScanActivity.kt         Camera1 + ZXing QR scanner
+    LayoutStore.kt          single-layout persistence and saved presets
+    LayoutDialogs.kt        themed rename/delete layout dialogs
+    LatencyGraph.kt         settings-sheet RTT sparkline
+    MotionInput.kt          tilt steering + gyro aim sensor input
+    ThemePreview.kt         animated theme picker tile
     Protocol.kt             wire format constants + shared state
   keystore/                 your local signing key (git-ignored, never pushed)
 docs/

@@ -20,10 +20,12 @@
 - Each phone is keyed by its token. Up to eight `PadSlot`s exist (eight by
   default; see `--max-phones`); a slot's virtual pad is created on first input and reused
   afterwards, keeping controller order stable for games. A phone may ask for a
-  specific pad in settings: a free request is honoured, a busy one falls back to
-  the next free pad, and the request is retried on later packets so the phone
-  moves as soon as the wanted pad frees up. The server reports the pad it
-  actually assigned in every `PONG`.
+  specific pad in settings: a free requested slot is taken immediately. A new
+  phone asking for a busy slot falls back to the next free pad; an already
+  connected phone asking for another player's occupied slot instead sends a
+  consent request, and the move happens only after Accept. Requests are retried
+  on later packets so the phone moves as soon as the wanted pad frees up. The
+  server reports the pad it actually assigned in every `PONG`.
 - Rumble: the virtual pad reports its motor speeds (ViGEmBus about once a second
   and on every change; evdev on each force-feedback event). The server forwards
   them as type-7 packets **to that slot's phone only**, dropping repeats, and the
@@ -39,9 +41,10 @@
 The browser gamepad is a second transport in front of the same slot logic. The
 PC serves a page on TCP control port + 2 and accepts a WebSocket at `/ws?k=<key>`:
 
-- The page and every asset require the per-run pairing key in `?k=`; missing or
-  wrong keys return `401`. WebSocket upgrades are additionally rejected with
-  `403` when the `Origin` header does not match the `Host`.
+- The page, `/ws` and `/screen` require the per-run pairing key in `?k=`;
+  missing or wrong keys return `401`. CSS, JavaScript and icons are public
+  static code and load without the key. WebSocket upgrades are additionally
+  rejected with `403` when the `Origin` header does not match the `Host`.
 - Input frames are JSON text messages. The browser sends
   `{"t":"i","b":<button bits>,"lx":…,"ly":…,"rx":…,"ry":…,"l2":…,"r2":…,"w":<slot>}`;
   the field names mirror the UDP packet (button bits, signed 16-bit axes,

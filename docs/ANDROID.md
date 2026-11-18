@@ -175,17 +175,21 @@ The phone can also be a standard Bluetooth HID gamepad for a **PC or Android
 phone**, with no server and no tethering. Android 9+ is required on the
 controller phone because that is where Android added the HID device profile.
 
-1. Open the app. It registers **Lemo GamePad** automatically and, on the first
-   run, asks to be discoverable — accept the system prompt (or tap
-   **MAKE DISCOVERABLE** in the Bluetooth card).
+1. Open the app and **BLUETOOTH GAMEPAD** → **MAKE DISCOVERABLE** (or accept the
+   system prompt when it asks). Opening the app alone does **not** advertise the
+   pad or connect to anything.
 2. On the host: open Bluetooth settings, pair **Lemo GamePad**.
-3. Play. The card changes to `● Connected — <host> is receiving input`, and the
-   app reconnects to the bonded host by itself after a restart or a Bluetooth
-   drop.
+3. Back in the app, open **BLUETOOTH GAMEPAD**, wait for the bonded host to
+   appear, then tap **SELECT HOST** on that row. The card changes to
+   `● Connected — <host> is receiving input`.
+
+After a restart, or after a Bluetooth drop, pick the host again with
+**SELECT HOST**. The app deliberately never reconnects by itself, and calls or
+audio keep their normal Bluetooth profiles.
 
 The Bluetooth card also has **ALLOW NEARBY DEVICES** (Android 12+),
-**BLUETOOTH SETTINGS** and **MAKE DISCOVERABLE**. None of them is needed after
-the first pairing.
+**BLUETOOTH SETTINGS** and **DISCONNECT**. Pairing is a one-time step; connecting
+is an explicit choice each time.
 
 Keep the app in the foreground while you play: Android releases the HID profile
 when the app process stops. Leaving the app sends one neutral report first, so a
@@ -223,27 +227,29 @@ both accent colours, so you can see the look before you pick it.
 
 | Theme | Look |
 |---|---|
-| **Neon** | Default, near-black glass with a neon-green glow. |
-| **Midnight** | Blue / violet night palette. |
-| **Violet** | Deep purple with pink accents. |
-| **Crimson** | Red and amber. |
-| **Solar** | Warm sunset: copper background with amber and coral controls. |
-| **Retro** | Soft graphite and ice blue. |
-| **Arctic** | Light theme for daylight. |
-| **Mono** | High-contrast graphite: pure greys with a white key light. |
-| **AMOLED** | True-black background with amber and coral controls. OLED panels can switch the black pixels fully off, reducing power; LCDs see no saving. |
+| **Midnight Black** | Deep blue glass with a quiet violet key light. |
+| **Cyberpunk** | Neon pink and cyan over a midnight grid. |
+| **Arctic** | Frosted light glass, icy blue and soft daylight. |
+| **AMOLED** | True black with one warm accent; OLED panels can switch black pixels fully off. |
+| **Racing Red** | Carbon fibre, telemetry red and a fast horizon. |
+| **Xbox** | Xbox green, dark carbon and a soft central light. |
+| **PlayStation** | PlayStation blue, white type and a deep navy field. |
+| **Minimal** | Paper white, one blue accent and no distractions. |
+| **Retro Arcade** | Cabinet purple, coin-op yellow and CRT scanlines. |
+| **Stealth** | Graphite, low light and no wasted colour. |
 
 Switching a theme cross-fades every colour over 300 ms with a smootherstep
 curve, so there is no visible kick when the fade starts or ends. Buttons spring
 under your thumb (a light, slightly under-damped spring that settles in about
 120 ms), the status dot ripples only when the connection state actually changes,
 the PiP window scales in, and the edit toolbar slides down from the top.
-Each palette also has its own one-shot press ripple, so the same tap feels
-different in every theme: Neon pulses a ring, Midnight sends a wave, Violet
-blooms a halo, Crimson shocks, Solar bursts, Retro steps in quantised chunks,
-Arctic ripples three rings, Mono draws a precise underline and AMOLED snaps a
-single hairline `void` ring. The ripple only
-advances while a press is settling, so an idle pad still renders nothing.
+Each palette also has its own one-shot press ripple: Midnight Black and
+PlayStation draw `wave` arcs, Cyberpunk `shock`s outward with four spokes,
+Arctic sends three `ripple` rings, AMOLED snaps a hairline `void` ring, Racing
+Red `burst`s eight rays, Xbox blooms a soft `halo`, Minimal expands a precise
+underline `line`, Retro Arcade steps a box in quantised chunks, and Stealth
+uses the default `pulse` ring. The ripple only advances while a press is
+settling, so an idle pad still renders nothing.
 Animations are frame-rate independent: they look the same on a 60 Hz and a
 120 Hz screen. All animations use the current theme's colours. Themes, face
 labels, layout and connection settings are remembered independently.
@@ -261,11 +267,16 @@ Every change applies immediately.
   stop and clear the address.
 - **Transport chips** — AUTO / WI-FI / USB with readiness dots.
 - **PC address / port**, **Scan network**, **Scan QR**, and the diagnostics line.
-- **Bluetooth gamepad** — automatically registered as **Lemo GamePad**; the card shows the live *ready / connected* state, opens Bluetooth settings and can make the phone discoverable again. Android 12+ asks once for **Nearby devices**.
-- **Appearance** — nine palettes in a two-column picker with colour previews, a cross-fade and an **Animated buttons** toggle.
+- **Bluetooth gamepad** — the app never connects on launch. **SELECT HOST** lists bonded devices and connects only the one you pick; **DISCONNECT** removes the HID node. The card also opens Bluetooth settings and can make the phone discoverable. Android 12+ asks for **Nearby devices** when needed.
+- **Motion & aim** — **Aim touchpad** replaces the right stick with a relative pad. Its **Mouse aim** switch chooses between BGMI-style swipes and relative game-mouse aim (finger speed turns the camera; stopping stops the aim). **Tilt steering** feeds left X for racing games; **Gyro aim** feeds right X/Y for shooters and still adds to either touchpad mode. **Revert left/right aim** and **Revert up/down aim** flip each gyro axis independently. Tilt sensitivity, dead zone, curve and **CALIBRATE CENTRE** tune steering; separate gyro and touchpad sensitivity sliders tune aim. **AIM CALIBRATION** opens a ten-target reticle drill; see below.
+- **Appearance** — ten palettes in a two-column picker with preview-before-apply and an **Animated buttons** toggle.
 - **Face button labels** — PlayStation symbols or Xbox letters.
-- **Layouts** — save several named arrangements, switch between them, delete
-  one, or restore the default.
+- **Layouts** — save several named arrangements of the single Gamepad layout,
+  switch between them, delete one, or restore the default. Enabling or disabling
+  the swipe pad keeps the previous right-side placement.
+- **Game profiles** — save a named snapshot of aim/motion settings, haptics,
+  input rate, face labels and the current layout, then switch by tapping a name.
+  No foreground-game detection is involved.
 - **Customize layout** — drag, resize and hide controls.
 - **Stick deadzone** — 0–40 %, default 12 %.
 - **Stick curve** — 0–100 %, linear at 0; higher values keep small corrections
@@ -274,7 +285,7 @@ Every change applies immediately.
   strength slider.
 - **Input rate** — ECO (battery), STANDARD (default, send on change) or TURBO
   (continuous 250 Hz).
-- **PC screen** — on/off toggle, **SMALL / LARGE** size, and per-phone **LOW / BALANCED / HIGH** stream quality.
+- **PC screen** — on/off toggle, **SMALL / LARGE** size, per-phone **LOW / BALANCED / HIGH** stream quality, and an optional **Adaptive quality** switch.
 
 The sheet opens without popping the keyboard, keeps every button on one line, and
 closes on the scrim, the ✕ button, or Back. The footer shows the app name,
@@ -302,16 +313,22 @@ not block other viewers, and their send buffers are bounded to prevent long
 stale-video queues. The Android viewer drops complete frames queued behind a slow
 decode and reuses decoded bitmaps instead of allocating a new one per frame.
 
+**Adaptive quality** is off by default. When enabled, it samples the received
+FPS plus RTT/jitter/uplink-loss every 2 s. Two bad windows lower sharpness one
+step; six good windows raise it one step. It waits 20 s after any automatic
+change and pauses for 45 s after a manual LOW/BALANCED/HIGH tap, so it cannot
+fight you or oscillate. The preview badge always shows the active quality and
+FPS; a throttled toast explains the first change in a while. All three profiles
+still target 60 fps, so automatic changes never trade frame rate for detail.
+
 ```powershell
 lemoGamePad-server.exe --video-width 480 --video-fps 60 --video-quality 45
 lemoGamePad-server.exe --no-video
 lemoGamePad-server.exe --video-port 9990
 ```
 
-The PC command-line options set the **BALANCED** profile. The phone's **LOW**
-choice lowers width and JPEG quality; **HIGH** raises them for a sharper image.
-All three keep the same frame cadence, so LOW is the right pick for a crowded
-Wi-Fi or USB link rather than a slower 15 fps fallback.
+Those options set the **BALANCED** profile; **LOW** and **HIGH** keep the same
+cadence with less or more sharpness.
 
 ### Customizing the pad
 
@@ -345,6 +362,38 @@ have named:
 
 The live layout is still stored separately, so updating from an older version
 keeps the arrangement you already had.
+
+### Game profiles
+
+Open settings → **GAME PROFILES** to keep complete control setups side by side:
+
+- **SAVE CURRENT…** names a snapshot of the current aim, touchpad, tilt, gyro,
+  haptics, input rate, face labels and layout. Names are limited to 24 characters
+  and saving over an existing one asks first.
+- Tap a saved name to apply it after confirmation. Aim/motion values, the layout
+  and the active profile highlight update together.
+- **DELETE** removes a saved profile and leaves the current pad untouched.
+- **CLEAR** forgets which profile is active without deleting any saved entries.
+
+Profiles are manual only. The app never detects which game is in the foreground
+and never switches on its own. Host, port, transport, player slot, theme and
+screen-preview settings are intentionally not part of a profile.
+
+### Aim calibration
+
+Open settings → **MOTION & AIM** → **AIM CALIBRATION** for a quick reticle drill.
+Drag to move the reticle with your touchpad sensitivity, and it stays where you
+leave it — there is no spring-back. Tap to fire; a target only scores if the
+reticle is inside it when you shoot. Gyro aim, when enabled, nudges the same
+persistent reticle, and the **Revert** switches flip each gyro axis. Ten targets
+complete the run.
+
+While the overlay is open, every UDP and HID packet is held neutral, so the
+drill cannot move a game in the background. **DONE** or Back closes it, restores
+the screen preview if it was visible, and shows the score. The summary reports
+shot accuracy and on-target steadiness, and suggests lower sensitivity if you
+keep passing targets or the relevant **Revert** switch if one axis consistently
+drifts.
 
 The app keeps the screen on, hides the system bars and locks to landscape.
 

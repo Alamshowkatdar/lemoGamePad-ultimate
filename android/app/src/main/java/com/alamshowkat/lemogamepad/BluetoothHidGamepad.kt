@@ -146,10 +146,12 @@ internal class BluetoothHidGamepad(
     /**
      * Starts the profile if needed, then connects only to [address]. Registration
      * is asynchronous, so the address is remembered until the profile is ready.
+     * Returns false for a synchronous failure so the caller does not leave a
+     * phantom gamepad active.
      */
-    fun connect(address: String) {
-        if (api == null && !start()) return
-        api?.connect(address)
+    fun connect(address: String): Boolean {
+        if (api == null && !start()) return false
+        return api?.connect(address) == true
     }
 
     /** Disconnects the current host but keeps the profile ready for another pick. */
@@ -360,22 +362,24 @@ internal class BluetoothHidGamepad(
          * while [start] is still in flight the address is remembered and applied
          * from onAppStatusChanged the moment the profile becomes ready.
          */
-        fun connect(address: String) {
+        fun connect(address: String): Boolean {
             pendingAddress = address
-            if (isRegistered) connectRegistered(address)
+            // Registration is async: keeping the pick pending is a success here;
+            // onAppStatusChanged applies it when the profile becomes ready.
+            return if (isRegistered) connectRegistered(address) else true
         }
 
         /** Applies a pick once the profile is registered. */
-        private fun connectRegistered(address: String) {
+        private fun connectRegistered(address: String): Boolean {
             val target = bondedHosts().firstOrNull { it.address == address }
             if (target == null) {
                 onStatus("!Host is no longer paired — pair it again in Bluetooth settings")
                 pendingAddress = null
-                return
+                return false
             }
             if (isConnected && device?.address == address) {
                 pendingAddress = null
-                return
+                return true
             }
             val accepted = try {
                 hid?.connect(target) == true
@@ -389,8 +393,9 @@ internal class BluetoothHidGamepad(
                 pendingAddress = null
                 onStatus("Connecting to ${target.safeDisplayName()}…")
             } else {
-                onStatus("Could not connect — make sure the host is on with Lemo GamePad selected")
+                onStatus("!Could not connect — make sure the host is on with Lemo GamePad selected")
             }
+            return accepted
         }
 
         /** Drops the current host; the profile stays registered for another pick. */

@@ -24,6 +24,9 @@ fi
     --name lemoGamePad-server \
     --hidden-import linux_pad \
     --collect-submodules evdev \
+    --collect-all mss \
+    --collect-all PIL \
+    --collect-all qrcode \
     --add-data "web:web" \
     vpad_server.py
 

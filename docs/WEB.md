@@ -8,9 +8,10 @@ Android app, no account and no internet connection.
 
 The page is served by the PC, uses only local files and talks to the server
 over a WebSocket on the local network. It never loads a CDN script, web font,
-analytics service or any other remote resource. It mirrors the Android pad:
-the same nine themes, PS/Xbox face labels, player slots, layout editing and
-saved arrangements, plus latency, status and the PC screen preview.
+analytics service or any other remote resource. It mirrors most of the Android
+pad: nine browser themes, PS/Xbox face labels, player slots, layout editing and
+saved arrangements, plus latency, status and the PC screen preview. The Android
+app has ten themes; the two newer Android palettes are not in the browser build.
 
 ## Open it
 
@@ -189,7 +190,7 @@ load; the console prints the exact `netsh` command to fix it.
 - The screen relay connects only to the local video server on loopback. It
   cannot be pointed at another host.
 - The server binds the normal LAN interfaces, like the phone protocol. **Do not
-  port-forward TCP 9878** (or UDP 9876 / TCP 9877 / TCP 9878) on your router.
+  port-forward TCP 9878** (or UDP 9876 / TCP 9877) on your router.
   This is a LAN feature, not an internet service.
 - The key is printed in the console and stored in the QR PNG. Treat it like a
   temporary password; restart the server to rotate it.

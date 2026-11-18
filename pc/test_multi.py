@@ -439,10 +439,10 @@ def test_max_phones_cap():
 
 def test_pad_creation_order():
     """
-    A request for P5 must create P1..P5 in order, never only P5.
+    A request for P5 must replace the idle P1 pad, not leave P1..P4 connected.
 
-    Games number controllers by the order the OS enumerates them, so creating
-    just the requested pad would hand P5 the game's first controller.
+    Only occupied slots keep a virtual device, so switching slots never leaves
+    an extra gamepad in the OS device list.
     """
     created = []
     original = srv.create_virtual_pad
@@ -480,10 +480,13 @@ def test_pad_creation_order():
         )
         assert peer is not None and fresh and reason == "", (peer, fresh, reason)
         assert peer.slot == 4, peer.slot
-        assert len(created) == 5, len(created)
-        assert all(slot.pad is not None for slot in server.slots[:5])
+        # The main loop applies pad changes; a direct registration must sync.
+        server._sync_pads()
+        assert len(created) == 2, len(created)  # P1 probe + P5
+        assert all(slot.pad is None for slot in server.slots[:4]), "idle pads left connected"
+        assert server.slots[4].pad is not None
         assert all(slot.pad is None for slot in server.slots[5:]), "created too many"
-        print("  pad order ok: P5 created P1-P5 first, no P6-P8")
+        print("  pad order ok: P5 replaces idle P1, no P1-P4 or P6-P8")
     finally:
         srv.create_virtual_pad = original
         if server is not None:
@@ -557,6 +560,10 @@ def test_requested_slot():
         # it, otherwise input sent after the move is silently dropped.
         wait_for(lambda: server.slots[1].pad is not None, timeout=20.0,
                  message="the moved-to pad was never created")
+        assert server.slots[2].pad is None, "the old P3 pad stayed connected"
+        assert sum(slot.pad is not None for slot in server.slots) == len(
+            server.peers
+        ), "idle pads are still connected"
         first.input(buttons=1 << CROSS)
         wait_for(
             lambda: pad_buttons(server, server.peers[first.token]) == 1 << CROSS,

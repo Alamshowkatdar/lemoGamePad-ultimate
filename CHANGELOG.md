@@ -2,6 +2,90 @@
 
 Newest first. The reasoning behind each release is in [`docs/REVIEW.md`](docs/REVIEW.md).
 
+## Unreleased
+
+- **Added a static download and instructions site.** `docs/index.html` collects
+  the APK, Windows and Linux server downloads, quick-start steps, setup guides
+  and troubleshooting on one page, with links to the full documentation. It does
+  not host the playable browser pad — that still runs from the PC server so the
+  local WebSocket stays local.
+- **Merged the duplicate status cards.** `STATUS` and `LIVE LINK DASHBOARD` are
+  now one `CONNECTION STATUS` card with a single graph and one detailed stats
+  block. The separate connection settings card is unchanged.
+- **Added a battery-saver switch to the status card.** It pauses the live RTT
+  graph and detailed stat refresh, slows panel polling, and leaves connection
+  state, scan, connect and disconnect controls working.
+- **Connection Doctor now links out.** Its first step explains how to download
+  and start the Windows/Linux PC server and offers **GET PC SERVER** and
+  **SETUP GUIDE** buttons, opened safely with an `ACTION_VIEW` intent.
+- **Removed the Racing and FPS modes and layouts.** The app now shows one
+  Gamepad layout. Stale `mode` preferences fall back to it, and old per-mode
+  layout keys are ignored.
+- **Added a swipe touchpad toggle.** When enabled it replaces the right stick
+  and R3 click. Swiping drives right-stick aim with relative, BGMI-style input;
+  gyro aim can contribute to the same axes simultaneously.
+- **Switchable mouse aim for the touchpad.** With **Aim touchpad** on, **Mouse
+  aim** changes the pad from BGMI swipes to relative game-mouse aim: finger
+  speed drives right-stick velocity, faster movement turns faster, and stopping
+  your finger stops the aim. It is not an absolute desktop pointer, so the wire
+  format is unchanged. Gyro aim still adds to the same axes.
+- **Stronger, sustained mouse aim.** A normal finger sweep now produces a useful
+  right-stick deflection and holds it while the finger keeps moving, instead of
+  only nudging the camera.
+- **Smoother swipe-pad feedback.** The touchpad now draws a fading, thinning
+  streak that follows the finger with eased motion and glides home on release
+  instead of snapping back. Mouse mode uses a shorter follow/return so its
+  cursor marker feels immediate.
+- **Cleaner touchpad in every theme.** The crosshair and grid are gone. A soft
+  centre point and a time-faded curved swipe ribbon now use each palette's
+  accent, border weight and glow strength, so the gesture stays legible on both
+  light and dark themes.
+- **Per-axis gyro revert.** **Revert left/right aim** and **Revert up/down aim**
+  independently flip the gyro's horizontal and vertical aim directions. Turning
+  on both reverses both axes; each setting is saved.
+- **Unified motion controls.** Tilt steering now lives on the Gamepad layout and
+  feeds left X only while off centre. Gyro aim feeds right X/Y with or without
+  the swipe pad, and is additive with the physical right stick when the pad is
+  off.
+- **Simplified settings and layouts.** The mode chips and mode-specific motion
+  groups are gone; one **MOTION & AIM** card holds the touchpad, tilt, gyro and
+  calibration controls. Named layouts are no longer per mode, and swapping the
+  swipe pad preserves the previous right-side control placement.
+- **Manual game profiles.** Settings now has a **GAME PROFILES** card: save the
+  current aim, motion, haptics, input-rate, face-label and layout setup under a
+  name, then tap a name to switch back. Switching is always explicit — nothing
+  watches the foreground app — and connection settings are never changed.
+- **Aim calibration overlay.** **AIM CALIBRATION** opens a ten-target drill with
+  a persistent free reticle: drag to place it, then tap to fire. Touch sensitivity
+  and gyro aim (including both revert switches) move that same reticle. All
+  UDP/HID output is held neutral while it is open, and the summary suggests
+  sensitivity or gyro-revert adjustments. Back or **DONE** closes it.
+- **Adaptive stream quality (off by default).** When enabled, sustained stutter
+  lowers sharpness and a long smooth window raises it again. Manual
+  LOW/BALANCED/HIGH taps pause automatic changes for 45 s. Every profile still
+  targets 60 fps; only sharpness changes, and the wire protocol is untouched.
+- **Wire formats unchanged.** UDP 9876, video TCP 9877 and the 9-byte HID report
+  keep the same layout. A PC server update is optional for new features but fixes
+  several reliability issues (see below).
+
+### Reliability fixes
+
+- Android no longer registers HID on launch; a failed explicit host pick no
+  longer leaves a phantom input ticker, and the pick survives the Nearby-devices
+  permission prompt. The host-picker overlay closes with the settings sheet.
+- Motion sensors register only while the app is active, swipe drawing allocates
+  no per-frame collections, and a nullable pointer compare was corrected.
+- PC keeps fatal video-listener errors separate from transient capture failures,
+  locks the pending input queue, handles 16-bit sequence wrap, and routes slot
+  changes through the guarded move path.
+- PC now unplugs a virtual pad when its player moves away or disconnects.
+  Selecting P2 with one phone shows one gamepad instead of an idle P1 plus P2.
+- Windows pad updates retry a transient driver failure with correct vgamepad
+  cleanup; isolated failures no longer accumulate into a permanent shutdown.
+- CLI flags are validated even with `--list-ip`; browser keys accept UTF-8 and
+  invalid axes become neutral. Linux firewall setup and PyInstaller builds now
+  include the browser-pad port and bundled capture/QR data.
+
 ## 1.7.0
 
 - **Three controller modes.** The pad now offers **Gamepad**, **Racing** and

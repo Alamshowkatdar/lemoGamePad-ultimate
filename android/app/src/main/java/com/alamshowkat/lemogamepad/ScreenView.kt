@@ -55,6 +55,10 @@ class ScreenView(context: Context) : View(context) {
 
     var accent: Int = Color.rgb(62, 240, 140)
 
+    /** Read-only stream health for adaptive quality; updated on the worker thread. */
+    val currentStreamFps: Int get() = streamFps
+    val isStreamConnected: Boolean get() = connected
+
     private var streamHost: String? = null
     private var streamPort = 0
 

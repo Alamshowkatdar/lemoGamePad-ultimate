@@ -1,12 +1,15 @@
 package com.alamshowkat.lemogamepad
 
 import android.app.Activity
+import android.content.ActivityNotFoundException
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.graphics.Color
+import android.graphics.RectF
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.SharedPreferences
+import android.net.Uri
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
@@ -28,6 +31,7 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import kotlin.math.roundToInt
 
 class MainActivity : Activity() {
 
@@ -35,10 +39,19 @@ class MainActivity : Activity() {
     private lateinit var link: Link
     private lateinit var prefs: SharedPreferences
     private lateinit var layouts: LayoutStore
+    private lateinit var profiles: GameProfileStore
     private lateinit var root: FrameLayout
     private var editBar: LinearLayout? = null
     private var settingsPanel: SettingsPanel? = null
     private var wifiGuide: View? = null
+    private var connectionDoctor: View? = null
+    private var doctorCardHolder: FrameLayout? = null
+    private var doctorStartup = false
+    private var doctorStep = 0
+    private var startupOverlaysChecked = false
+
+    /** One-tap sensitivity card shown after an aim calibration run. */
+    private var aimRecommendation: View? = null
 
     /** Small non-blocking Accept/Decline card shown when another player asks to swap. */
     private var swapPrompt: View? = null
@@ -51,6 +64,10 @@ class MainActivity : Activity() {
     private var screenEnabled = false
     private var screenSmall = true
     private var screenQuality = ScreenQuality.BALANCED
+    private var adaptiveEnabled = false
+    private lateinit var adaptiveQuality: AdaptiveQualityController
+    private var lastAdaptiveNoticeAt = 0L
+    private var trainerPreviewWasVisible = false
     private lateinit var phoneGamepad: BluetoothHidGamepad
     private var phoneGamepadActive = false
     private var lastPhoneVersion = -1L
@@ -58,6 +75,8 @@ class MainActivity : Activity() {
     private var btPermissionAsked = false
     /** Host address the user picked, kept across the Nearby-devices permission prompt. */
     private var pendingConnectAddress: String? = null
+    /** True only while the permission prompt opened by SELECT HOST is on screen. */
+    private var hostPermissionPending = false
     @Volatile private var btStatus = "Bluetooth gamepad is off — tap SELECT HOST to connect"
 
     private val handler = Handler(Looper.getMainLooper())
@@ -103,6 +122,30 @@ class MainActivity : Activity() {
         }
     }
 
+    /** Samples stream/link health slowly; each quality change reconnects TCP. */
+    private val adaptiveTicker = object : Runnable {
+        override fun run() {
+            if (resumed && adaptiveEnabled && screenEnabled) {
+                val sv = screenView
+                if (sv != null) {
+                    val next = adaptiveQuality.update(
+                        screenQuality,
+                        AdaptiveSignal(
+                            linkConnected = link.connected,
+                            streamConnected = sv.isStreamConnected,
+                            streamFps = sv.currentStreamFps,
+                            rttMs = link.rttMs,
+                            jitterMs = link.jitterMs,
+                            lossPermille = link.lossPermille,
+                        ),
+                    )
+                    if (next != null) applyQuality(next, automatic = true)
+                }
+            }
+            handler.postDelayed(this, ADAPTIVE_SAMPLE_MS)
+        }
+    }
+
     /** Repeats short pulses while the PC keeps asking for rumble. */
     private val rumbleTicker = object : Runnable {
         override fun run() {
@@ -121,28 +164,40 @@ class MainActivity : Activity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
         prefs = getSharedPreferences(PrefsKeys.FILE, MODE_PRIVATE)
-        // Each experience owns its own live layout and named presets, so
-        // swapping from racing to FPS never disturbs the controller pad.
-        val startMode = ControllerMode.fromId(prefs.getString(PrefsKeys.MODE, null))
-        layouts = LayoutStore(prefs, startMode)
+        // One Gamepad layout owns the live arrangement and all saved presets.
+        layouts = LayoutStore(prefs)
         if (layouts.activeName() == null) layouts.clearActive()
+        profiles = GameProfileStore(prefs)
+        adaptiveQuality = AdaptiveQualityController { SystemClock.uptimeMillis() }
         phoneGamepad = BluetoothHidGamepad(applicationContext) { message ->
             val error = message.startsWith("!")
             btStatus = message.removePrefix("!")
             if (error) handler.post { if (!isFinishing) toast(message.removePrefix("!")) }
-            handler.post { settingsPanel?.refreshBluetoothGamepad() }
+            handler.post {
+                // A failed start/connect must not leave a phantom gamepad ticking.
+                if (error && !phoneGamepad.isConnected && phoneGamepadActive) {
+                    phoneGamepadActive = false
+                    handler.removeCallbacks(phoneGamepadTicker)
+                    lastPhoneVersion = -1L
+                    btWasConnected = false
+                }
+                settingsPanel?.refreshBluetoothGamepad()
+            }
         }
 
         view = GamepadView(this)
-        view.mode = startMode
         view.theme = Themes.byId(prefs.getString(PrefsKeys.THEME, null))
         view.faceLabels = if (prefs.getString(PrefsKeys.FACES, "ps") == "xbox") {
             FaceLabels.XBOX
         } else {
             FaceLabels.PLAYSTATION
         }
+        view.touchpadEnabled = prefs.getBoolean(PrefsKeys.TOUCHPAD_ENABLED, false)
+        view.touchpadMouseMode = prefs.getBoolean(PrefsKeys.TOUCHPAD_MOUSE, false)
         view.gyroSteering = prefs.getBoolean(PrefsKeys.GYRO_STEER, true)
         view.gyroAim = prefs.getBoolean(PrefsKeys.GYRO_AIM, true)
+        view.gyroRevertX = prefs.getBoolean(PrefsKeys.GYRO_REVERT_X, false)
+        view.gyroRevertY = prefs.getBoolean(PrefsKeys.GYRO_REVERT_Y, false)
         view.steerSensitivity = prefs.getInt(PrefsKeys.STEER_SENS, 55) / 100f
         view.steerDeadzone = prefs.getInt(PrefsKeys.STEER_DEADZONE, 5) / 100f
         view.steerCurve = prefs.getInt(PrefsKeys.STEER_CURVE, 25) / 100f
@@ -151,6 +206,10 @@ class MainActivity : Activity() {
         view.controlAlpha = prefs.getInt(PrefsKeys.PAD_ALPHA, 100) / 100f
         view.faceSpacing = prefs.getInt(PrefsKeys.FACE_SPACING, 100) / 100f
         view.applyLayout(layouts.activeData())
+        view.snapEnabled = prefs.getBoolean(PrefsKeys.LAYOUT_SNAP, false)
+        view.guidesEnabled = prefs.getBoolean(PrefsKeys.LAYOUT_GUIDES, true)
+        view.safeAreaEnabled = prefs.getBoolean(PrefsKeys.LAYOUT_SAFE_AREA, false)
+        view.multiSelectEnabled = prefs.getBoolean(PrefsKeys.LAYOUT_MULTI, false)
         view.deadzone = prefs.getInt(PrefsKeys.DEADZONE, 12) / 100f
         view.stickCurve = prefs.getInt(PrefsKeys.STICK_CURVE, 0) / 100f
         view.hapticsEnabled = prefs.getBoolean(PrefsKeys.HAPTICS, true)
@@ -159,6 +218,11 @@ class MainActivity : Activity() {
         view.onHaptic = { ms -> tapFeedback(ms) }
         view.onLayoutChanged = { persistLayout() }
         view.onToast = { msg -> toast(msg) }
+        view.onAimTrainerChanged = { active -> onAimTrainerChanged(active) }
+        view.onAimTrainerFinished = { summary -> toast(summary) }
+        view.onAimTrainerResult = { result ->
+            recommendAim(result)?.let { showAimRecommendation(it) }
+        }
 
         root = FrameLayout(this)
         root.addView(
@@ -169,6 +233,7 @@ class MainActivity : Activity() {
             ),
         )
         setContentView(root)
+        installSafeAreaInsets()
 
         link = Link(view.state, applicationContext)
         link.port = prefs.getInt(PrefsKeys.PORT, Proto.PORT)
@@ -185,6 +250,7 @@ class MainActivity : Activity() {
         screenQuality = ScreenQuality.fromId(
             prefs.getInt(PrefsKeys.SCREEN_QUALITY, ScreenQuality.BALANCED.wireId),
         )
+        adaptiveEnabled = prefs.getBoolean(PrefsKeys.ADAPTIVE_QUALITY, false)
 
         if (!prefs.getBoolean(PrefsKeys.WIFI_GUIDE_SEEN, false)) {
             showWifiGuide()
@@ -194,11 +260,17 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         resumed = true
+        if (!startupOverlaysChecked && wifiGuide == null) {
+            startupOverlaysChecked = true
+            continueStartupOverlays()
+        }
         enterImmersive()
         link.host = prefs.getString(PrefsKeys.HOST, null)?.takeIf { it.isNotBlank() }
         link.start()
         registerBattery()
         handler.post(ticker)
+        handler.removeCallbacks(adaptiveTicker)
+        handler.post(adaptiveTicker)
         view.startMotion()
         if (screenEnabled) showScreenPreview(true)
         // Bluetooth stays off until the user picks a host in the settings card.
@@ -214,11 +286,17 @@ class MainActivity : Activity() {
         // A rumble callback can still be in flight on the receiver thread; make
         // sure it cannot restart the ticker after this method clears it.
         resumed = false
+        // requestingPermissions() pauses this Activity while its dialog is up.
+        // Keep the pick only for that prompt; any stale pick is forgotten.
+        if (!hostPermissionPending) pendingConnectAddress = null
         LayoutDialogs.dismissAll(this)
         dismissSwapPrompt()
+        dismissAimRecommendation()
+        dismissConnectionDoctor(markSeen = false, advanceStartup = false)
         settingsPanel?.dismiss(animate = false)
         if (view.editMode) exitEditing(save = true)
         handler.removeCallbacks(ticker)
+        handler.removeCallbacks(adaptiveTicker)
         rumbleAmp = 0
         handler.removeCallbacks(rumbleTicker)
         vibrator()?.cancel()
@@ -241,6 +319,8 @@ class MainActivity : Activity() {
     override fun onDestroy() {
         LayoutDialogs.dismissAll(this)
         phoneGamepadActive = false
+        hostPermissionPending = false
+        pendingConnectAddress = null
         handler.removeCallbacks(phoneGamepadTicker)
         if (::phoneGamepad.isInitialized) phoneGamepad.stop()
         super.onDestroy()
@@ -256,7 +336,15 @@ class MainActivity : Activity() {
         wifiGuide?.let {
             root.removeView(it)
             wifiGuide = null
+            startupOverlaysChecked = true
             prefs.edit().putBoolean(PrefsKeys.WIFI_GUIDE_SEEN, true).apply()
+            continueStartupOverlays()
+            return
+        }
+        if (dismissConnectionDoctor(markSeen = true, advanceStartup = doctorStartup)) return
+        if (dismissAimRecommendation()) return
+        if (view.aimTrainerActive) {
+            view.aimTrainerActive = false
             return
         }
         val panel = settingsPanel
@@ -293,11 +381,20 @@ class MainActivity : Activity() {
         grantResults: IntArray,
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode != REQ_BT) return
+        if (requestCode != REQ_BT && requestCode != REQ_BT_HOST) return
         val granted = !BluetoothHidSupport.permissionsMissing(this)
         btPermissionAsked = false
-        if (granted) {
-            pendingConnectAddress?.let { connectBluetoothHost(it) }
+        if (requestCode == REQ_BT_HOST) {
+            // Only a permission prompt opened by SELECT HOST may finish a pick.
+            // Other buttons (discoverable, etc.) must never reuse the address.
+            hostPermissionPending = false
+            val address = pendingConnectAddress
+            pendingConnectAddress = null
+            if (granted && address != null) {
+                connectBluetoothHost(address)
+            } else if (!granted) {
+                btStatus = "Nearby devices access denied — allow it, then pick a host again"
+            }
         }
         settingsPanel?.onBluetoothPermissionResult(granted)
     }
@@ -415,16 +512,18 @@ class MainActivity : Activity() {
             ).apply { marginStart = px(8) })
         }
 
-        fun dismissGuide() {
+        fun dismissGuide(advance: Boolean) {
             root.removeView(scrim)
             wifiGuide = null
+            startupOverlaysChecked = true
             prefs.edit().putBoolean(PrefsKeys.WIFI_GUIDE_SEEN, true).apply()
+            if (advance) continueStartupOverlays()
         }
-        addButton("GOT IT", primary = false) { dismissGuide() }
+        addButton("GOT IT", primary = false) { dismissGuide(advance = true) }
         addButton("OPEN WI-FI SETUP", primary = true) {
             link.transport = Transport.WIFI
             prefs.edit().putString(PrefsKeys.TRANSPORT, "wifi").apply()
-            dismissGuide()
+            dismissGuide(advance = false)
             showSettings()
         }
         card.addView(actions)
@@ -445,9 +544,293 @@ class MainActivity : Activity() {
         scrim.animate().alpha(1f).setDuration(220L).start()
     }
 
+    // --------------------------------------------------- onboarding / what's new
+    private fun continueStartupOverlays() {
+        if (isFinishing || !resumed) return
+        if (!prefs.getBoolean(PrefsKeys.CONNECTION_DOCTOR_SEEN, false)) {
+            doctorStartup = true
+            showConnectionDoctor()
+        } else {
+            maybeShowWhatsNew()
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun appVersion(): Pair<Long, String> = try {
+        val info = packageManager.getPackageInfo(packageName, 0)
+        val code = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            info.longVersionCode
+        } else {
+            info.versionCode.toLong()
+        }
+        code to (info.versionName ?: Brand.VERSION)
+    } catch (_: Exception) {
+        0L to Brand.VERSION
+    }
+
+    private fun maybeShowWhatsNew() {
+        val (current, name) = appVersion()
+        val previous = prefs.getLong(PrefsKeys.LAST_WHATSNEW_CODE, 0L)
+        if (current == 0L || previous == current) return
+        // A fresh install has nothing to compare against; only updates get the card.
+        if (previous == 0L) {
+            prefs.edit().putLong(PrefsKeys.LAST_WHATSNEW_CODE, current).apply()
+            return
+        }
+        prefs.edit().putLong(PrefsKeys.LAST_WHATSNEW_CODE, current).apply()
+        LayoutDialogs.info(
+            this,
+            view.theme,
+            "WHAT'S NEW IN $name",
+            "• Aim calibration now uses a free reticle: drag to place it, tap to fire.\n" +
+                "• Calibration can suggest concrete sensitivity and gyro-revert values.\n" +
+                "• Manual game profiles, adaptive quality and one merged live connection card.\n" +
+                "• Connection Doctor links to the PC server download and setup guide; battery saver pauses live stats.\n" +
+                "• Layout editor adds undo/redo, snap/grid, alignment guides, safe-area guides, multi-select, copy/paste, lock and mirror.",
+        )
+    }
+
+    private fun showConnectionDoctor() {
+        if (connectionDoctor != null || isFinishing) return
+        doctorStep = 0
+        val t = view.theme
+        val scrim = FrameLayout(this).apply {
+            setBackgroundColor(Color.argb(222, 0, 0, 0))
+            isClickable = true
+            isFocusable = true
+            elevation = px(28).toFloat()
+        }
+        val holder = FrameLayout(this)
+        scrim.addView(
+            holder,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.CENTER,
+            ).apply { marginStart = px(20); marginEnd = px(20) },
+        )
+        root.addView(
+            scrim,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            ),
+        )
+        connectionDoctor = scrim
+        doctorCardHolder = holder
+        scrim.alpha = 0f
+        scrim.animate().alpha(1f).setDuration(200L).start()
+        renderConnectionDoctor()
+    }
+
+    private fun renderConnectionDoctor() {
+        val holder = doctorCardHolder ?: return
+        holder.removeAllViews()
+        val t = view.theme
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            isClickable = true
+            setPadding(px(20), px(17), px(20), px(16))
+            background = GradientDrawable().apply {
+                cornerRadius = px(19).toFloat()
+                setColor(t.surface)
+                setStroke(px(1), withAlpha(t.accent, 140))
+            }
+            elevation = px(30).toFloat()
+        }
+
+        fun addCopy(text: String, size: Float, color: Int, bold: Boolean = false, top: Int = 0) {
+            card.addView(TextView(this).apply {
+                this.text = text
+                textSize = size
+                setTextColor(color)
+                setLineSpacing(px(3).toFloat(), 1f)
+                if (bold) typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                if (top > 0) setPadding(0, px(top), 0, 0)
+            }, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ))
+        }
+
+        when (doctorStep) {
+            0 -> {
+                addCopy("CONNECTION DOCTOR  ·  1 / 3", 10f, t.accent, bold = true)
+                addCopy("Get the PC server, then connect", 19f, t.text, bold = true, top = 6)
+                addCopy(
+                    "1. Download lemoGamePad-server from the latest release: the Windows EXE, " +
+                        "or the Linux binary with install-linux.sh.\n" +
+                        "2. Windows: double-click the EXE and accept the driver/firewall prompts. " +
+                        "Linux: sudo sh install-linux.sh, then ./lemoGamePad-server.\n" +
+                        "3. Leave the console open. Scan its QR code here, or enter the PC IP it prints.",
+                    12f, t.textDim, top = 10,
+                )
+                addCopy(
+                    "The setup guide covers Wi-Fi, USB tethering and Bluetooth HID. Bluetooth is " +
+                        "separate: it never auto-connects and always needs a host you pick.",
+                    10.5f, t.muted, top = 8,
+                )
+                val links = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.END or Gravity.CENTER_VERTICAL
+                    setPadding(0, px(12), 0, 0)
+                }
+                links.addView(
+                    swapButton("GET PC SERVER", t, primary = false) {
+                        openUrl(RELEASE_URL)
+                    },
+                    LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ).apply { marginEnd = px(8) },
+                )
+                links.addView(
+                    swapButton("SETUP GUIDE", t, primary = false) {
+                        openUrl(SETUP_URL)
+                    },
+                )
+                card.addView(links)
+            }
+            1 -> {
+                val readiness = link.readiness()
+                addCopy("CONNECTION DOCTOR  ·  2 / 3", 10f, t.accent, bold = true)
+                addCopy("Transport check", 19f, t.text, bold = true, top = 6)
+                addCopy(
+                    buildString {
+                        append("Wi-Fi path   ").append(
+                            if (readiness[Transport.WIFI] == true) "READY" else "not ready",
+                        )
+                        append("\nUSB path     ").append(
+                            if (readiness[Transport.USB] == true) "READY" else "not ready",
+                        )
+                        append("\nSelected     ").append(
+                            link.transportName().ifBlank { link.transport.label },
+                        )
+                        append("\nInterface    ").append(
+                            link.localSummary().ifBlank { "none detected" },
+                        )
+                    },
+                    12f, t.textDim, top = 10,
+                )
+                addCopy(
+                    "If both paths say not ready, start the PC server and check guest Wi-Fi isolation or the USB cable.",
+                    10.5f, t.muted, top = 8,
+                )
+            }
+            else -> {
+                addCopy("CONNECTION DOCTOR  ·  3 / 3", 10f, t.accent, bold = true)
+                addCopy("Link check", 19f, t.text, bold = true, top = 6)
+                addCopy(
+                    buildString {
+                        append("Paired host   ").append(link.host ?: "none")
+                        append("\nStatus        ").append(
+                            if (link.connected) "connected" else if (link.host != null) "linking" else "idle",
+                        )
+                        append("\nRound trip    ").append(
+                            if (link.connected && link.rttMs >= 0) "${link.rttMs} ms" else "—",
+                        )
+                        append("\nPacket loss   ").append(
+                            if (link.lossPermille < 0) "—" else "${(link.lossPermille + 5) / 10}%",
+                        )
+                        append("\nVideo stream  ").append(
+                            if (screenView?.isStreamConnected == true) {
+                                "${screenView?.currentStreamFps ?: 0} fps"
+                            } else {
+                                "off"
+                            },
+                        )
+                    },
+                    12f, t.textDim, top = 10,
+                )
+                addCopy(
+                    "Still not connected? Open Settings and use SCAN or the QR code. Keep the server window running on the PC.",
+                    10.5f, t.muted, top = 8,
+                )
+            }
+        }
+
+        val actions = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.END or Gravity.CENTER_VERTICAL
+            setPadding(0, px(14), 0, 0)
+        }
+        if (doctorStep > 0) {
+            actions.addView(
+                swapButton("BACK", t, primary = false) {
+                    doctorStep--
+                    renderConnectionDoctor()
+                },
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ).apply { marginEnd = px(8) },
+            )
+        } else {
+            actions.addView(
+                swapButton("SKIP", t, primary = false) {
+                    dismissConnectionDoctor(markSeen = true, advanceStartup = doctorStartup)
+                },
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ).apply { marginEnd = px(8) },
+            )
+        }
+        if (doctorStep < 2) {
+            actions.addView(
+                swapButton("NEXT", t, primary = true) {
+                    doctorStep++
+                    renderConnectionDoctor()
+                },
+            )
+        } else {
+            actions.addView(
+                swapButton("SETTINGS", t, primary = false) {
+                    dismissConnectionDoctor(markSeen = true, advanceStartup = false)
+                    showSettings()
+                },
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ).apply { marginEnd = px(8) },
+            )
+            actions.addView(
+                swapButton("DONE", t, primary = true) {
+                    dismissConnectionDoctor(markSeen = true, advanceStartup = doctorStartup)
+                },
+            )
+        }
+        card.addView(actions)
+        holder.addView(
+            card,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ),
+        )
+        card.alpha = 0f
+        card.animate().alpha(1f).setDuration(140L).start()
+    }
+
+    private fun dismissConnectionDoctor(markSeen: Boolean, advanceStartup: Boolean): Boolean {
+        val overlay = connectionDoctor ?: return false
+        connectionDoctor = null
+        doctorCardHolder = null
+        if (markSeen) {
+            prefs.edit().putBoolean(PrefsKeys.CONNECTION_DOCTOR_SEEN, true).apply()
+        }
+        overlay.animate().alpha(0f).setDuration(140L)
+            .withEndAction { root.removeView(overlay) }
+            .start()
+        if (advanceStartup) continueStartupOverlays()
+        return true
+    }
+
     // ------------------------------------------------------------------ screen
     private fun showScreenPreview(show: Boolean) {
         screenEnabled = show
+        // A new stream has no meaningful FPS history; restart sampling.
+        adaptiveQuality.reset()
         val existing = screenView
         if (!show) {
             existing?.let {
@@ -584,22 +967,161 @@ class MainActivity : Activity() {
 
     private fun persistLayout() {
         val snapshot = view.layoutSnapshot()
-        prefs.edit().putString(layoutPrefKey(view.mode), snapshot).apply()
+        prefs.edit().putString(PrefsKeys.LAYOUT, snapshot).apply()
         // Keep the named preset in sync when the user tweaks an active layout.
         layouts.updateActive(snapshot)
     }
 
-    /** Swaps the on-screen experience, loading that mode's own layout. */
-    private fun switchMode(mode: ControllerMode) {
-        if (mode == view.mode) return
+    /** Swaps the right stick for the swipe pad and reloads the saved layout. */
+    private fun setTouchpadEnabled(enabled: Boolean) {
+        if (view.touchpadEnabled == enabled) return
         if (view.editMode) exitEditing(save = true)
         persistLayout()
-        prefs.edit().putString(PrefsKeys.MODE, mode.id).apply()
-        view.mode = mode
-        layouts = LayoutStore(prefs, mode)
+        prefs.edit().putBoolean(PrefsKeys.TOUCHPAD_ENABLED, enabled).apply()
+        view.touchpadEnabled = enabled
         view.applyLayout(layouts.activeData())
-        view.startMotion()
         refreshStatus()
+    }
+
+    /** Keeps the screen PiP out of the trainer while still owning its state. */
+    private fun onAimTrainerChanged(active: Boolean) {
+        if (active) {
+            dismissAimRecommendation()
+            trainerPreviewWasVisible = screenView?.visibility == View.VISIBLE
+            screenView?.visibility = View.GONE
+        } else if (trainerPreviewWasVisible) {
+            screenView?.visibility = if (view.editMode) View.GONE else View.VISIBLE
+            trainerPreviewWasVisible = false
+        }
+        refreshStatus()
+    }
+
+    // ---------------------------------------------------------------- profiles
+    private fun captureGameProfile(): GameProfileData = GameProfileData(
+        touchpadEnabled = view.touchpadEnabled,
+        touchpadMouse = view.touchpadMouseMode,
+        touchpadSensitivity = (view.touchpadSensitivity * 100f).roundToInt(),
+        gyroSteer = view.gyroSteering,
+        gyroAim = view.gyroAim,
+        gyroRevertX = view.gyroRevertX,
+        gyroRevertY = view.gyroRevertY,
+        steerSensitivity = (view.steerSensitivity * 100f).roundToInt(),
+        steerDeadzone = (view.steerDeadzone * 100f).roundToInt(),
+        steerCurve = (view.steerCurve * 100f).roundToInt(),
+        aimSensitivity = (view.aimSensitivity * 100f).roundToInt(),
+        deadzone = (view.deadzone * 100f).roundToInt(),
+        stickCurve = (view.stickCurve * 100f).roundToInt(),
+        haptics = view.hapticsEnabled,
+        hapticStrength = (hapticStrength * 100f).roundToInt(),
+        inputRate = link.inputRate.id,
+        faceLabels = view.faceLabels.name,
+        padAlpha = (view.controlAlpha * 100f).roundToInt(),
+        faceSpacing = (view.faceSpacing * 100f).roundToInt(),
+        adaptiveQuality = adaptiveEnabled,
+        layout = view.layoutSnapshot(),
+    )
+
+    private fun saveGameProfile(name: String) {
+        profiles.save(name, GameProfileCodec.encode(captureGameProfile()))
+    }
+
+    private fun applyGameProfile(name: String) {
+        val entry = profiles.find(name)
+        val data = entry?.let { GameProfileCodec.decode(it.data) }
+        if (entry == null || data == null) {
+            toast("That profile could not be read")
+            return
+        }
+        if (view.editMode) exitEditing(save = true)
+
+        val labels = if (data.faceLabels == FaceLabels.XBOX.name) FaceLabels.XBOX else FaceLabels.PLAYSTATION
+        val rate = InputRate.fromId(data.inputRate)
+        view.faceLabels = labels
+        view.touchpadEnabled = data.touchpadEnabled
+        view.touchpadMouseMode = data.touchpadMouse
+        view.gyroSteering = data.gyroSteer
+        view.gyroAim = data.gyroAim
+        view.gyroRevertX = data.gyroRevertX
+        view.gyroRevertY = data.gyroRevertY
+        view.steerSensitivity = data.steerSensitivity / 100f
+        view.steerDeadzone = data.steerDeadzone / 100f
+        view.steerCurve = data.steerCurve / 100f
+        view.aimSensitivity = data.aimSensitivity / 100f
+        view.touchpadSensitivity = data.touchpadSensitivity / 100f
+        view.deadzone = data.deadzone / 100f
+        view.stickCurve = data.stickCurve / 100f
+        view.hapticsEnabled = data.haptics
+        view.controlAlpha = data.padAlpha / 100f
+        view.faceSpacing = data.faceSpacing / 100f
+        link.inputRate = rate
+        hapticStrength = data.hapticStrength.coerceIn(0, 100) / 100f
+        adaptiveEnabled = data.adaptiveQuality
+
+        val editor = prefs.edit()
+            .putString(PrefsKeys.FACES, labels.name)
+            .putBoolean(PrefsKeys.TOUCHPAD_ENABLED, data.touchpadEnabled)
+            .putBoolean(PrefsKeys.TOUCHPAD_MOUSE, data.touchpadMouse)
+            .putBoolean(PrefsKeys.GYRO_STEER, data.gyroSteer)
+            .putBoolean(PrefsKeys.GYRO_AIM, data.gyroAim)
+            .putBoolean(PrefsKeys.GYRO_REVERT_X, data.gyroRevertX)
+            .putBoolean(PrefsKeys.GYRO_REVERT_Y, data.gyroRevertY)
+            .putInt(PrefsKeys.STEER_SENS, data.steerSensitivity)
+            .putInt(PrefsKeys.STEER_DEADZONE, data.steerDeadzone)
+            .putInt(PrefsKeys.STEER_CURVE, data.steerCurve)
+            .putInt(PrefsKeys.AIM_SENS, data.aimSensitivity)
+            .putInt(PrefsKeys.TOUCHPAD_SENS, data.touchpadSensitivity)
+            .putInt(PrefsKeys.DEADZONE, data.deadzone)
+            .putInt(PrefsKeys.STICK_CURVE, data.stickCurve)
+            .putBoolean(PrefsKeys.HAPTICS, data.haptics)
+            .putInt(PrefsKeys.HAPTIC_STRENGTH, data.hapticStrength.coerceIn(0, 100))
+            .putInt(PrefsKeys.PAD_ALPHA, data.padAlpha)
+            .putInt(PrefsKeys.FACE_SPACING, data.faceSpacing)
+            .putString(PrefsKeys.INPUT_RATE, rate.id)
+            .putBoolean(PrefsKeys.ADAPTIVE_QUALITY, adaptiveEnabled)
+
+        if (data.layout != null) {
+            view.applyLayout(data.layout)
+            editor.putString(PrefsKeys.LAYOUT, data.layout)
+        } else {
+            view.resetLayout()
+            editor.putString(PrefsKeys.LAYOUT, view.layoutSnapshot())
+        }
+        editor.apply()
+        // A profile's layout is its own snapshot, not a named layout preset.
+        layouts.clearActive()
+        profiles.activate(entry.name)
+        adaptiveQuality.reset()
+        settingsPanel?.refreshTouchpadMode()
+        refreshStatus()
+    }
+
+    private fun deleteGameProfile(name: String) {
+        profiles.remove(name)
+    }
+
+    // ----------------------------------------------------------- video quality
+    private fun applyQuality(quality: ScreenQuality, automatic: Boolean) {
+        val previous = screenQuality
+        screenQuality = quality
+        prefs.edit().putInt(PrefsKeys.SCREEN_QUALITY, quality.wireId).apply()
+        screenView?.setQuality(quality)
+        settingsPanel?.syncScreenQuality(quality)
+        if (automatic) {
+            if (previous != quality) {
+                val now = SystemClock.uptimeMillis()
+                if (now - lastAdaptiveNoticeAt >= ADAPTIVE_NOTICE_MS) {
+                    lastAdaptiveNoticeAt = now
+                    val message = if (quality.wireId < previous.wireId) {
+                        "Stream sharpness lowered to ${quality.label} to keep 60 fps"
+                    } else {
+                        "Stream sharpness raised to ${quality.label} — the stream is smooth"
+                    }
+                    toast(message)
+                }
+            }
+        } else {
+            adaptiveQuality.noteManual()
+        }
     }
 
     private fun showEditBar() {
@@ -607,7 +1129,7 @@ class MainActivity : Activity() {
         val t = view.theme
 
         val bar = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
+            orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
             setPadding(px(5), px(4), px(5), px(4))
             background = GradientDrawable().apply {
@@ -619,16 +1141,22 @@ class MainActivity : Activity() {
             translationY = -px(22).toFloat()
         }
 
-        fun addButton(text: String, primary: Boolean, action: () -> Unit) {
+        fun editRow(): LinearLayout = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            bar.addView(this)
+        }
+
+        fun addButton(row: LinearLayout, text: String, primary: Boolean, action: () -> Unit): TextView {
             val b = TextView(this).apply {
                 this.text = text
-                textSize = 11f
-                letterSpacing = 0.08f
+                textSize = 10f
+                letterSpacing = 0.06f
                 gravity = Gravity.CENTER
                 setTextColor(if (primary) t.bgBottom else t.text)
-                setPadding(px(12), px(9), px(12), px(9))
+                setPadding(px(8), px(7), px(8), px(7))
                 background = GradientDrawable().apply {
-                    cornerRadius = px(14).toFloat()
+                    cornerRadius = px(13).toFloat()
                     setColor(if (primary) t.accent else withAlpha(t.surfaceAlt, 210))
                     if (!primary) setStroke(px(1), withAlpha(t.text, 45))
                 }
@@ -636,20 +1164,31 @@ class MainActivity : Activity() {
                 isFocusable = true
                 setOnClickListener { action() }
             }
-            bar.addView(
+            row.addView(
                 b,
                 LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT,
                 ).apply {
-                    marginStart = px(3)
-                    marginEnd = px(3)
+                    marginStart = px(2)
+                    marginEnd = px(2)
                 },
             )
+            return b
         }
 
-        addButton("DONE", true) { exitEditing(save = true) }
-        addButton("SAVE AS", false) {
+        val actions = editRow()
+        val tools = editRow()
+        val clipboardRow = editRow()
+
+        addButton(actions, "DONE", true) { exitEditing(save = true) }
+        addButton(actions, "UNDO", false) {
+            if (!view.undoLayout()) toast("Nothing to undo")
+        }
+        addButton(actions, "REDO", false) {
+            if (!view.redoLayout()) toast("Nothing to redo")
+        }
+        addButton(actions, "SAVE AS", false) {
             LayoutDialogs.promptName(
                 this@MainActivity,
                 view.theme,
@@ -661,13 +1200,46 @@ class MainActivity : Activity() {
                 toast(if (replaced) "Layout \"$name\" updated" else "Layout \"$name\" saved")
             }
         }
-        addButton("RESET", false) {
+
+        fun toggleLabel(base: String, on: Boolean) = if (on) "$base ON" else "$base OFF"
+        val snapButton = addButton(tools, toggleLabel("SNAP", view.snapEnabled), false) {}
+        snapButton.setOnClickListener {
+            view.snapEnabled = !view.snapEnabled
+            snapButton.text = toggleLabel("SNAP", view.snapEnabled)
+            persistEditorOptions()
+        }
+        val guidesButton = addButton(tools, toggleLabel("GUIDES", view.guidesEnabled), false) {}
+        guidesButton.setOnClickListener {
+            view.guidesEnabled = !view.guidesEnabled
+            guidesButton.text = toggleLabel("GUIDES", view.guidesEnabled)
+            persistEditorOptions()
+        }
+        val safeButton = addButton(tools, toggleLabel("SAFE", view.safeAreaEnabled), false) {}
+        safeButton.setOnClickListener {
+            view.safeAreaEnabled = !view.safeAreaEnabled
+            safeButton.text = toggleLabel("SAFE", view.safeAreaEnabled)
+            persistEditorOptions()
+            if (view.safeArea.isEmpty) toast("No notch/bars inset reported on this device")
+        }
+        val multiButton = addButton(tools, toggleLabel("MULTI", view.multiSelectEnabled), false) {}
+        multiButton.setOnClickListener {
+            view.multiSelectEnabled = !view.multiSelectEnabled
+            multiButton.text = toggleLabel("MULTI", view.multiSelectEnabled)
+            persistEditorOptions()
+            toast(if (view.multiSelectEnabled) "Tap controls to add them to the selection" else "Single-select mode")
+        }
+
+        addButton(clipboardRow, "COPY", false) { view.copySelected() }
+        addButton(clipboardRow, "PASTE", false) { view.pasteSelected() }
+        addButton(clipboardRow, "LOCK", false) { view.toggleLockSelected() }
+        addButton(clipboardRow, "MIRROR", false) { view.mirrorSelected() }
+        addButton(clipboardRow, "RESET", false) {
             view.resetLayout()
             layouts.clearActive()
             persistLayout()
             toast("Default layout restored")
         }
-        addButton("SHOW ALL", false) { view.showAll() }
+        addButton(clipboardRow, "SHOW ALL", false) { view.showAll() }
 
         root.addView(
             bar,
@@ -684,6 +1256,15 @@ class MainActivity : Activity() {
             .setDuration(240L)
             .setInterpolator(DecelerateInterpolator())
             .start()
+    }
+
+    private fun persistEditorOptions() {
+        prefs.edit()
+            .putBoolean(PrefsKeys.LAYOUT_SNAP, view.snapEnabled)
+            .putBoolean(PrefsKeys.LAYOUT_GUIDES, view.guidesEnabled)
+            .putBoolean(PrefsKeys.LAYOUT_SAFE_AREA, view.safeAreaEnabled)
+            .putBoolean(PrefsKeys.LAYOUT_MULTI, view.multiSelectEnabled)
+            .apply()
     }
 
     private fun hideEditBar() {
@@ -723,7 +1304,28 @@ class MainActivity : Activity() {
 
                 override fun onLayoutSaved() = persistLayout()
 
-                override fun onModeChanged(mode: ControllerMode) = switchMode(mode)
+                override fun onAimTrainer() {
+                    if (view.editMode) exitEditing(save = true)
+                    settingsPanel?.dismiss()
+                    handler.postDelayed({ view.aimTrainerActive = true }, 260L)
+                }
+
+                override fun saveGameProfile(name: String) {
+                    this@MainActivity.saveGameProfile(name)
+                }
+
+                override fun applyGameProfile(name: String) {
+                    this@MainActivity.applyGameProfile(name)
+                }
+
+                override fun deleteGameProfile(name: String) {
+                    this@MainActivity.deleteGameProfile(name)
+                }
+
+                override fun onTouchpadChanged(enabled: Boolean) {
+                    setTouchpadEnabled(enabled)
+                    settingsPanel?.refreshTouchpadMode()
+                }
 
                 override fun onThemeChanged(theme: PadTheme) {
                     screenView?.accent = theme.accent
@@ -742,9 +1344,13 @@ class MainActivity : Activity() {
                 }
 
                 override fun onScreenQuality(quality: ScreenQuality) {
-                    screenQuality = quality
-                    prefs.edit().putInt(PrefsKeys.SCREEN_QUALITY, quality.wireId).apply()
-                    screenView?.setQuality(quality)
+                    applyQuality(quality, automatic = false)
+                }
+
+                override fun onAdaptiveQuality(enabled: Boolean) {
+                    adaptiveEnabled = enabled
+                    prefs.edit().putBoolean(PrefsKeys.ADAPTIVE_QUALITY, enabled).apply()
+                    adaptiveQuality.reset()
                 }
 
                 override fun onHapticsChanged(strength: Float) {
@@ -753,6 +1359,16 @@ class MainActivity : Activity() {
 
                 override fun attachScreenStream() {
                     this@MainActivity.attachScreenStream()
+                }
+
+                override fun streamFps(): Int = screenView?.currentStreamFps ?: 0
+
+                override fun streamConnected(): Boolean =
+                    screenView?.isStreamConnected ?: false
+
+                override fun onOpenConnectionDoctor() {
+                    doctorStartup = false
+                    showConnectionDoctor()
                 }
 
                 override fun onClosed() {
@@ -827,7 +1443,8 @@ class MainActivity : Activity() {
             pendingConnectAddress = address
             if (!btPermissionAsked) {
                 btPermissionAsked = true
-                BluetoothHidSupport.requestPermissions(this, REQ_BT)
+                hostPermissionPending = true
+                BluetoothHidSupport.requestPermissions(this, REQ_BT_HOST)
             }
             settingsPanel?.refreshBluetoothGamepad()
             return
@@ -838,20 +1455,30 @@ class MainActivity : Activity() {
             return
         }
         pendingConnectAddress = null
-        phoneGamepad.connect(address)
-        if (!phoneGamepadActive) {
-            phoneGamepadActive = true
+        // connect() now reports synchronous start/host failures. Do not mark the
+        // gamepad active (or keep a 250 ms polling ticker) on a failed pick.
+        val started = phoneGamepad.connect(address)
+        if (started) {
+            if (!phoneGamepadActive) {
+                phoneGamepadActive = true
+                lastPhoneVersion = -1L
+                btWasConnected = false
+            }
+            handler.removeCallbacks(phoneGamepadTicker)
+            handler.post(phoneGamepadTicker)
+        } else {
+            phoneGamepadActive = false
+            handler.removeCallbacks(phoneGamepadTicker)
             lastPhoneVersion = -1L
             btWasConnected = false
         }
-        handler.removeCallbacks(phoneGamepadTicker)
-        handler.post(phoneGamepadTicker)
         settingsPanel?.refreshBluetoothGamepad()
     }
 
     /** Drops the picked host only; the profile stays ready for another pick. */
     private fun disconnectBluetoothHost() {
         pendingConnectAddress = null
+        hostPermissionPending = false
         phoneGamepad.disconnect()
         btStatus = "Bluetooth gamepad disconnected — tap SELECT HOST to connect"
         settingsPanel?.refreshBluetoothGamepad()
@@ -970,6 +1597,38 @@ class MainActivity : Activity() {
         }
 
     // ------------------------------------------------------------------ window
+    /** Feeds notch/system-bar bounds to the editor's optional safe-area guide. */
+    @Suppress("DEPRECATION")
+    private fun installSafeAreaInsets() {
+        root.setOnApplyWindowInsetsListener { v, insets ->
+            var left = insets.systemWindowInsetLeft
+            var top = insets.systemWindowInsetTop
+            var right = insets.systemWindowInsetRight
+            var bottom = insets.systemWindowInsetBottom
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                insets.displayCutout?.let { cutout ->
+                    left = maxOf(left, cutout.safeInsetLeft)
+                    top = maxOf(top, cutout.safeInsetTop)
+                    right = maxOf(right, cutout.safeInsetRight)
+                    bottom = maxOf(bottom, cutout.safeInsetBottom)
+                }
+            }
+            v.post {
+                val w = root.width
+                val h = root.height
+                if (w > 0 && h > 0) {
+                    view.safeArea = RectF(
+                        left.coerceIn(0, w).toFloat(),
+                        top.coerceIn(0, h).toFloat(),
+                        (w - right).coerceIn(0, w).toFloat(),
+                        (h - bottom).coerceIn(0, h).toFloat(),
+                    )
+                }
+            }
+            insets
+        }
+    }
+
     private fun enterImmersive() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             window.setDecorFitsSystemWindows(false)
@@ -988,6 +1647,123 @@ class MainActivity : Activity() {
                     or View.SYSTEM_UI_FLAG_FULLSCREEN
                 )
         }
+    }
+
+    // ---------------------------------------------------------- aim suggestion
+    private fun showAimRecommendation(rec: AimRecommendation) {
+        if (isFinishing || !resumed) return
+        dismissAimRecommendation()
+        val t = view.theme
+
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(px(18), px(15), px(18), px(14))
+            background = GradientDrawable().apply {
+                cornerRadius = px(17).toFloat()
+                setColor(withAlpha(t.surface, 250))
+                setStroke(px(1), withAlpha(t.accent, 200))
+            }
+            elevation = px(40).toFloat()
+        }
+        card.addView(TextView(this).apply {
+            text = "AIM RECOMMENDATION"
+            textSize = 9.5f
+            letterSpacing = 0.14f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(t.accent)
+        })
+        card.addView(TextView(this).apply {
+            text = rec.title
+            textSize = 15f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(t.text)
+            setPadding(0, px(7), 0, 0)
+        })
+        card.addView(TextView(this).apply {
+            text = rec.detail
+            textSize = 11.5f
+            setTextColor(t.textDim)
+            setPadding(0, px(5), 0, 0)
+        })
+
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.END
+            setPadding(0, px(12), 0, 0)
+        }
+        if (rec.hasChanges) {
+            row.addView(
+                swapButton("NOT NOW", t, primary = false) { dismissAimRecommendation() },
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ).apply { marginEnd = px(8) },
+            )
+            row.addView(
+                swapButton("APPLY", t, primary = true) { applyAimRecommendation(rec) },
+            )
+        } else {
+            row.addView(
+                swapButton("GOT IT", t, primary = true) { dismissAimRecommendation() },
+            )
+        }
+        card.addView(row)
+
+        val scrim = FrameLayout(this).apply {
+            setBackgroundColor(withAlpha(t.bgBottom, 175))
+            isClickable = true
+            setOnClickListener { dismissAimRecommendation() }
+            addView(
+                card,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    Gravity.CENTER,
+                ).apply { marginStart = px(20); marginEnd = px(20) },
+            )
+            alpha = 0f
+        }
+        root.addView(
+            scrim,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            ),
+        )
+        aimRecommendation = scrim
+        scrim.animate().alpha(1f).setDuration(160).start()
+    }
+
+    private fun applyAimRecommendation(rec: AimRecommendation) {
+        val editor = prefs.edit()
+        rec.touchpadSensitivity?.let { value ->
+            view.touchpadSensitivity = value / 100f
+            editor.putInt(PrefsKeys.TOUCHPAD_SENS, value)
+        }
+        rec.aimSensitivity?.let { value ->
+            view.aimSensitivity = value / 100f
+            editor.putInt(PrefsKeys.AIM_SENS, value)
+        }
+        rec.gyroRevertX?.let { value ->
+            view.gyroRevertX = value
+            editor.putBoolean(PrefsKeys.GYRO_REVERT_X, value)
+        }
+        rec.gyroRevertY?.let { value ->
+            view.gyroRevertY = value
+            editor.putBoolean(PrefsKeys.GYRO_REVERT_Y, value)
+        }
+        editor.apply()
+        dismissAimRecommendation()
+        toast("Aim settings updated")
+    }
+
+    private fun dismissAimRecommendation(): Boolean {
+        val card = aimRecommendation ?: return false
+        aimRecommendation = null
+        card.animate().alpha(0f).setDuration(120)
+            .withEndAction { root.removeView(card) }
+            .start()
+        return true
     }
 
     // --------------------------------------------------------------- pad swap
@@ -1163,9 +1939,24 @@ class MainActivity : Activity() {
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
     }
 
+    private fun openUrl(url: String) {
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+        } catch (_: ActivityNotFoundException) {
+            toast("No browser installed")
+        }
+    }
+
     companion object {
+        private const val RELEASE_URL =
+            "https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest"
+        private const val SETUP_URL =
+            "https://alamshowkatdar.github.io/lemoGamePad-ultimate/"
+
         private const val REQ_QR = 77
         private const val REQ_BT = 78
+        /** Permission prompt opened by SELECT HOST; only it may consume a pick. */
+        private const val REQ_BT_HOST = 79
 
         // Rumble: short pulses repeated while the PC keeps reporting a motor
         // speed; the hold timeout covers a dropped "stop" packet.
@@ -1173,5 +1964,11 @@ class MainActivity : Activity() {
         private const val RUMBLE_PERIOD_MS = 160L
         private const val RUMBLE_HOLD_MS = 1600L
         private const val RUMBLE_STALE_MS = 250L
+
+        // Adaptive quality: 2 s windows, with the controller's own hysteresis
+        // and cooldown. Notices are throttled separately so the badge can change
+        // quietly without a toast storm.
+        private const val ADAPTIVE_SAMPLE_MS = 2_000L
+        private const val ADAPTIVE_NOTICE_MS = 60_000L
     }
 }

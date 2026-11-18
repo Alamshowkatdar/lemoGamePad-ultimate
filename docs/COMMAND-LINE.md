@@ -17,9 +17,9 @@ lemoGamePad-server.exe --no-web            # disable the browser gamepad page
 lemoGamePad-server.exe --web-port 8080     # browser pad TCP port (default: control port + 2)
 lemoGamePad-server.exe --web-key mysecret  # fixed browser pairing key (default: random per run)
 lemoGamePad-server.exe --video-port 9990   # override the TCP stream port
-lemoGamePad-server.exe --video-fps 8       # stream frame rate (default 20)
-lemoGamePad-server.exe --video-width 480   # stream width (default 800)
-lemoGamePad-server.exe --video-quality 45  # JPEG quality 20-90 (default 50)
+lemoGamePad-server.exe --video-fps 60      # stream frame rate, capped at 60 (default 60)
+lemoGamePad-server.exe --video-width 480   # balanced-profile width (default 480)
+lemoGamePad-server.exe --video-quality 42  # JPEG quality 20-90 (default 42)
 lemoGamePad-server.exe --list-ip           # print this PC's LAN IPs and exit
 ```
 
@@ -54,7 +54,7 @@ pads.
 **Why Xbox 360 and not a literal DualShock 3?** Windows has no built-in DS3
 driver; a true DS3 needs a kernel driver (DsHidMini). Games and emulators
 (RPCS3, PCSX2, Steam, RetroArch) all accept a standard pad and map the PS3
-layout to it exactly as the table above. Use `--pad ds4` if a game shows
+layout to it exactly as the [face-button table](ANDROID.md#using-the-pad). Use `--pad ds4` if a game shows
 PlayStation button prompts.
 
 ---

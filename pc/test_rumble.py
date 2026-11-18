@@ -7,7 +7,8 @@ with non-zero motors, the whole chain works.
 
     python test_rumble.py
 
-Close lemoGamePad-server.exe first (a second virtual pad + port 9876 would clash).
+Close lemoGamePad-server.exe first (a second virtual pad would clash; this test
+uses port 9879 by default).
 Runs for a few seconds; any real controller on the PC may buzz briefly.
 
 This test is Windows-only (it uses XInput). On Linux run test_linux_pad.py,

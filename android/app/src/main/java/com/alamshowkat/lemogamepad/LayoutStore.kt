@@ -7,9 +7,8 @@ import org.json.JSONObject
 /**
  * Named copies of the on-screen control layout.
  *
- * The live layout is still stored in [PrefsKeys.LAYOUT], so an upgrade from an
- * older version keeps the arrangement the user already had. This store only
- * adds a name on top of it:
+ * The live layout is stored in [PrefsKeys.LAYOUT], so an upgrade keeps the
+ * arrangement the user already had. This store only adds a name on top of it:
  *
  * - [PrefsKeys.LAYOUTS] holds the ordered list of saved layouts as JSON.
  * - [PrefsKeys.LAYOUT_ACTIVE] names the saved layout currently in use, or is
@@ -18,14 +17,11 @@ import org.json.JSONObject
  * Editing a named layout updates that saved entry in place (see [updateActive]);
  * use "Save as" to create a separate copy first.
  */
-class LayoutStore(
-    private val prefs: SharedPreferences,
-    private val mode: ControllerMode = ControllerMode.GAMEPAD,
-) {
+class LayoutStore(private val prefs: SharedPreferences) {
 
-    private val liveKey = layoutPrefKey(mode)
-    private val activeKey = activeLayoutPrefKey(mode)
-    private val listKey = layoutsPrefKey(mode)
+    private val liveKey = PrefsKeys.LAYOUT
+    private val activeKey = PrefsKeys.LAYOUT_ACTIVE
+    private val listKey = PrefsKeys.LAYOUTS
 
     data class Saved(val name: String, val data: String)
 

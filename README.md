@@ -11,7 +11,7 @@ by **Alam showkat**
 [![Android build](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/actions/workflows/android-build.yml/badge.svg)](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/actions/workflows/android-build.yml)
 [![PC tests](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/actions/workflows/pc-tests.yml/badge.svg)](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/actions/workflows/pc-tests.yml)
 
-[**Download the latest release →**](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) · [Report an issue](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/issues)
+[**Website & downloads →**](https://alamshowkatdar.github.io/lemoGamePad-ultimate/) · [Download the latest release →](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) · [Report an issue](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/issues)
 
 **App source version:** 1.7.0. Download the signed APK and the Windows/Linux server from the [latest release](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) — use **1.3.7.2 or newer** on Linux, which fixes the swapped X/Y face buttons. The release workflow also publishes a `SHA256SUMS.txt` so you can verify your download.
 
@@ -40,14 +40,47 @@ either, only access to `/dev/uinput`.
          ▲                                                            ▲
          └──────────────── up to 8 phones ────────────────────────────┘
 
-Bluetooth is a separate, server-less path: the phone advertises a standard HID
-gamepad and a PC or Android host reads it directly after pairing.
+Bluetooth is a separate, server-less path: pair once, then pick the bonded host
+with **SELECT HOST** in the app. The phone advertises a standard HID gamepad and
+the host reads it directly; the app never connects automatically on launch.
 ```
 
 > **lemoGamePad ultimate™** — trademark of **Alam showkat**.
 > App package: `com.alamshowkat.lemogamepad`.
 
-### What's new in 1.7.0
+### Unreleased changes
+
+- **One Gamepad layout.** The separate **Racing** and **FPS** modes and their
+  layouts are removed. The standard pad keeps sticks, d-pad, shoulders,
+  triggers, face buttons and Start/Select/Home.
+- **Aim touchpad.** When enabled it replaces the right stick and its click. The
+  default **BGMI-style swipe** turns the camera with each sweep; the switchable
+  **Mouse aim** mode turns finger speed into relative game-mouse aim that stops
+  when your finger stops. Neither mode sends desktop mouse events — both drive
+  the same right-stick axes, and gyro aim can add at the same time.
+- **Per-axis gyro revert.** Revert left/right aim and revert up/down aim can be
+  switched independently, so only the direction that feels wrong needs flipping.
+- **One motion card, independent switches.** Tilt steering feeds left X and gyro
+  rotation feeds right-stick aim; both live in the same **MOTION & AIM** card and
+  can run together. You choose which to enable for the game you are playing —
+  there is no foreground-game detection. Tilt only overrides left X while it is
+  off centre, so the left stick still works when the phone is level.
+- **One set of named layouts.** Layout presets are no longer split per mode;
+  swapping the swipe pad on or off preserves the previous control placement.
+- **Manual game profiles.** Save a full control setup under a name and tap to
+  switch. There is still no foreground-game detection — you choose when to swap.
+- **Aim calibration.** A ten-target reticle drill exercises touch and gyro aim
+  with a persistent free reticle and tap-to-fire, then suggests sensitivity or
+  revert changes.
+- **Adaptive stream quality.** Optionally lower or raise video sharpness from
+  measured FPS and link health. All profiles still target 60 fps; manual taps
+  pause the automatic controller.
+
+### What was new in 1.7.0
+
+> **Historical release notes.** Mode switching, per-mode layouts and automatic
+> Bluetooth pairing described below were superseded by the unreleased changes
+> above. See [`CHANGELOG.md`](CHANGELOG.md) for the current behaviour.
 
 - **Three controller experiences in one app.** Switch between **Gamepad**,
   **Racing** and **FPS** from the CONTROL CENTRE. Each mode has its own layout,
@@ -78,6 +111,10 @@ gamepad and a PC or Android host reads it directly after pairing.
   the 9-byte Bluetooth HID report all keep the same wire format.
 
 ### What's new in 1.6.13
+
+> **Superseded by the current explicit-host behaviour:** the app no longer
+> registers or reconnects to a Bluetooth host on launch. Pair once, then use
+> **SELECT HOST** in **BLUETOOTH GAMEPAD**.
 
 - **Bluetooth is now a real, automatic HID gamepad.** The old Bluetooth PAN
   transport — tethering, `bnep`, "Join a Personal Area Network" — is gone. The

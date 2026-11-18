@@ -10,7 +10,8 @@
 #     Wayland screen-capture helper)
 #   * the uinput kernel module, a udev rule and "input" group membership
 #   * a Python virtualenv in pc/.venv with pc/requirements.txt
-#   * firewall holes for UDP 9876 / TCP 9877 when ufw or firewalld is active
+#   * firewall holes for UDP 9876 / TCP 9877 / TCP 9878 (browser pad) when
+#     ufw or firewalld is active
 #   * a launcher in ~/.local/bin and the application menu
 #
 # Safe to rerun. install-uinput.sh is kept as an alias.
@@ -432,19 +433,21 @@ fi
 if [ "$DO_FIREWALL" -eq 1 ]; then
     echo "==> Firewall"
     if [ "$DRY_RUN" -eq 1 ]; then
-        echo "  [dry-run] open UDP 9876 and TCP 9877 when ufw/firewalld is active"
+        echo "  [dry-run] open UDP 9876 and TCP 9877/9878 when ufw/firewalld is active"
     elif command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -qi '^Status: active'; then
         ufw allow 9876/udp >/dev/null 2>&1 || true
         ufw allow 9877/tcp >/dev/null 2>&1 || true
-        echo "  ufw: allowed UDP 9876 and TCP 9877."
+        ufw allow 9878/tcp >/dev/null 2>&1 || true
+        echo "  ufw: allowed UDP 9876 and TCP 9877/9878."
     elif command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
         firewall-cmd --permanent --add-port=9876/udp >/dev/null 2>&1 || true
         firewall-cmd --permanent --add-port=9877/tcp >/dev/null 2>&1 || true
+        firewall-cmd --permanent --add-port=9878/tcp >/dev/null 2>&1 || true
         firewall-cmd --reload >/dev/null 2>&1 || true
-        echo "  firewalld: allowed UDP 9876 and TCP 9877."
+        echo "  firewalld: allowed UDP 9876 and TCP 9877/9878."
     else
         echo "  No active ufw/firewalld detected; nothing to open."
-        echo "  If a phone cannot reach the PC, allow UDP 9876 and TCP 9877."
+        echo "  If a phone cannot reach the PC, allow UDP 9876 and TCP 9877/9878."
     fi
 else
     echo "==> Firewall (skipped)"

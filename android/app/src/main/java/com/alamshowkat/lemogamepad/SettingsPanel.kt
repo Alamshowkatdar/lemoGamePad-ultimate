@@ -30,6 +30,30 @@ import kotlin.concurrent.thread
 import kotlin.math.min
 import kotlin.math.roundToInt
 
+/** Copy shown by the "?" button on each settings card. */
+private val CARD_HELP: Map<String, Pair<String, String>> = mapOf(
+    "status" to ("CONNECTION STATUS" to
+        "The pill on the pad opens this panel. CONNECTED means the PC is answering pings; LINKING means an address is set but no reply has arrived yet. The graph and stats below show RTT, jitter, loss and video FPS. Battery saver pauses those live stats while connection state and the buttons keep working."),
+    "connection" to ("CONNECTION" to
+        "Wi-Fi and USB both use the same port 9876 for input and 9877 for video. Transport AUTO probes all available paths. Use SCAN or the QR code to pair a PC; nothing is saved until you connect."),
+    "bluetooth" to ("BLUETOOTH GAMEPAD" to
+        "This is a server-less HID gamepad for a phone or TV. You must start it and pick a host explicitly; the app never auto-connects, registers, calls, or changes audio profiles. The report stays the original 9 bytes."),
+    "motion" to ("MOTION & AIM" to
+        "Gyro adds aim movement on top of touch. Revert left/right or up/down flips one axis if aim drifts the wrong way. Run AIM CALIBRATION and apply the suggested values to tune sensitivity."),
+    "appearance" to ("APPEARANCE" to
+        "Theme changes are instant and persist. LOW/BALANCED/HIGH only change video sharpness; smoothness is always prioritised at 60 fps. Adaptive quality is off unless you enable it and can auto-adjust sharpness."),
+    "controls" to ("CONTROLS" to
+        "Deadzone and curve shape the analog sticks. Haptic strength scales rumble from the PC. Face spacing changes the four face buttons together until you move one individually in the layout editor."),
+    "studio" to ("CUSTOMIZATION STUDIO" to
+        "Edit layout unlocks drag, pinch resize, long-press hide, snap/grid, alignment guides, multi-select, copy/paste, lock and mirror. Undo/redo works during the edit session; save a named layout to keep it."),
+    "layouts" to ("LAYOUTS" to
+        "Named layouts are manual quick-switches. Import/export and game profiles share the same compact layout text, so an old saved layout still loads. Safe-area guides show notch and system-bar margins while editing."),
+    "profiles" to ("GAME PROFILES" to
+        "Profiles store your whole control setup as a snapshot. They never detect which game is running — save, name, and apply them yourself. Applying a profile also restores its layout."),
+    "screen" to ("PC SCREEN" to
+        "The small window streams TCP video on port 9877. Dragging moves it; the close button only hides it, it does not disconnect input. Smoothness is prioritised over sharpness."),
+)
+
 /** Shared preference keys used by the activity, the view and this panel. */
 internal object PrefsKeys {
     const val FILE = "vpad"
@@ -43,21 +67,27 @@ internal object PrefsKeys {
     const val PLAYER_SLOT = "player_slot"
     const val ONBOARDED = "onboarded"
     const val WIFI_GUIDE_SEEN = "wifi_guide_seen"
+    const val CONNECTION_DOCTOR_SEEN = "connection_doctor_seen_v1"
+    const val BATTERY_SAVER = "battery_saver_live_stats"
+    const val LAST_WHATSNEW_CODE = "last_whatsnew_code"
     const val THEME = "theme"
     const val FACES = "faces"
     const val MOTION = "motion"
-    const val MODE = "mode"
     const val LAYOUT = "layout"
     const val LAYOUT_ACTIVE = "layout_active"
     const val LAYOUTS = "layouts"
-    const val LAYOUT_RACING = "layout_racing"
-    const val LAYOUT_ACTIVE_RACING = "layout_active_racing"
-    const val LAYOUTS_RACING = "layouts_racing"
-    const val LAYOUT_FPS = "layout_fps"
-    const val LAYOUT_ACTIVE_FPS = "layout_active_fps"
-    const val LAYOUTS_FPS = "layouts_fps"
+    const val LAYOUT_SNAP = "layout_snap"
+    const val LAYOUT_GUIDES = "layout_guides"
+    const val LAYOUT_SAFE_AREA = "layout_safe_area"
+    const val LAYOUT_MULTI = "layout_multi"
+    const val GAME_PROFILES = "game_profiles"
+    const val GAME_PROFILE_ACTIVE = "game_profile_active"
+    const val TOUCHPAD_ENABLED = "touchpad_enabled"
+    const val TOUCHPAD_MOUSE = "touchpad_mouse"
     const val GYRO_STEER = "gyro_steer"
     const val GYRO_AIM = "gyro_aim"
+    const val GYRO_REVERT_X = "gyro_revert_x"
+    const val GYRO_REVERT_Y = "gyro_revert_y"
     const val STEER_SENS = "steer_sens"
     const val STEER_DEADZONE = "steer_deadzone"
     const val STEER_CURVE = "steer_curve"
@@ -70,6 +100,7 @@ internal object PrefsKeys {
     const val SCREEN = "screen"
     const val SCREEN_SMALL = "screen_small"
     const val SCREEN_QUALITY = "screen_quality"
+    const val ADAPTIVE_QUALITY = "adaptive_quality"
     const val SCREEN_X = "screen_x"
     const val SCREEN_Y = "screen_y"
 }
@@ -110,13 +141,21 @@ class SettingsPanel(
         fun onScanQr()
         fun onEditLayout()
         fun onLayoutSaved()
-        fun onModeChanged(mode: ControllerMode)
+        fun onAimTrainer()
+        fun saveGameProfile(name: String)
+        fun applyGameProfile(name: String)
+        fun deleteGameProfile(name: String)
+        fun onTouchpadChanged(enabled: Boolean)
         fun onThemeChanged(theme: PadTheme)
         fun onScreenPreview(enabled: Boolean)
         fun onScreenSize(small: Boolean)
         fun onScreenQuality(quality: ScreenQuality)
+        fun onAdaptiveQuality(enabled: Boolean)
         fun onHapticsChanged(strength: Float)
         fun attachScreenStream()
+        fun streamFps(): Int
+        fun streamConnected(): Boolean
+        fun onOpenConnectionDoctor()
         fun onClosed()
         fun toast(message: String)
         fun bluetoothPermissionsMissing(): Boolean
@@ -136,9 +175,13 @@ class SettingsPanel(
     val isShowing: Boolean get() = showing
 
     private val tinters = ArrayList<() -> Unit>()
+    /** Tints registered by views rebuilt *during* a tint pass; never retained. */
+    private val pendingTinters = ArrayList<() -> Unit>()
+    private var tintBatchDepth = 0
     private val transportViews = ArrayList<Pair<Transport, TextView>>()
     private val slotViews = ArrayList<Pair<Int, TextView>>()
     private var lastSlotSignature = Int.MIN_VALUE
+    private var batterySaver = prefs.getBoolean(PrefsKeys.BATTERY_SAVER, false)
     private val handler = Handler(Looper.getMainLooper())
 
     private lateinit var scrim: View
@@ -167,14 +210,14 @@ class SettingsPanel(
     private lateinit var btPairBtn: TextView
     private lateinit var btDiscoverBtn: TextView
 
-    private lateinit var racingGroup: LinearLayout
-    private lateinit var fpsGroup: LinearLayout
-    private lateinit var gamepadHint: TextView
     private lateinit var sensorLine: TextView
-    private lateinit var modeDesc: TextView
-    private val modeChips = LinkedHashMap<ControllerMode, TextView>()
+    private var touchpadHint: TextView? = null
+    private var touchpadMouseToggle: View? = null
+    private var touchpadModeHint: TextView? = null
+    private var screenQualitySync: ((ScreenQuality) -> Unit)? = null
     private var themePreview: View? = null
-    private var refreshLayouts: (() -> Unit)? = null
+    /** Separate decor overlay for SELECT HOST; must die with the settings sheet. */
+    private var hostPicker: View? = null
 
     private var selectedTransport: Transport = link.transport
     private var scanning = false
@@ -188,7 +231,7 @@ class SettingsPanel(
         override fun run() {
             if (!showing) return
             refreshLink()
-            handler.postDelayed(this, 500L)
+            handler.postDelayed(this, if (batterySaver) 1_200L else 500L)
         }
     }
 
@@ -230,7 +273,7 @@ class SettingsPanel(
             FrameLayout.LayoutParams(sheetWidth, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.END),
         )
 
-        tinters += {
+        addTinter {
             val t = pad.selectedTheme
             scrim.setBackgroundColor(withAlpha(0x000000, if (t.dark) 175 else 100))
             sheet.background = GradientDrawable().apply {
@@ -308,7 +351,7 @@ class SettingsPanel(
         )
 
         header.addView(row)
-        tinters += {
+        addTinter {
             val t = pad.selectedTheme
             eyebrow.setTextColor(t.accent)
             title.setTextColor(t.text)
@@ -328,7 +371,7 @@ class SettingsPanel(
 
     private fun buildDivider(): View {
         val line = View(activity)
-        tinters += {
+        addTinter {
             line.setBackgroundColor(withAlpha(pad.selectedTheme.text, 22))
         }
         line.layoutParams = LinearLayout.LayoutParams(
@@ -356,12 +399,12 @@ class SettingsPanel(
         content.addView(statusCard(), cardParams())
         content.addView(connectionCard(), cardParams())
         content.addView(bluetoothGamepadCard(), cardParams())
-        content.addView(modeCard(), cardParams())
         content.addView(motionCard(), cardParams())
         content.addView(appearanceCard(), cardParams())
         content.addView(controlsCard(), cardParams())
         content.addView(studioCard(), cardParams())
         content.addView(layoutsCard(), cardParams())
+        content.addView(gameProfilesCard(), cardParams())
         content.addView(screenCard(), cardParams())
         content.addView(footer())
 
@@ -377,7 +420,7 @@ class SettingsPanel(
             orientation = LinearLayout.VERTICAL
             setPadding(px(14), px(13), px(14), px(14))
         }
-        tinters += {
+        addTinter {
             val t = pad.selectedTheme
             card.background = GradientDrawable().apply {
                 cornerRadius = px(16).toFloat()
@@ -396,6 +439,7 @@ class SettingsPanel(
 
     private fun statusCard(): LinearLayout {
         val card = card()
+        card.addView(sectionTitle("CONNECTION STATUS", "status"))
 
         val top = row()
         statusDot = TextView(activity).apply {
@@ -430,8 +474,8 @@ class SettingsPanel(
         }
         card.addView(detailLine)
 
-        // Live RTT sparkline. Kept in the status card so the answer to "is the
-        // link actually worse right now?" is one tap away instead of a guess.
+        // One live RTT graph for the whole status card. The old dashboard card
+        // drew the same history a second time; battery saver pauses it.
         latencyGraph = LatencyGraph(activity).apply {
             visibility = View.GONE
             layoutParams = LinearLayout.LayoutParams(
@@ -443,8 +487,9 @@ class SettingsPanel(
 
         latencyStats = TextView(activity).apply {
             textSize = 10.5f
-            letterSpacing = 0.04f
-            setPadding(px(1), 0, px(1), px(9))
+            letterSpacing = 0.03f
+            setLineSpacing(px(4).toFloat(), 1f)
+            setPadding(px(1), px(2), px(1), px(9))
             visibility = View.GONE
         }
         card.addView(latencyStats)
@@ -458,23 +503,46 @@ class SettingsPanel(
         actions.addView(disconnectBtn, weightParams(1f))
         card.addView(actions)
 
-        tinters += {
+        val utilities = row()
+        utilities.addView(
+            toggle("Battery saver · live stats", batterySaver) { on ->
+                batterySaver = on
+                prefs.edit().putBoolean(PrefsKeys.BATTERY_SAVER, on).apply()
+                refreshLink()
+            },
+            weightParams(1f, end = px(5)),
+        )
+        utilities.addView(
+            action("CONNECTION DOCTOR", primary = false) {
+                dismiss()
+                callbacks.onOpenConnectionDoctor()
+            },
+            wrapParams(),
+        )
+        card.addView(utilities)
+        card.addView(
+            tiny(
+                "Battery saver pauses the live graph; connection state and buttons keep working.",
+                top = px(2),
+                bottom = px(2),
+            ),
+        )
+
+        addTinter {
             val t = pad.selectedTheme
             statusSub.setTextColor(t.muted)
             detailLine.setTextColor(t.textDim)
-            latencyStats.setTextColor(t.muted)
-            latencyGraph.setSamples(
-                link.rttHistory(),
-                t.accent,
-                t.muted,
-            )
+            latencyStats.setTextColor(t.textDim)
+            if (!batterySaver) {
+                latencyGraph.setSamples(link.rttHistory(), t.accent, t.muted)
+            }
         }
         return card
     }
 
     private fun connectionCard(): LinearLayout {
         val card = card()
-        card.addView(sectionTitle("CONNECTION"))
+        card.addView(sectionTitle("CONNECTION", "connection"))
 
         val chips = row()
         for (tr in Transport.values()) {
@@ -575,7 +643,7 @@ class SettingsPanel(
         }
         card.addView(scanLine)
 
-        tinters += {
+        addTinter {
             val t = pad.selectedTheme
             hintLine.setTextColor(t.muted)
             slotLine.setTextColor(t.muted)
@@ -586,7 +654,7 @@ class SettingsPanel(
 
     private fun bluetoothGamepadCard(): LinearLayout {
         val card = card()
-        card.addView(sectionTitle("BLUETOOTH GAMEPAD"))
+        card.addView(sectionTitle("BLUETOOTH GAMEPAD", "bluetooth"))
         card.addView(
             tiny(
                 "Pair “Lemo GamePad” once from your PC or Android host. Opening this app never " +
@@ -628,145 +696,162 @@ class SettingsPanel(
         btGrantBtn.visibility = View.GONE
         card.addView(btGrantBtn, topParams(px(6)))
 
-        tinters += {
+        addTinter {
             val t = pad.selectedTheme
             btStatus.setTextColor(t.muted)
         }
         return card
     }
 
-    // ------------------------------------------------------------- experience
-    private fun modeCard(): LinearLayout {
-        val card = card()
-        card.addView(sectionTitle("EXPERIENCE"))
-        card.addView(tiny("CHOOSE WHAT THE PAD DRIVES", bottom = px(8)))
-
-        val chipsRow = row()
-        modeChips.clear()
-        for ((index, m) in ControllerMode.values().withIndex()) {
-            val chipView = chip(m.label) {
-                if (pad.mode != m) {
-                    callbacks.onModeChanged(m)
-                    styleModeChips()
-                    refreshModeViews()
-                    refreshLayouts?.invoke()
-                }
-            }
-            modeChips[m] = chipView
-            chipsRow.addView(chipView, weightParams(1f, end = if (index < 2) px(4) else 0))
-        }
-        card.addView(chipsRow)
-
-        modeDesc = tiny("", top = px(8))
-        card.addView(modeDesc)
-        tinters += { styleModeChips() }
-        styleModeChips()
-        return card
-    }
-
-    private fun styleModeChips() {
-        val t = pad.selectedTheme
-        for ((m, chipView) in modeChips) {
-            val on = pad.mode == m
-            chipView.setTextColor(if (on) onColor(t.accent) else t.textDim)
-            chipView.background = GradientDrawable().apply {
-                cornerRadius = px(12).toFloat()
-                setColor(if (on) t.accent else withAlpha(t.surfaceAlt, 235))
-                setStroke(px(1), withAlpha(if (on) t.accent else t.text, if (on) 255 else 34))
-            }
-        }
-        if (::modeDesc.isInitialized) {
-            modeDesc.text = "${pad.mode.tagline.uppercase()}  ·  ${pad.mode.detail}"
-        }
-    }
-
-    /** Sensor tuning for tilt steering and gyro aim. */
+    /** Swipe pad, tilt steering and gyro aim on the single Gamepad layout. */
     private fun motionCard(): LinearLayout {
         val card = card()
-        card.addView(sectionTitle("MOTION"))
+        card.addView(sectionTitle("MOTION & AIM", "motion"))
         sensorLine = tiny(pad.sensorStatus.ifBlank { "Motion sensors ready" }, bottom = px(4))
         card.addView(sensorLine)
 
-        racingGroup = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
-        racingGroup.addView(
+        card.addView(
+            toggle("Aim touchpad", prefs.getBoolean(PrefsKeys.TOUCHPAD_ENABLED, false)) { on ->
+                callbacks.onTouchpadChanged(on)
+                refreshTouchpadMode()
+            },
+        )
+        val hint = tiny("", top = px(2))
+        touchpadHint = hint
+        card.addView(hint)
+        val mouseToggle = toggle(
+            "Mouse aim",
+            prefs.getBoolean(PrefsKeys.TOUCHPAD_MOUSE, false),
+        ) { on ->
+            pad.touchpadMouseMode = on
+            prefs.edit().putBoolean(PrefsKeys.TOUCHPAD_MOUSE, on).apply()
+            refreshTouchpadMode()
+        }
+        touchpadMouseToggle = mouseToggle
+        card.addView(mouseToggle, topParams(px(4)))
+        val modeHint = tiny("", top = px(2), bottom = px(2))
+        touchpadModeHint = modeHint
+        card.addView(modeHint)
+        card.addView(
+            seekRow("TOUCHPAD SENSITIVITY", 0, 100, PrefsKeys.TOUCHPAD_SENS, (pad.touchpadSensitivity * 100f).roundToInt()) {
+                pad.touchpadSensitivity = it / 100f
+            },
+        )
+        refreshTouchpadMode()
+
+        card.addView(
             toggle("Tilt steering", prefs.getBoolean(PrefsKeys.GYRO_STEER, true)) { on ->
                 pad.gyroSteering = on
                 prefs.edit().putBoolean(PrefsKeys.GYRO_STEER, on).apply()
             },
+            topParams(px(8)),
         )
-        racingGroup.addView(
+        card.addView(
             tiny(
-                "Hold the phone level and tilt it like a wheel. Drag the steering bar to steer by thumb instead.",
+                "Tilt steers racing games on left X. Level is straight ahead; the left stick still works at centre.",
                 top = px(2),
             ),
         )
-        racingGroup.addView(
+        card.addView(
             seekRow("TILT SENSITIVITY", 0, 100, PrefsKeys.STEER_SENS, (pad.steerSensitivity * 100f).roundToInt()) {
                 pad.steerSensitivity = it / 100f
             },
         )
-        racingGroup.addView(
+        card.addView(
             seekRow("STEER DEAD ZONE", 0, 40, PrefsKeys.STEER_DEADZONE, (pad.steerDeadzone * 100f).roundToInt()) {
                 pad.steerDeadzone = it / 100f
             },
         )
-        racingGroup.addView(
+        card.addView(
             seekRow("STEER CURVE", 0, 100, PrefsKeys.STEER_CURVE, (pad.steerCurve * 100f).roundToInt()) {
                 pad.steerCurve = it / 100f
             },
         )
-        racingGroup.addView(
+        card.addView(
             action("CALIBRATE CENTRE", primary = false) {
                 pad.calibrateTilt()
                 sensorLine.text = pad.sensorStatus.ifBlank { "Sensors ready" }
             },
             topParams(px(8)),
         )
-        racingGroup.addView(
+        card.addView(
             tiny("Sit in your driving position, then calibrate so level means straight ahead.", top = px(2)),
         )
-        card.addView(racingGroup)
 
-        fpsGroup = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
-        fpsGroup.addView(
+        card.addView(
             toggle("Gyro aim", prefs.getBoolean(PrefsKeys.GYRO_AIM, true)) { on ->
                 pad.gyroAim = on
                 prefs.edit().putBoolean(PrefsKeys.GYRO_AIM, on).apply()
             },
+            topParams(px(8)),
         )
-        fpsGroup.addView(
-            tiny("Swipe the camera pad to swing the view; gyro adds fine aim on top.", top = px(2)),
+        card.addView(
+            tiny(
+                "Rotating the phone moves right-stick aim in shooters. Works with or without the swipe pad.",
+                top = px(2),
+            ),
         )
-        fpsGroup.addView(
+        card.addView(
+            toggle("Revert left/right aim", prefs.getBoolean(PrefsKeys.GYRO_REVERT_X, false)) { on ->
+                pad.gyroRevertX = on
+                prefs.edit().putBoolean(PrefsKeys.GYRO_REVERT_X, on).apply()
+            },
+            topParams(px(4)),
+        )
+        card.addView(
+            toggle("Revert up/down aim", prefs.getBoolean(PrefsKeys.GYRO_REVERT_Y, false)) { on ->
+                pad.gyroRevertY = on
+                prefs.edit().putBoolean(PrefsKeys.GYRO_REVERT_Y, on).apply()
+            },
+            topParams(px(2)),
+        )
+        card.addView(
+            tiny("Each revert flips only that gyro axis. Turn on both to reverse both directions.", top = px(2)),
+        )
+        card.addView(
             seekRow("GYRO AIM SENSITIVITY", 0, 100, PrefsKeys.AIM_SENS, (pad.aimSensitivity * 100f).roundToInt()) {
                 pad.aimSensitivity = it / 100f
             },
         )
-        fpsGroup.addView(
-            seekRow("TOUCHPAD SENSITIVITY", 0, 100, PrefsKeys.TOUCHPAD_SENS, (pad.touchpadSensitivity * 100f).roundToInt()) {
-                pad.touchpadSensitivity = it / 100f
-            },
+        card.addView(
+            action("AIM CALIBRATION", primary = false) { callbacks.onAimTrainer() },
+            topParams(px(8)),
         )
-        card.addView(fpsGroup)
-
-        gamepadHint = tiny("Gamepad mode uses the sticks. Pick Racing or FPS for motion controls.")
-        card.addView(gamepadHint)
-        refreshModeViews()
+        card.addView(
+            tiny("Ten-target drill for touch and gyro aim. Drag to move the reticle, then tap to fire. Controller output stays neutral while the overlay is open.", top = px(2)),
+        )
         return card
     }
 
-    private fun refreshModeViews() {
-        if (!::racingGroup.isInitialized) return
-        racingGroup.visibility = if (pad.mode == ControllerMode.RACING) View.VISIBLE else View.GONE
-        fpsGroup.visibility = if (pad.mode == ControllerMode.FPS) View.VISIBLE else View.GONE
-        gamepadHint.visibility = if (pad.mode == ControllerMode.GAMEPAD) View.VISIBLE else View.GONE
-        sensorLine.text = pad.sensorStatus.ifBlank { "Motion sensors ready" }
+    /** Shows the mouse-mode choice only while the aim touchpad is enabled. */
+    internal fun refreshTouchpadMode() {
+        val padOn = prefs.getBoolean(PrefsKeys.TOUCHPAD_ENABLED, false)
+        val mouse = prefs.getBoolean(PrefsKeys.TOUCHPAD_MOUSE, false)
+        val visibility = if (padOn) View.VISIBLE else View.GONE
+        touchpadHint?.visibility = visibility
+        touchpadMouseToggle?.visibility = visibility
+        touchpadModeHint?.visibility = visibility
+        touchpadHint?.text = if (mouse) {
+            "Replaces the right stick and R3. Move the pad like a game mouse; gyro can aim at the same time."
+        } else {
+            "Replaces the right stick with a BGMI-style swipe pad. Swipe to aim; gyro can aim at the same time."
+        }
+        touchpadModeHint?.text = if (mouse) {
+            "Relative mouse aim: finger speed turns the camera, and stopping your finger stops the aim."
+        } else {
+            "Swipe mode: each sweep swings the camera, then the aim settles back to centre."
+        }
+    }
+
+    /** Keeps the LOW/BALANCED/HIGH chips in step with automatic changes. */
+    internal fun syncScreenQuality(quality: ScreenQuality) {
+        screenQualitySync?.invoke(quality)
     }
 
     /** Live visual tuning: opacity and face-button spacing. */
     private fun studioCard(): LinearLayout {
         val card = card()
-        card.addView(sectionTitle("CUSTOMIZATION STUDIO"))
+        card.addView(sectionTitle("CUSTOMIZATION STUDIO", "studio"))
         card.addView(tiny("LIVE PREVIEW — THE PAD BEHIND THIS SHEET UPDATES AS YOU DRAG", bottom = px(6)))
         card.addView(
             seekRow("CONTROL OPACITY", 35, 100, PrefsKeys.PAD_ALPHA, (pad.controlAlpha * 100f).roundToInt()) {
@@ -779,7 +864,7 @@ class SettingsPanel(
             },
         )
         card.addView(
-            tiny("EDIT LAYOUT lets you drag, pinch-resize and hide controls. Pedals and the camera pad resize the same way.", top = px(2)),
+            tiny("EDIT LAYOUT lets you drag, pinch-resize and hide controls. The swipe pad resizes like the sticks.", top = px(2)),
         )
         card.addView(
             action("EDIT LAYOUT", primary = true) { callbacks.onEditLayout() },
@@ -822,7 +907,7 @@ class SettingsPanel(
                 }
             })
         }
-        tinters += {
+        addTinter {
             val t = pad.selectedTheme
             bar.progressTintList = ColorStateList.valueOf(t.accent)
             bar.thumbTintList = ColorStateList.valueOf(t.accent)
@@ -988,7 +1073,7 @@ class SettingsPanel(
 
     private fun appearanceCard(): LinearLayout {
         val card = card()
-        card.addView(sectionTitle("APPEARANCE"))
+        card.addView(sectionTitle("APPEARANCE", "appearance"))
         card.addView(tiny("THEME  ·  TAP A PALETTE TO PREVIEW IT", bottom = px(8)))
 
         val swatches = ArrayList<Triple<PadTheme, LinearLayout, TextView>>()
@@ -1075,7 +1160,7 @@ class SettingsPanel(
             if (chunk.size == 1) rowBox.addView(View(activity), weightParams(1f))
             card.addView(rowBox)
         }
-        tinters += { styleSwatches() }
+        addTinter { styleSwatches() }
         styleSwatches()
 
         card.addView(tiny("FACE BUTTON LABELS", top = px(9)))
@@ -1106,7 +1191,7 @@ class SettingsPanel(
                 }
             }
         }
-        tinters += { styleFaces() }
+        addTinter { styleFaces() }
         styleFaces()
 
         card.addView(
@@ -1123,7 +1208,7 @@ class SettingsPanel(
 
     private fun controlsCard(): LinearLayout {
         val card = card()
-        card.addView(sectionTitle("CONTROLS"))
+        card.addView(sectionTitle("CONTROLS", "controls"))
 
         val deadzoneLabel = tiny(
             "STICK DEADZONE  ·  ${(pad.deadzone * 100f).roundToInt()}%",
@@ -1151,7 +1236,7 @@ class SettingsPanel(
                 }
             })
         }
-        tinters += {
+        addTinter {
             val t = pad.selectedTheme
             bar.progressTintList = ColorStateList.valueOf(t.accent)
             bar.thumbTintList = ColorStateList.valueOf(t.accent)
@@ -1184,7 +1269,7 @@ class SettingsPanel(
                 }
             })
         }
-        tinters += {
+        addTinter {
             val t = pad.selectedTheme
             curveBar.progressTintList = ColorStateList.valueOf(t.accent)
             curveBar.thumbTintList = ColorStateList.valueOf(t.accent)
@@ -1222,7 +1307,7 @@ class SettingsPanel(
                 }
             })
         }
-        tinters += {
+        addTinter {
             val t = pad.selectedTheme
             strengthBar.progressTintList = ColorStateList.valueOf(t.accent)
             strengthBar.thumbTintList = ColorStateList.valueOf(t.accent)
@@ -1260,7 +1345,7 @@ class SettingsPanel(
         }
         card.addView(rateRow)
         card.addView(rateHint)
-        tinters += { refreshRateChips() }
+        addTinter { refreshRateChips() }
         refreshRateChips()
         return card
     }
@@ -1274,7 +1359,7 @@ class SettingsPanel(
      */
     private fun layoutsCard(): LinearLayout {
         val card = card()
-        card.addView(sectionTitle("LAYOUTS"))
+        card.addView(sectionTitle("LAYOUTS", "layouts"))
 
         val listHost = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
         val summary = tiny("", top = px(7), bottom = 0)
@@ -1415,11 +1500,11 @@ class SettingsPanel(
                 } else {
                     clip.setPrimaryClip(
                         android.content.ClipData.newPlainText(
-                            "lemoGamePad ${pad.mode.label} layout",
+                            "lemoGamePad GAMEPAD layout",
                             pad.layoutSnapshot(),
                         ),
                     )
-                    callbacks.toast("${pad.mode.label} layout copied")
+                    callbacks.toast("GAMEPAD layout copied")
                 }
             },
             weightParams(1f, end = px(6)),
@@ -1459,26 +1544,170 @@ class SettingsPanel(
         card.addView(summary)
 
         // Rebuild the list when the theme changes so the chips pick up the
-        // new palette, without accumulating a tinter per row. Surface the
-        // rebuild so switching experience also swaps the preset list.
-        refreshLayouts = { refresh() }
-        tinters += { refresh() }
+        // new palette, without accumulating a tinter per row.
+        addTinter { refresh() }
         refresh()
         return card
     }
 
-    /** Layout presets are scoped to the experience currently on screen. */
-    private fun layoutStore(): LayoutStore = LayoutStore(prefs, pad.mode)
+    /** The single Gamepad layout owns all saved presets. */
+    private fun layoutStore(): LayoutStore = LayoutStore(prefs)
+
+    /**
+     * Manual game profiles: tap to switch a whole control setup, save the
+     * current one under a name, or delete one. Nothing here reacts to the
+     * foreground app — switching is always an explicit choice.
+     */
+    private fun gameProfilesCard(): LinearLayout {
+        val card = card()
+        card.addView(sectionTitle("GAME PROFILES", "profiles"))
+
+        val listHost = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+        val summary = tiny("", top = px(7), bottom = 0)
+
+        fun styleChip(view: TextView, selected: Boolean) {
+            val t = pad.selectedTheme
+            view.setTextColor(if (selected) onColor(t.accent) else t.text)
+            view.background = GradientDrawable().apply {
+                cornerRadius = px(10).toFloat()
+                setColor(if (selected) t.accent else withAlpha(t.surfaceAlt, 235))
+                setStroke(
+                    px(1),
+                    withAlpha(if (selected) t.accent else t.text, if (selected) 255 else 34),
+                )
+            }
+        }
+
+        fun styleDelete(view: TextView) {
+            val t = pad.selectedTheme
+            view.setTextColor(t.muted)
+            view.background = GradientDrawable().apply {
+                cornerRadius = px(10).toFloat()
+                setColor(withAlpha(t.surfaceAlt, 235))
+                setStroke(px(1), withAlpha(t.text, 30))
+            }
+        }
+
+        fun refresh() {
+            listHost.removeAllViews()
+            val store = profileStore()
+            val active = store.activeName()
+            val saved = store.saved()
+            if (saved.isEmpty()) {
+                listHost.addView(tiny("No profiles yet — save your current setup.", top = px(6)))
+            }
+            for (entry in saved) {
+                val line = row()
+                val nameView = chip(entry.name) {
+                    LayoutDialogs.confirm(
+                        activity,
+                        pad.selectedTheme,
+                        title = "APPLY PROFILE",
+                        message = "Apply \"${entry.name}\"? This replaces the current aim, " +
+                            "motion, haptics and layout settings. Connection settings stay as they are.",
+                        positive = "APPLY",
+                    ) {
+                        callbacks.applyGameProfile(entry.name)
+                        refresh()
+                        callbacks.toast("Profile: ${entry.name}")
+                    }
+                }
+                styleChip(nameView, entry.name == active)
+                line.addView(nameView, weightParams(1f, end = px(6)))
+
+                val delete = TextView(activity).apply {
+                    text = "DELETE"
+                    textSize = 9.5f
+                    letterSpacing = 0.09f
+                    gravity = Gravity.CENTER
+                    setPadding(px(10), px(8), px(10), px(8))
+                    isClickable = true
+                    isFocusable = true
+                    contentDescription = "Delete profile ${entry.name}"
+                    setOnClickListener {
+                        LayoutDialogs.confirm(
+                            activity,
+                            pad.selectedTheme,
+                            title = "DELETE PROFILE",
+                            message = "Delete \"${entry.name}\"? The current pad settings stay as they are.",
+                            positive = "DELETE",
+                        ) {
+                            callbacks.deleteGameProfile(entry.name)
+                            refresh()
+                            callbacks.toast("Profile deleted")
+                        }
+                    }
+                    pressable(this)
+                }
+                styleDelete(delete)
+                line.addView(delete, wrapParams())
+                listHost.addView(line, topParams(px(5)))
+            }
+            summary.text = when {
+                active != null -> "Current: $active"
+                saved.isEmpty() -> "Current: no saved profiles"
+                else -> "Current: no profile applied"
+            }
+        }
+
+        val actions = row()
+        actions.addView(
+            action("SAVE CURRENT", primary = true) {
+                val store = profileStore()
+                LayoutDialogs.promptName(
+                    activity,
+                    pad.selectedTheme,
+                    title = "SAVE GAME PROFILE",
+                    initial = "",
+                    existing = store.saved().map { it.name },
+                ) { name ->
+                    val replaced = store.saved().any { it.name.equals(name, ignoreCase = true) }
+                    callbacks.saveGameProfile(name)
+                    refresh()
+                    callbacks.toast(
+                        if (replaced) "Profile \"$name\" updated" else "Profile \"$name\" saved",
+                    )
+                }
+            },
+            weightParams(1f, end = px(6)),
+        )
+        actions.addView(
+            action("CLEAR", primary = false) {
+                profileStore().clearActive()
+                refresh()
+                callbacks.toast("Profile switch cleared")
+            },
+            weightParams(1f),
+        )
+        card.addView(actions)
+        card.addView(
+            tiny(
+                "A profile saves aim, motion, haptics, input rate, face labels and the current layout. " +
+                    "Switch only by tapping a name.",
+                top = px(6),
+            ),
+        )
+        card.addView(listHost)
+        card.addView(summary)
+
+        // Rebuild the rows on theme changes with one tinter, not one per row.
+        addTinter { refresh() }
+        refresh()
+        return card
+    }
+
+    private fun profileStore(): GameProfileStore = GameProfileStore(prefs)
 
     private fun screenCard(): LinearLayout {
         val card = card()
-        card.addView(sectionTitle("PC SCREEN"))
+        card.addView(sectionTitle("PC SCREEN", "screen"))
 
         var enabled = prefs.getBoolean(PrefsKeys.SCREEN, false)
         var small = prefs.getBoolean(PrefsKeys.SCREEN_SMALL, true)
         var quality = ScreenQuality.fromId(
             prefs.getInt(PrefsKeys.SCREEN_QUALITY, ScreenQuality.BALANCED.wireId),
         )
+        var adaptive = prefs.getBoolean(PrefsKeys.ADAPTIVE_QUALITY, false)
 
         val sizeRow = row()
         val smallChip = chip("SMALL") {}
@@ -1548,6 +1777,10 @@ class SettingsPanel(
         qualityRow.addView(lowChip, weightParams(1f, end = px(4)))
         qualityRow.addView(balancedChip, weightParams(1f, end = px(4)))
         qualityRow.addView(highChip, weightParams(1f))
+        screenQualitySync = { value ->
+            quality = value
+            refreshChips()
+        }
 
         val previewToggle = toggle("Screen preview window", enabled) { on ->
             enabled = on
@@ -1564,7 +1797,22 @@ class SettingsPanel(
         card.addView(
             tiny("LOW sends less data · HIGH is sharper · live FPS appears on the preview", top = px(5)),
         )
-        tinters += { refreshChips() }
+        card.addView(
+            toggle("Adaptive quality", adaptive) { on ->
+                adaptive = on
+                prefs.edit().putBoolean(PrefsKeys.ADAPTIVE_QUALITY, on).apply()
+                callbacks.onAdaptiveQuality(on)
+            },
+            topParams(px(8)),
+        )
+        card.addView(
+            tiny(
+                "Off by default. When on, sharpness drops after sustained stutter and recovers " +
+                    "only when the stream stays smooth. Tapping LOW / BALANCED / HIGH pauses auto for 45 s.",
+                top = px(2),
+            ),
+        )
+        addTinter { refreshChips() }
         refreshChips()
         return card
     }
@@ -1578,7 +1826,7 @@ class SettingsPanel(
             setLineSpacing(px(3).toFloat(), 1f)
             setPadding(px(2), px(18), px(2), px(8))
         }
-        tinters += { text.setTextColor(withAlpha(pad.selectedTheme.muted, 220)) }
+        addTinter { text.setTextColor(withAlpha(pad.selectedTheme.muted, 220)) }
         return text
     }
 
@@ -1608,7 +1856,7 @@ class SettingsPanel(
         ViewGroup.LayoutParams.WRAP_CONTENT,
     ).apply { topMargin = top }
 
-    private fun sectionTitle(text: String): TextView {
+    private fun sectionTitle(text: String, helpKey: String? = null): View {
         val label = TextView(activity).apply {
             this.text = text
             textSize = 10f
@@ -1616,8 +1864,37 @@ class SettingsPanel(
             typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
             setPadding(px(2), 0, 0, px(9))
         }
-        tinters += { label.setTextColor(pad.selectedTheme.accent) }
-        return label
+        addTinter { label.setTextColor(pad.selectedTheme.accent) }
+        if (helpKey == null) return label
+        return row().apply {
+            addView(label, weightParams(1f))
+            addView(helpButton(helpKey))
+        }
+    }
+
+    private fun helpButton(key: String): TextView = TextView(activity).apply {
+        text = "?"
+        textSize = 11f
+        typeface = Typeface.DEFAULT_BOLD
+        gravity = Gravity.CENTER
+        setPadding(px(7), 0, px(7), px(9))
+        isClickable = true
+        isFocusable = true
+        setOnClickListener { showCardHelp(key) }
+        addTinter {
+            val t = pad.selectedTheme
+            setTextColor(t.accent)
+            background = GradientDrawable().apply {
+                cornerRadius = px(9).toFloat()
+                setColor(withAlpha(t.accent, 24))
+                setStroke(px(1), withAlpha(t.accent, 90))
+            }
+        }
+    }
+
+    private fun showCardHelp(key: String) {
+        val entry = CARD_HELP[key] ?: return
+        LayoutDialogs.info(activity, pad.selectedTheme, entry.first, entry.second)
     }
 
     private fun tiny(text: String, top: Int = 0, bottom: Int = px(6)): TextView {
@@ -1627,7 +1904,7 @@ class SettingsPanel(
             letterSpacing = 0.11f
             setPadding(px(2), top, 0, bottom)
         }
-        tinters += { label.setTextColor(pad.selectedTheme.muted) }
+        addTinter { label.setTextColor(pad.selectedTheme.muted) }
         return label
     }
 
@@ -1646,7 +1923,7 @@ class SettingsPanel(
             setOnClickListener { onClick() }
             pressable(this)
         }
-        tinters += {
+        addTinter {
             val t = pad.selectedTheme
             button.setTextColor(if (primary) onColor(t.accent) else t.text)
             button.background = GradientDrawable().apply {
@@ -1730,7 +2007,7 @@ class SettingsPanel(
             }
         }
         edit.setOnFocusChangeListener { _, _ -> style() }
-        tinters += { style() }
+        addTinter { style() }
         style()
         return edit
     }
@@ -1773,7 +2050,7 @@ class SettingsPanel(
             style()
             onChange(on)
         }
-        tinters += { style() }
+        addTinter { style() }
         style()
         return container
     }
@@ -2035,7 +2312,7 @@ class SettingsPanel(
         statusSub.text = buildString {
             if (via.isNotBlank()) append(via) else append("—")
             if (connected && link.assignedSlot > 0) append("  ·  P${link.assignedSlot}")
-            if (connected && link.rttMs >= 0) append("  ·  ${link.rttMs} ms")
+            if (connected && !batterySaver && link.rttMs >= 0) append("  ·  ${link.rttMs} ms")
             if (host != null) append("  ·  $host")
         }
 
@@ -2050,22 +2327,44 @@ class SettingsPanel(
             }
         }
 
-        val history = link.rttHistory()
-        val showStats = connected && history.isNotEmpty()
-        latencyGraph.visibility = if (showStats) View.VISIBLE else View.GONE
-        latencyStats.visibility = if (showStats) View.VISIBLE else View.GONE
-        if (showStats) {
-            latencyGraph.setSamples(history, t.accent, t.muted)
-            latencyStats.text = buildString {
-                append("avg ${link.rttAvgMs} ms")
-                append("  ·  min ${link.rttMinMs}")
-                append("  ·  max ${link.rttMaxMs}")
-                if (link.jitterMs > 0) append("  ·  ±${link.jitterMs} jitter")
-                when {
-                    link.lossPermille < 0 -> Unit
-                    link.lossPermille >= 5 ->
-                        append("  ·  ${(link.lossPermille + 5) / 10}% uplink loss")
-                    else -> append("  ·  no loss")
+        if (batterySaver) {
+            latencyGraph.visibility = View.GONE
+            latencyStats.visibility = View.VISIBLE
+            latencyStats.text = "LIVE STATS PAUSED · battery saver on"
+        } else {
+            val history = link.rttHistory()
+            val showGraph = connected && history.isNotEmpty()
+            val showStats = connected || host != null
+            latencyGraph.visibility = if (showGraph) View.VISIBLE else View.GONE
+            latencyStats.visibility = if (showStats) View.VISIBLE else View.GONE
+            if (showGraph) latencyGraph.setSamples(history, t.accent, t.muted)
+            if (showStats) {
+                latencyStats.text = buildString {
+                    append("PATH  ").append(
+                        link.transportName().ifBlank { if (host == null) "—" else "linking" },
+                    )
+                    if (connected && link.assignedSlot > 0) append("   ·   P${link.assignedSlot}")
+                    append("\nRTT  ")
+                    if (connected && link.rttMs >= 0) {
+                        append("${link.rttMs} ms   ·   avg ${link.rttAvgMs}")
+                        if (link.jitterMs > 0) append("   ·   ±${link.jitterMs} jitter")
+                    } else {
+                        append("—")
+                    }
+                    append("\nLOSS  ")
+                    when {
+                        link.lossPermille < 0 -> append("—")
+                        link.lossPermille >= 5 ->
+                            append("${(link.lossPermille + 5) / 10}% reported by PC")
+                        else -> append("none")
+                    }
+                    append("\nVIDEO  ")
+                    if (callbacks.streamConnected()) {
+                        append("${callbacks.streamFps()} fps stream")
+                    } else {
+                        append("no stream")
+                    }
+                    if (link.battery in 0..100) append("\nPHONE BATTERY  ${link.battery}%")
                 }
             }
         }
@@ -2192,13 +2491,14 @@ class SettingsPanel(
      */
     private fun showBluetoothHostPicker() {
         val decor = activity.window?.decorView as? ViewGroup ?: return
+        closeHostPicker()
         val t = pad.selectedTheme
         val overlay = FrameLayout(activity).apply {
             isClickable = true
             elevation = px(40).toFloat()
             setBackgroundColor(withAlpha(0x000000, if (t.dark) 170 else 110))
         }
-        fun close() = decor.removeView(overlay)
+        fun close() = closeHostPicker()
         overlay.setOnClickListener { close() }
 
         val box = LinearLayout(activity).apply {
@@ -2275,6 +2575,13 @@ class SettingsPanel(
             FrameLayout.LayoutParams(width, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER),
         )
         decor.addView(overlay)
+        hostPicker = overlay
+    }
+
+    private fun closeHostPicker() {
+        val overlay = hostPicker ?: return
+        hostPicker = null
+        (overlay.parent as? ViewGroup)?.removeView(overlay)
     }
 
     /** Jumps to the system tethering page (USB). */
@@ -2297,8 +2604,32 @@ class SettingsPanel(
         callbacks.toast("Open Settings › Network › Hotspot & tethering")
     }
 
+    /**
+     * Registers a theme updater. Helpers like [tiny] call this for every view
+     * they create, so calls made from inside [refreshTints] must not mutate the
+     * list being iterated.
+     */
+    private fun addTinter(tint: () -> Unit) {
+        if (tintBatchDepth > 0) pendingTinters += tint else tinters += tint
+    }
+
     private fun refreshTints() {
-        for (tint in tinters) tint()
+        if (tintBatchDepth > 0) return
+        tintBatchDepth++
+        try {
+            for (tint in tinters.toList()) tint()
+            // Dynamic cards rebuild their rows from helper views. Those helpers
+            // register tints while we iterate; apply them to the new views and
+            // drop them, because the next refresh rebuilds the rows again.
+            while (pendingTinters.isNotEmpty()) {
+                val fresh = pendingTinters.toList()
+                pendingTinters.clear()
+                for (tint in fresh) tint()
+            }
+        } finally {
+            tintBatchDepth--
+            pendingTinters.clear()
+        }
     }
 
     // ---------------------------------------------------------------- lifecycle
@@ -2335,6 +2666,9 @@ class SettingsPanel(
     }
 
     fun dismiss(animate: Boolean = true) {
+        // Back / onPause closes the sheet; its host picker must not stay on the
+        // decor view swallowing touches.
+        closeHostPicker()
         if (closed) return
         if (!showing || !animate || !view.isAttachedToWindow) {
             closeNow()
@@ -2354,6 +2688,7 @@ class SettingsPanel(
     }
 
     private fun closeNow() {
+        closeHostPicker()
         if (closed) return
         closed = true
         showing = false

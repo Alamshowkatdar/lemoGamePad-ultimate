@@ -29,11 +29,11 @@ At minimum:
 
 ## 3. Tag and publish
 
-Use a `v`-prefixed tag for every release (`v1.4.1`, not `1.4.1`) so the release
+Use a `v`-prefixed tag for every release (`v1.7.0`, not `1.7.0`) so the release
 workflow and the "latest release" badge stay consistent.
 
 ```bash
-git tag -a v1.4.1 -m "lemoGamePad ultimate 1.4.1"
+git tag -a vX.Y.Z -m "lemoGamePad ultimate X.Y.Z"
 git push origin main --tags
 ```
 
