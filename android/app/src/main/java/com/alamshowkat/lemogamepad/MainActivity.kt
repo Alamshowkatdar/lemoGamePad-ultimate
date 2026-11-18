@@ -585,7 +585,7 @@ class MainActivity : Activity() {
             "• Aim calibration now uses a free reticle: drag to place it, tap to fire.\n" +
                 "• Calibration can suggest concrete sensitivity and gyro-revert values.\n" +
                 "• Manual game profiles, adaptive quality and one merged live connection card.\n" +
-                "• Connection Doctor links to the PC server download and setup guide; battery saver pauses live stats.\n" +
+                "• Connection Doctor links to the website for downloads and guides; battery saver pauses live stats.\n" +
                 "• Layout editor adds undo/redo, snap/grid, alignment guides, safe-area guides, multi-select, copy/paste, lock and mirror.",
         )
     }
@@ -656,18 +656,15 @@ class MainActivity : Activity() {
         when (doctorStep) {
             0 -> {
                 addCopy("CONNECTION DOCTOR  ·  1 / 3", 10f, t.accent, bold = true)
-                addCopy("Get the PC server, then connect", 19f, t.text, bold = true, top = 6)
+                addCopy("Open the website, then connect", 19f, t.text, bold = true, top = 6)
                 addCopy(
-                    "1. Download lemoGamePad-server from the latest release: the Windows EXE, " +
-                        "or the Linux binary with install-linux.sh.\n" +
-                        "2. Windows: double-click the EXE and accept the driver/firewall prompts. " +
-                        "Linux: sudo sh install-linux.sh, then ./lemoGamePad-server.\n" +
-                        "3. Leave the console open. Scan its QR code here, or enter the PC IP it prints.",
+                    "1. Open the website for the latest downloads and the full setup guide.\n" +
+                        "2. Start lemoGamePad-server on the PC and leave the console open.\n" +
+                        "3. Scan its QR code here, or enter the PC IP it prints.",
                     12f, t.textDim, top = 10,
                 )
                 addCopy(
-                    "The setup guide covers Wi-Fi, USB tethering and Bluetooth HID. Bluetooth is " +
-                        "separate: it never auto-connects and always needs a host you pick.",
+                    "Bluetooth is separate: it never auto-connects and always needs a host you pick.",
                     10.5f, t.muted, top = 8,
                 )
                 val links = LinearLayout(this).apply {
@@ -676,18 +673,13 @@ class MainActivity : Activity() {
                     setPadding(0, px(12), 0, 0)
                 }
                 links.addView(
-                    swapButton("GET PC SERVER", t, primary = false) {
-                        openUrl(RELEASE_URL)
+                    swapButton("OPEN WEBSITE", t, primary = false) {
+                        openUrl(SETUP_URL)
                     },
                     LinearLayout.LayoutParams(
                         ViewGroup.LayoutParams.WRAP_CONTENT,
                         ViewGroup.LayoutParams.WRAP_CONTENT,
-                    ).apply { marginEnd = px(8) },
-                )
-                links.addView(
-                    swapButton("SETUP GUIDE", t, primary = false) {
-                        openUrl(SETUP_URL)
-                    },
+                    ),
                 )
                 card.addView(links)
             }
@@ -1948,8 +1940,6 @@ class MainActivity : Activity() {
     }
 
     companion object {
-        private const val RELEASE_URL =
-            "https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest"
         private const val SETUP_URL =
             "https://alamshowkatdar.github.io/lemoGamePad-ultimate/"
 

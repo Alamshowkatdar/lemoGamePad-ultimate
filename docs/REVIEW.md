@@ -1279,7 +1279,8 @@ pauses the RTT graph and detailed stat refresh and slows the settings poll from
 disconnect controls stay visible and live. The preference is persisted under
 `battery_saver_live_stats`.
 
-Connection Doctor's first step now gives the actual Windows and Linux commands
-and offers **GET PC SERVER** and **SETUP GUIDE** buttons. Both use
-`ACTION_VIEW` with a `Uri`, wrapped so a device without a browser shows a toast
-instead of crashing.
+Connection Doctor's first step no longer duplicates download instructions or a
+direct release button. It keeps the three-step connect flow and offers one
+**OPEN WEBSITE** button, where the APK, PC server and full guides live. The
+button uses `ACTION_VIEW` with a `Uri`, wrapped so a device without a browser
+shows a toast instead of crashing.

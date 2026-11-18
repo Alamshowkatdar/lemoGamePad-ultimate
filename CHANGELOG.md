@@ -15,9 +15,10 @@ Newest first. The reasoning behind each release is in [`docs/REVIEW.md`](docs/RE
 - **Added a battery-saver switch to the status card.** It pauses the live RTT
   graph and detailed stat refresh, slows panel polling, and leaves connection
   state, scan, connect and disconnect controls working.
-- **Connection Doctor now links out.** Its first step explains how to download
-  and start the Windows/Linux PC server and offers **GET PC SERVER** and
-  **SETUP GUIDE** buttons, opened safely with an `ACTION_VIEW` intent.
+- **Connection Doctor now links to the website.** Its first step sends users to
+  the download/instructions site for the APK, PC server and full setup guides.
+  The in-app download step is gone; one **OPEN WEBSITE** button is opened safely
+  with an `ACTION_VIEW` intent.
 - **Removed the Racing and FPS modes and layouts.** The app now shows one
   Gamepad layout. Stale `mode` preferences fall back to it, and old per-mode
   layout keys are ignored.
