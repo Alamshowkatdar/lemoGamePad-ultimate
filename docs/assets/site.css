@@ -89,7 +89,7 @@ code {
   width: 44px;
   height: 44px;
   border-radius: 12px;
-  box-shadow: 0 0 0 1px rgba(253, 230, 138, 0.25), 0 4px 14px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 0 0 1px rgba(147, 197, 253, 0.25), 0 4px 14px rgba(0, 0, 0, 0.45);
 }
 
 .topbar nav {
