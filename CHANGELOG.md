@@ -2,7 +2,7 @@
 
 Newest first. The reasoning behind each release is in [`docs/REVIEW.md`](docs/REVIEW.md).
 
-## Unreleased
+## 2.0.0
 
 - **Added a static download and instructions site.** `docs/index.html` collects
   the APK, Windows and Linux server downloads, quick-start steps, setup guides

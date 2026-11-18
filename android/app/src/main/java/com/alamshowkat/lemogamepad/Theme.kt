@@ -172,7 +172,7 @@ object Brand {
     const val AUTHOR = "Alam showkat"
 
     /** Keep in sync with `versionName` in android/app/build.gradle.kts. */
-    const val VERSION = "1.7.0"
+    const val VERSION = "2.0.0"
 }
 
 object Themes {

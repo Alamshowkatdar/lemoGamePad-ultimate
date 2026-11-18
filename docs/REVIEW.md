@@ -1,4 +1,4 @@
-# Review notes — 1.3.6 / 1.3.7 / 1.4.0 / 1.5.0 / 1.6.0 / 1.6.1 / 1.6.2 / 1.6.3 / 1.6.4 / 1.6.5 / 1.6.6 / 1.6.7 / 1.6.8 / 1.6.9 / 1.6.10 / 1.6.11 / 1.6.12 / 1.6.13 / 1.7.0
+# Review notes — 1.3.6 / 1.3.7 / 1.4.0 / 1.5.0 / 1.6.0 / 1.6.1 / 1.6.2 / 1.6.3 / 1.6.4 / 1.6.5 / 1.6.6 / 1.6.7 / 1.6.8 / 1.6.9 / 1.6.10 / 1.6.11 / 1.6.12 / 1.6.13 / 1.7.0 / 2.0.0
 
 A pass over the whole app (Kotlin sources, manifest, Gradle files, CI) focused on
 bugs, UI smoothness, and making the phone-to-phone Bluetooth gamepad honest.
@@ -1175,7 +1175,7 @@ real backend is Wayland `grim`, which launches a subprocess per frame and costs
 capture-backend limit, not a pacing limit — Windows/X11 use in-process `mss`
 and follow the measured path. See LIMITATIONS.md.
 
-## Single-layout gyro, swipe and mouse aim (Unreleased)
+## Single-layout gyro, swipe and mouse aim (2.0.0)
 
 The three-mode experiment made the common case harder: a user who wanted gyro
 steering in a racing game and gyro aim in a shooter had to swap experiences and
@@ -1257,7 +1257,7 @@ That matches the design: BGMI accumulates swipe distance, mouse mode publishes
 finger speed and stops promptly. BGMI swipe and gyro tuning were left unchanged
 when mouse mode is off.
 
-## Downloads site and one connection card (Unreleased)
+## Downloads site and one connection card (2.0.0)
 
 The project needed one public place to send people who ask where the APK and PC
 server are. `docs/index.html` is a dependency-free static page: download cards
