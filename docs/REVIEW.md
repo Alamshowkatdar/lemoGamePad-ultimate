@@ -1284,3 +1284,18 @@ direct release button. It keeps the three-step connect flow and offers one
 **OPEN WEBSITE** button, where the APK, PC server and full guides live. The
 button uses `ACTION_VIEW` with a `Uri`, wrapped so a device without a browser
 shows a toast instead of crashing.
+
+## Plain gamepad on first launch (Unreleased)
+
+`GYRO_STEER` and `GYRO_AIM` used to default to `true`, which meant a fresh
+install immediately registered motion sensors and could move the stick or aim
+from phone movement. The first launch should behave like the ordinary gamepad
+shown on the pad: sticks, d-pad, shoulders, triggers and face buttons, with the
+aim touchpad still off.
+
+Both preference defaults are now `false`, and `GameProfileCodec` uses the same
+fallbacks when decoding an older profile that lacks those fields. Users who
+already enabled either switch keep their saved values; only first-run state and
+legacy missing fields change. Haptics, animated button feedback, editor guides
+and the small screen-preview size keep their existing defaults because they do
+not inject motion input.

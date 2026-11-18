@@ -85,20 +85,12 @@ code {
 
 .brand strong { color: var(--accent); }
 
-.brand-mark {
-  display: grid;
-  grid-template-columns: repeat(2, 8px);
-  grid-template-rows: repeat(2, 8px);
-  gap: 3px;
-  padding: 6px;
-  border: 1px solid rgba(110, 231, 255, 0.35);
-  border-radius: 10px;
-  background: rgba(110, 231, 255, 0.08);
+.brand-logo {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  box-shadow: 0 0 0 1px rgba(253, 230, 138, 0.25), 0 4px 14px rgba(0, 0, 0, 0.45);
 }
-
-.brand-mark span { border-radius: 3px; background: var(--accent); opacity: 0.9; }
-.brand-mark span:nth-child(2) { background: var(--accent-2); }
-.brand-mark span:nth-child(3) { background: var(--accent-3); }
 
 .topbar nav {
   display: flex;

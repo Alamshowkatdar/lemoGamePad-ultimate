@@ -740,7 +740,7 @@ class SettingsPanel(
         refreshTouchpadMode()
 
         card.addView(
-            toggle("Tilt steering", prefs.getBoolean(PrefsKeys.GYRO_STEER, true)) { on ->
+            toggle("Tilt steering", prefs.getBoolean(PrefsKeys.GYRO_STEER, false)) { on ->
                 pad.gyroSteering = on
                 prefs.edit().putBoolean(PrefsKeys.GYRO_STEER, on).apply()
             },
@@ -779,7 +779,7 @@ class SettingsPanel(
         )
 
         card.addView(
-            toggle("Gyro aim", prefs.getBoolean(PrefsKeys.GYRO_AIM, true)) { on ->
+            toggle("Gyro aim", prefs.getBoolean(PrefsKeys.GYRO_AIM, false)) { on ->
                 pad.gyroAim = on
                 prefs.edit().putBoolean(PrefsKeys.GYRO_AIM, on).apply()
             },

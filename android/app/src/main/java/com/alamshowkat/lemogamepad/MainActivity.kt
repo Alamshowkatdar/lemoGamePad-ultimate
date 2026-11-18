@@ -194,8 +194,8 @@ class MainActivity : Activity() {
         }
         view.touchpadEnabled = prefs.getBoolean(PrefsKeys.TOUCHPAD_ENABLED, false)
         view.touchpadMouseMode = prefs.getBoolean(PrefsKeys.TOUCHPAD_MOUSE, false)
-        view.gyroSteering = prefs.getBoolean(PrefsKeys.GYRO_STEER, true)
-        view.gyroAim = prefs.getBoolean(PrefsKeys.GYRO_AIM, true)
+        view.gyroSteering = prefs.getBoolean(PrefsKeys.GYRO_STEER, false)
+        view.gyroAim = prefs.getBoolean(PrefsKeys.GYRO_AIM, false)
         view.gyroRevertX = prefs.getBoolean(PrefsKeys.GYRO_REVERT_X, false)
         view.gyroRevertY = prefs.getBoolean(PrefsKeys.GYRO_REVERT_Y, false)
         view.steerSensitivity = prefs.getInt(PrefsKeys.STEER_SENS, 55) / 100f

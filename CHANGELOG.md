@@ -2,6 +2,12 @@
 
 Newest first. The reasoning behind each release is in [`docs/REVIEW.md`](docs/REVIEW.md).
 
+## Unreleased
+
+- **Fresh installs now start with motion input off.** Tilt steering and gyro aim
+  default to `OFF`, so the first launch is a plain gamepad until a user opts in.
+  Existing preferences and named game profiles keep their saved values.
+
 ## 2.0.0
 
 - **Added a static download and instructions site.** `docs/index.html` collects
