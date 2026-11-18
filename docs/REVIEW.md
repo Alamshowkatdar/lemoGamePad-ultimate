@@ -1,4 +1,4 @@
-# Review notes — 1.3.6 / 1.3.7 / 1.4.0 / 1.5.0 / 1.6.0 / 1.6.1 / 1.6.2 / 1.6.3 / 1.6.4 / 1.6.5 / 1.6.6 / 1.6.7 / 1.6.8 / 1.6.9 / 1.6.10 / 1.6.11 / 1.6.12 / 1.6.13 / 1.7.0 / 2.0.0
+# Review notes — 1.3.6 / 1.3.7 / 1.4.0 / 1.5.0 / 1.6.0 / 1.6.1 / 1.6.2 / 1.6.3 / 1.6.4 / 1.6.5 / 1.6.6 / 1.6.7 / 1.6.8 / 1.6.9 / 1.6.10 / 1.6.11 / 1.6.12 / 1.6.13 / 1.7.0 / 2.0.0 / 2.0.1
 
 A pass over the whole app (Kotlin sources, manifest, Gradle files, CI) focused on
 bugs, UI smoothness, and making the phone-to-phone Bluetooth gamepad honest.
@@ -1285,7 +1285,7 @@ direct release button. It keeps the three-step connect flow and offers one
 button uses `ACTION_VIEW` with a `Uri`, wrapped so a device without a browser
 shows a toast instead of crashing.
 
-## Plain gamepad on first launch (Unreleased)
+## Plain gamepad on first launch (2.0.1)
 
 `GYRO_STEER` and `GYRO_AIM` used to default to `true`, which meant a fresh
 install immediately registered motion sensors and could move the stick or aim

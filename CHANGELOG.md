@@ -2,8 +2,11 @@
 
 Newest first. The reasoning behind each release is in [`docs/REVIEW.md`](docs/REVIEW.md).
 
-## Unreleased
+## 2.0.1
 
+- **Added the gold gamepad logo.** The Android launcher and the downloads site
+  now share a gold-glass emblem that reproduces the in-app landscape gamepad
+  layout. The adaptive icon also has a monochrome layer.
 - **Fresh installs now start with motion input off.** Tilt steering and gyro aim
   default to `OFF`, so the first launch is a plain gamepad until a user opts in.
   Existing preferences and named game profiles keep their saved values.

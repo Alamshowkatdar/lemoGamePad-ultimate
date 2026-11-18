@@ -13,7 +13,7 @@ by **Alam showkat**
 
 [**Website & downloads →**](https://alamshowkatdar.github.io/lemoGamePad-ultimate/) · [Download the latest release →](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) · [Report an issue](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/issues)
 
-**App source version:** 2.0.0. Download the signed APK and the Windows/Linux server from the [latest release](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) — use **1.3.7.2 or newer** on Linux, which fixes the swapped X/Y face buttons. The release workflow also publishes a `SHA256SUMS.txt` so you can verify your download.
+**App source version:** 2.0.1. Download the signed APK and the Windows/Linux server from the [latest release](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) — use **1.3.7.2 or newer** on Linux, which fixes the swapped X/Y face buttons. The release workflow also publishes a `SHA256SUMS.txt` so you can verify your download.
 
 ---
 
@@ -47,6 +47,13 @@ the host reads it directly; the app never connects automatically on launch.
 
 > **lemoGamePad ultimate™** — trademark of **Alam showkat**.
 > App package: `com.alamshowkat.lemogamepad`.
+
+### New in 2.0.1
+
+- **Gold gamepad logo.** The app launcher and the downloads site share a new
+  emblem that mirrors the in-app landscape gamepad layout.
+- **Plain first launch.** Tilt steering and gyro aim start `OFF`; enable only
+  the motion input you need.
 
 ### New in 2.0.0
 
@@ -334,4 +341,4 @@ licenses are listed in [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md).
 
 ---
 
-**lemoGamePad ultimate™ © Alam showkat** · v2.0.0
+**lemoGamePad ultimate™ © Alam showkat** · v2.0.1
