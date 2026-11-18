@@ -1,4 +1,4 @@
-# Review notes — 1.3.6 / 1.3.7 / 1.4.0 / 1.5.0 / 1.6.0 / 1.6.1 / 1.6.2 / 1.6.3 / 1.6.4 / 1.6.5 / 1.6.6 / 1.6.7 / 1.6.8 / 1.6.9 / 1.6.10 / 1.6.11 / 1.6.12 / 1.6.13 / 1.7.0 / 2.0.0 / 2.0.1 / 2.0.2
+# Review notes — 1.3.6 / 1.3.7 / 1.4.0 / 1.5.0 / 1.6.0 / 1.6.1 / 1.6.2 / 1.6.3 / 1.6.4 / 1.6.5 / 1.6.6 / 1.6.7 / 1.6.8 / 1.6.9 / 1.6.10 / 1.6.11 / 1.6.12 / 1.6.13 / 1.7.0 / 2.0.0 / 2.0.1 / 2.0.2 / 2.0.3
 
 A pass over the whole app (Kotlin sources, manifest, Gradle files, CI) focused on
 bugs, UI smoothness, and making the phone-to-phone Bluetooth gamepad honest.
@@ -1313,3 +1313,16 @@ sets `android:roundIcon`. The API 26+ adaptive icon keeps its background color,
 foreground and monochrome layers, all redrawn in the cobalt glass palette. The
 website favicon, header mark, theme color and glow use the same palette. No
 gamepad behavior, ports or HID report format changed.
+
+## Real blue icon instead of a themed silhouette (2.0.3)
+
+The 2.0.2 adaptive icon had background, foreground and monochrome layers, but
+Samsung's launcher tinted it to a monochrome blue-gray glyph, hiding the cobalt
+glass artwork. Removing the `<monochrome>` layer did not change the result, so
+the adaptive icon entry itself was removed. The launcher now picks the density
+PNG mipmaps (`ic_launcher.png`, `ic_launcher_round.png`), which render the full
+logo, exactly as on launchers without adaptive-icon support. The unused
+monochrome drawable and launcher background color were removed.
+
+Verified on `RZCX10EAECJ`: Settings → App info and the app drawer show the blue
+icon instead of the tinted silhouette. No gamepad behavior changed.

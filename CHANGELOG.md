@@ -2,6 +2,13 @@
 
 Newest first. The reasoning behind each release is in [`docs/REVIEW.md`](docs/REVIEW.md).
 
+## 2.0.3
+
+- **The launcher icon now shows the blue-glass artwork instead of a themed
+  silhouette.** Some launchers tint adaptive icons using their monochrome
+  layer; the app now ships density PNG icons only, so the cobalt logo is what
+  actually appears.
+
 ## 2.0.2
 
 - **Fixed the Android launcher icon.** Real PNG mipmaps (mdpi–xxxhdpi) and
