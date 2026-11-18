@@ -1,4 +1,4 @@
-# Review notes — 1.3.6 / 1.3.7 / 1.4.0 / 1.5.0 / 1.6.0 / 1.6.1 / 1.6.2 / 1.6.3 / 1.6.4 / 1.6.5 / 1.6.6 / 1.6.7 / 1.6.8 / 1.6.9 / 1.6.10 / 1.6.11 / 1.6.12 / 1.6.13 / 1.7.0 / 2.0.0 / 2.0.1
+# Review notes — 1.3.6 / 1.3.7 / 1.4.0 / 1.5.0 / 1.6.0 / 1.6.1 / 1.6.2 / 1.6.3 / 1.6.4 / 1.6.5 / 1.6.6 / 1.6.7 / 1.6.8 / 1.6.9 / 1.6.10 / 1.6.11 / 1.6.12 / 1.6.13 / 1.7.0 / 2.0.0 / 2.0.1 / 2.0.2
 
 A pass over the whole app (Kotlin sources, manifest, Gradle files, CI) focused on
 bugs, UI smoothness, and making the phone-to-phone Bluetooth gamepad honest.
@@ -1299,3 +1299,17 @@ already enabled either switch keep their saved values; only first-run state and
 legacy missing fields change. Haptics, animated button feedback, editor guides
 and the small screen-preview size keep their existing defaults because they do
 not inject motion input.
+
+## Launcher icon and blue-glass logo (2.0.2)
+
+The manifest referenced `@mipmap/ic_launcher`, but the resource existed only as
+a vector XML in `mipmap-anydpi`; AAPT2 moved it to `mipmap-anydpi-v21` at build
+time. Launchers that ask the package manager for a bitmap launcher icon then
+found no density-specific PNG and showed a default or blank icon.
+
+The legacy vector is removed and replaced with real PNG density mipmaps
+(mdpi 48px through xxxhdpi 192px) plus matching round icons; the manifest now
+sets `android:roundIcon`. The API 26+ adaptive icon keeps its background color,
+foreground and monochrome layers, all redrawn in the cobalt glass palette. The
+website favicon, header mark, theme color and glow use the same palette. No
+gamepad behavior, ports or HID report format changed.

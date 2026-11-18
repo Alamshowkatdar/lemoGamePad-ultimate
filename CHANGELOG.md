@@ -2,6 +2,14 @@
 
 Newest first. The reasoning behind each release is in [`docs/REVIEW.md`](docs/REVIEW.md).
 
+## 2.0.2
+
+- **Fixed the Android launcher icon.** Real PNG mipmaps (mdpi–xxxhdpi) and
+  round icons are now bundled, and the legacy vector-only launcher resource is
+  gone, so launchers that cannot render a vector icon show the app correctly.
+- **Switched to a blue-glass logo.** The website favicon/header and the Android
+  launcher icon now use the cobalt glass emblem.
+
 ## 2.0.1
 
 - **Added the gold gamepad logo.** The Android launcher and the downloads site

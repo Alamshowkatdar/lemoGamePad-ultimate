@@ -45,4 +45,4 @@
 
 ---
 
-**lemoGamePad ultimate™ © Alam showkat** · v2.0.1
+**lemoGamePad ultimate™ © Alam showkat** · v2.0.2
