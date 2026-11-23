@@ -1,4 +1,4 @@
-# Review notes — 1.3.6 / 1.3.7 / 1.4.0 / 1.5.0 / 1.6.0 / 1.6.1 / 1.6.2 / 1.6.3 / 1.6.4 / 1.6.5 / 1.6.6 / 1.6.7 / 1.6.8 / 1.6.9 / 1.6.10 / 1.6.11 / 1.6.12 / 1.6.13 / 1.7.0 / 2.0.0 / 2.0.1 / 2.0.2 / 2.0.3 / 2.1.0 / 2.1.1
+# Review notes — 1.3.6 / 1.3.7 / 1.4.0 / 1.5.0 / 1.6.0 / 1.6.1 / 1.6.2 / 1.6.3 / 1.6.4 / 1.6.5 / 1.6.6 / 1.6.7 / 1.6.8 / 1.6.9 / 1.6.10 / 1.6.11 / 1.6.12 / 1.6.13 / 1.7.0 / 2.0.0 / 2.0.1 / 2.0.2 / 2.0.3 / 2.1.0 / 2.1.1 / 2.1.2
 
 A pass over the whole app (Kotlin sources, manifest, Gradle files, CI) focused on
 bugs, UI smoothness, and making the phone-to-phone Bluetooth gamepad honest.
@@ -1637,3 +1637,19 @@ height. The safe-area insets still keep the pad clear of the notch and home
 indicator, but the bitmap no longer feeds back into the layout.
 `pc/test_web.py` now asserts both explicit sizing rules so the regression
 cannot return unnoticed.
+
+## iOS standalone resize timing (2.1.2)
+
+Even with the canvas sized correctly, a Home Screen web app on iOS can settle
+its layout viewport and `env(safe-area-inset-*)` values *after* the first paint
+without emitting `resize` or `visualViewport.resize`. The pad then keeps the
+bitmap drawn for the initial box, which CSS stretches into the final box until
+a later event triggers `resize()` — matching the report that restarting the app
+a few times eventually fixes it.
+
+`resize()` now tracks a geometry key (CSS box plus DPR) and only reallocates the
+bitmap when it changes, so repeated checks are cheap and never churn the canvas
+or restart the entry animation. A `ResizeObserver` on the canvas catches box
+changes directly, and a short burst of timed rechecks on launch, `pageshow`,
+visibility return and `orientationchange` covers browsers where iOS reports the
+final geometry through no event at all. `pc/test_web.py` asserts the new hooks.

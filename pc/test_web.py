@@ -316,6 +316,10 @@ def test_page_and_key(server, port):
     assert 'void: { style: "void"' in script and "armT" in script
     assert "lmgb.motion" in script and "prefers-reduced-motion" in script
     assert "requestFullscreen" in script and "fullscreenchange" in script
+    # iOS standalone can settle its geometry without firing resize; the pad
+    # must re-measure from the canvas box and on wake/rotation.
+    assert "ResizeObserver" in script and "remeasureSoon" in script
+    assert "orientationchange" in script and '"pageshow"' in script
     # The sheet opens on the pad's pointerup, so its backdrop must not close on
     # the compatibility click that follows the same tap.
     assert 'scrim.addEventListener("pointerdown"' in script

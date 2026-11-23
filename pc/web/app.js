@@ -1347,13 +1347,24 @@
     };
   }
 
+  let layoutKey = "";
   function resize() {
     const rect = canvas.getBoundingClientRect();
-    W = Math.max(1, rect.width);
-    H = Math.max(1, rect.height);
-    DPR = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
-    canvas.width = Math.round(W * DPR);
-    canvas.height = Math.round(H * DPR);
+    const width = Math.max(1, rect.width);
+    const height = Math.max(1, rect.height);
+    const dpr = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
+    const key = `${width}|${height}|${dpr}`;
+    const changed = key !== layoutKey;
+    layoutKey = key;
+    W = width;
+    H = height;
+    DPR = dpr;
+    // Reassigning canvas.width/height clears the bitmap. Only do it when the
+    // geometry actually changed; the repeated iOS rechecks are cheap then.
+    if (changed) {
+      canvas.width = Math.round(W * DPR);
+      canvas.height = Math.round(H * DPR);
+    }
     layoutControls();
     dirty = true;
     requestFrame();
@@ -1363,6 +1374,17 @@
       enterT = 0;
     }
   }
+
+  // iOS standalone (Home Screen web app) can apply its final viewport and
+  // safe-area geometry after the first paint and never fire resize. Watch the
+  // canvas box itself, and recheck briefly on launch/wake/rotation so a late
+  // layout change cannot leave the bitmap stretched into the new box.
+  if (window.ResizeObserver) new ResizeObserver(resize).observe(canvas);
+  function remeasureSoon() {
+    for (const delay of [0, 100, 300, 700, 1400]) window.setTimeout(resize, delay);
+  }
+  window.addEventListener("orientationchange", remeasureSoon);
+  window.addEventListener("focus", resize);
 
   buildNodes();
   applyCssTheme(themeNow);
@@ -2026,7 +2048,10 @@
   window.addEventListener("blur", resetInputs);
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) resetInputs();
-    else wakeSocket();
+    else {
+      wakeSocket();
+      remeasureSoon();
+    }
   });
 
   // ------------------------------------------------------------------ network
@@ -2245,7 +2270,10 @@
     }
   }
 
-  window.addEventListener("pageshow", wakeSocket);
+  window.addEventListener("pageshow", () => {
+    wakeSocket();
+    remeasureSoon();
+  });
   window.addEventListener("online", wakeSocket);
 
   // iPhone Safari has no Vibration API. A quiet Web Audio cue keeps rumble
@@ -3927,6 +3955,7 @@
     applyMotionPref();
     consumeLayoutLink();
     resize();
+    remeasureSoon();
     syncScreen();
 
     if (prefs.screen) setPipVisible(true);

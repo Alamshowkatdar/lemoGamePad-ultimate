@@ -2,6 +2,14 @@
 
 Newest first. The reasoning behind each release is in [`docs/REVIEW.md`](docs/REVIEW.md).
 
+## 2.1.2
+
+- **Fixed intermittent stretching in the iPhone Home Screen web app.** iOS can
+  apply its final viewport and safe-area geometry after the pad's first paint
+  without firing `resize`, leaving the canvas bitmap at the old aspect ratio.
+  The pad now watches the canvas box with a `ResizeObserver` and re-measures on
+  launch, wake and rotation.
+
 ## 2.1.1
 
 - **Fixed the browser pad zooming itself up on phones.** The safe-area pass had
