@@ -31,6 +31,9 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import java.net.InetSocketAddress
+import java.net.Socket
+import kotlin.concurrent.thread
 import kotlin.math.roundToInt
 
 class MainActivity : Activity() {
@@ -44,10 +47,17 @@ class MainActivity : Activity() {
     private var editBar: LinearLayout? = null
     private var settingsPanel: SettingsPanel? = null
     private var wifiGuide: View? = null
+    private var setupGuide: View? = null
+    private var setupCardHolder: FrameLayout? = null
+    private var setupStep = 0
+    private var setupChoice = "wifi"
+    private var setupStartup = false
     private var connectionDoctor: View? = null
     private var doctorCardHolder: FrameLayout? = null
     private var doctorStartup = false
     private var doctorStep = 0
+    @Volatile private var doctorCheckRunning = false
+    private var doctorCheckResult = ""
     private var startupOverlaysChecked = false
 
     /** One-tap sensitivity card shown after an aim calibration run. */
@@ -84,8 +94,8 @@ class MainActivity : Activity() {
     private var batteryLevel = -1
 
     @Volatile private var rumbleAmp = 0
-    @Volatile private var lastRumbleAt = 0L
     @Volatile private var hapticStrength = 1f
+    @Volatile private var gameRumbleEnabled = true
     /** True between onResume and onPause; read by the link's rumble callback. */
     @Volatile private var resumed = false
 
@@ -102,6 +112,12 @@ class MainActivity : Activity() {
                 if (!btWasConnected) {
                     btWasConnected = true
                     lastPhoneVersion = -1L
+                    // Remembered for picker order only; never used to reconnect.
+                    phoneGamepad.connectedAddress?.let { address ->
+                        if (prefs.getString(PrefsKeys.BT_LAST_HOST, null) != address) {
+                            prefs.edit().putString(PrefsKeys.BT_LAST_HOST, address).apply()
+                        }
+                    }
                 }
                 val version = view.state.version
                 if (version != lastPhoneVersion) {
@@ -146,24 +162,16 @@ class MainActivity : Activity() {
         }
     }
 
-    /** Repeats short pulses while the PC keeps asking for rumble. */
-    private val rumbleTicker = object : Runnable {
-        override fun run() {
-            if (rumbleAmp <= 0) return
-            if (SystemClock.uptimeMillis() - lastRumbleAt > RUMBLE_HOLD_MS) {
-                rumbleAmp = 0
-                return
-            }
-            pulse(rumbleAmp)
-            handler.postDelayed(this, RUMBLE_PERIOD_MS)
-        }
-    }
+    /** Safety stop if the PC's rumble refresh packets disappear. */
+    private val stopRumble = Runnable { stopRumbleInternal() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
         prefs = getSharedPreferences(PrefsKeys.FILE, MODE_PRIVATE)
+        // Repair invalid or outdated values before any screen reads them.
+        SettingsGuard.normalize(prefs)
         // One Gamepad layout owns the live arrangement and all saved presets.
         layouts = LayoutStore(prefs)
         if (layouts.activeName() == null) layouts.clearActive()
@@ -184,36 +192,43 @@ class MainActivity : Activity() {
                 settingsPanel?.refreshBluetoothGamepad()
             }
         }
+        val btStart = BluetoothHidSupport.status(this)
+        btStatus = when {
+            !btStart.supported -> "No Bluetooth adapter on this phone"
+            !btStart.enabled -> "Turn on Bluetooth to use the Bluetooth gamepad"
+            !btStart.permitted -> "Nearby devices access is off — grant it, then pick a host."
+            else -> "Bluetooth gamepad is off — tap SELECT HOST to connect"
+        }
 
         view = GamepadView(this)
-        view.theme = Themes.byId(prefs.getString(PrefsKeys.THEME, null))
-        view.faceLabels = if (prefs.getString(PrefsKeys.FACES, "ps") == "xbox") {
+        view.theme = Themes.byId(SettingsGuard.string(prefs, PrefsKeys.THEME, Themes.MIDNIGHT.id))
+        view.faceLabels = if (SettingsGuard.string(prefs, PrefsKeys.FACES, "ps") == "xbox") {
             FaceLabels.XBOX
         } else {
             FaceLabels.PLAYSTATION
         }
-        view.touchpadEnabled = prefs.getBoolean(PrefsKeys.TOUCHPAD_ENABLED, false)
-        view.touchpadMouseMode = prefs.getBoolean(PrefsKeys.TOUCHPAD_MOUSE, false)
-        view.gyroSteering = prefs.getBoolean(PrefsKeys.GYRO_STEER, false)
-        view.gyroAim = prefs.getBoolean(PrefsKeys.GYRO_AIM, false)
-        view.gyroRevertX = prefs.getBoolean(PrefsKeys.GYRO_REVERT_X, false)
-        view.gyroRevertY = prefs.getBoolean(PrefsKeys.GYRO_REVERT_Y, false)
-        view.steerSensitivity = prefs.getInt(PrefsKeys.STEER_SENS, 55) / 100f
-        view.steerDeadzone = prefs.getInt(PrefsKeys.STEER_DEADZONE, 5) / 100f
-        view.steerCurve = prefs.getInt(PrefsKeys.STEER_CURVE, 25) / 100f
-        view.aimSensitivity = prefs.getInt(PrefsKeys.AIM_SENS, 55) / 100f
-        view.touchpadSensitivity = prefs.getInt(PrefsKeys.TOUCHPAD_SENS, 50) / 100f
-        view.controlAlpha = prefs.getInt(PrefsKeys.PAD_ALPHA, 100) / 100f
-        view.faceSpacing = prefs.getInt(PrefsKeys.FACE_SPACING, 100) / 100f
+        view.touchpadEnabled = SettingsGuard.bool(prefs, PrefsKeys.TOUCHPAD_ENABLED, false)
+        view.touchpadMouseMode = SettingsGuard.bool(prefs, PrefsKeys.TOUCHPAD_MOUSE, false)
+        view.gyroSteering = SettingsGuard.bool(prefs, PrefsKeys.GYRO_STEER, false)
+        view.gyroAim = SettingsGuard.bool(prefs, PrefsKeys.GYRO_AIM, false)
+        view.gyroRevertX = SettingsGuard.bool(prefs, PrefsKeys.GYRO_REVERT_X, false)
+        view.gyroRevertY = SettingsGuard.bool(prefs, PrefsKeys.GYRO_REVERT_Y, false)
+        view.steerSensitivity = SettingsGuard.int(prefs, PrefsKeys.STEER_SENS, 55) / 100f
+        view.steerDeadzone = SettingsGuard.int(prefs, PrefsKeys.STEER_DEADZONE, 5) / 100f
+        view.steerCurve = SettingsGuard.int(prefs, PrefsKeys.STEER_CURVE, 25) / 100f
+        view.aimSensitivity = SettingsGuard.int(prefs, PrefsKeys.AIM_SENS, 55) / 100f
+        view.touchpadSensitivity = SettingsGuard.int(prefs, PrefsKeys.TOUCHPAD_SENS, 50) / 100f
+        view.controlAlpha = SettingsGuard.int(prefs, PrefsKeys.PAD_ALPHA, 100) / 100f
+        view.faceSpacing = SettingsGuard.int(prefs, PrefsKeys.FACE_SPACING, 100) / 100f
         view.applyLayout(layouts.activeData())
-        view.snapEnabled = prefs.getBoolean(PrefsKeys.LAYOUT_SNAP, false)
-        view.guidesEnabled = prefs.getBoolean(PrefsKeys.LAYOUT_GUIDES, true)
-        view.safeAreaEnabled = prefs.getBoolean(PrefsKeys.LAYOUT_SAFE_AREA, false)
-        view.multiSelectEnabled = prefs.getBoolean(PrefsKeys.LAYOUT_MULTI, false)
-        view.deadzone = prefs.getInt(PrefsKeys.DEADZONE, 12) / 100f
-        view.stickCurve = prefs.getInt(PrefsKeys.STICK_CURVE, 0) / 100f
-        view.hapticsEnabled = prefs.getBoolean(PrefsKeys.HAPTICS, true)
-        view.motionEnabled = prefs.getBoolean(PrefsKeys.MOTION, true)
+        view.snapEnabled = SettingsGuard.bool(prefs, PrefsKeys.LAYOUT_SNAP, false)
+        view.guidesEnabled = SettingsGuard.bool(prefs, PrefsKeys.LAYOUT_GUIDES, true)
+        view.safeAreaEnabled = SettingsGuard.bool(prefs, PrefsKeys.LAYOUT_SAFE_AREA, false)
+        view.multiSelectEnabled = SettingsGuard.bool(prefs, PrefsKeys.LAYOUT_MULTI, false)
+        view.deadzone = SettingsGuard.int(prefs, PrefsKeys.DEADZONE, 12) / 100f
+        view.stickCurve = SettingsGuard.int(prefs, PrefsKeys.STICK_CURVE, 0) / 100f
+        view.hapticsEnabled = SettingsGuard.bool(prefs, PrefsKeys.HAPTICS, true)
+        view.motionEnabled = SettingsGuard.bool(prefs, PrefsKeys.MOTION, true)
         view.onOpenSettings = { showSettings() }
         view.onHaptic = { ms -> tapFeedback(ms) }
         view.onLayoutChanged = { persistLayout() }
@@ -236,36 +251,50 @@ class MainActivity : Activity() {
         installSafeAreaInsets()
 
         link = Link(view.state, applicationContext)
-        link.port = prefs.getInt(PrefsKeys.PORT, Proto.PORT)
-        link.transport = transportById(prefs.getString(PrefsKeys.TRANSPORT, null))
-        link.inputRate = InputRate.fromId(prefs.getString(PrefsKeys.INPUT_RATE, null))
-        link.wantSlot = prefs.getInt(PrefsKeys.PLAYER_SLOT, 0)
+        link.port = SettingsGuard.int(prefs, PrefsKeys.PORT, Proto.PORT)
+        link.transport = transportById(SettingsGuard.string(prefs, PrefsKeys.TRANSPORT, ""))
+        link.inputRate = InputRate.fromId(SettingsGuard.string(prefs, PrefsKeys.INPUT_RATE, InputRate.STANDARD.id))
+        link.wantSlot = SettingsGuard.int(prefs, PrefsKeys.PLAYER_SLOT, 0)
         link.onRumble = { small, large -> handleRumble(small, large) }
         link.onSlotAsk = { ask -> handler.post { showSwapPrompt(ask) } }
         link.onSlotResult = { result -> handler.post { handleSlotResult(result) } }
+        link.onPartyState = { locked, _ ->
+            handler.post {
+                refreshStatus()
+                settingsPanel?.refreshLink()
+                // A lock cancels pending swaps; the target must not keep an
+                // Accept card for a request the PC has already discarded.
+                if (locked) dismissSwapPrompt()
+            }
+        }
 
-        screenEnabled = prefs.getBoolean(PrefsKeys.SCREEN, false)
-        screenSmall = prefs.getBoolean(PrefsKeys.SCREEN_SMALL, true)
-        hapticStrength = prefs.getInt(PrefsKeys.HAPTIC_STRENGTH, 100) / 100f
+        screenEnabled = SettingsGuard.bool(prefs, PrefsKeys.SCREEN, false)
+        screenSmall = SettingsGuard.bool(prefs, PrefsKeys.SCREEN_SMALL, true)
+        hapticStrength = SettingsGuard.int(prefs, PrefsKeys.HAPTIC_STRENGTH, 100) / 100f
+        gameRumbleEnabled = SettingsGuard.bool(prefs, PrefsKeys.GAME_RUMBLE, true)
         screenQuality = ScreenQuality.fromId(
-            prefs.getInt(PrefsKeys.SCREEN_QUALITY, ScreenQuality.BALANCED.wireId),
+            SettingsGuard.int(prefs, PrefsKeys.SCREEN_QUALITY, ScreenQuality.BALANCED.wireId),
         )
-        adaptiveEnabled = prefs.getBoolean(PrefsKeys.ADAPTIVE_QUALITY, false)
+        adaptiveEnabled = SettingsGuard.bool(prefs, PrefsKeys.ADAPTIVE_QUALITY, false)
 
-        if (!prefs.getBoolean(PrefsKeys.WIFI_GUIDE_SEEN, false)) {
-            showWifiGuide()
+        when {
+            !SettingsGuard.bool(prefs, PrefsKeys.ONBOARDED, false) -> {
+                setupStartup = true
+                showSetupGuide()
+            }
+            !SettingsGuard.bool(prefs, PrefsKeys.WIFI_GUIDE_SEEN, false) -> showWifiGuide()
         }
     }
 
     override fun onResume() {
         super.onResume()
         resumed = true
-        if (!startupOverlaysChecked && wifiGuide == null) {
+        if (!startupOverlaysChecked && wifiGuide == null && setupGuide == null && connectionDoctor == null) {
             startupOverlaysChecked = true
             continueStartupOverlays()
         }
         enterImmersive()
-        link.host = prefs.getString(PrefsKeys.HOST, null)?.takeIf { it.isNotBlank() }
+        link.host = SettingsGuard.string(prefs, PrefsKeys.HOST, "").takeIf { it.isNotBlank() }
         link.start()
         registerBattery()
         handler.post(ticker)
@@ -292,13 +321,14 @@ class MainActivity : Activity() {
         LayoutDialogs.dismissAll(this)
         dismissSwapPrompt()
         dismissAimRecommendation()
+        dismissSetupGuide(markSeen = false, advanceStartup = false)
         dismissConnectionDoctor(markSeen = false, advanceStartup = false)
         settingsPanel?.dismiss(animate = false)
         if (view.editMode) exitEditing(save = true)
         handler.removeCallbacks(ticker)
         handler.removeCallbacks(adaptiveTicker)
         rumbleAmp = 0
-        handler.removeCallbacks(rumbleTicker)
+        handler.removeCallbacks(stopRumble)
         vibrator()?.cancel()
         view.resetInputs()
         view.stopMotion()
@@ -333,6 +363,7 @@ class MainActivity : Activity() {
 
     @Suppress("DEPRECATION")
     override fun onBackPressed() {
+        if (dismissSetupGuide(markSeen = true, advanceStartup = setupStartup)) return
         wifiGuide?.let {
             root.removeView(it)
             wifiGuide = null
@@ -362,17 +393,45 @@ class MainActivity : Activity() {
     @Suppress("DEPRECATION")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQ_LAYOUT_QR) {
+            if (resultCode != RESULT_OK || data == null) return
+            val payload = data.getStringExtra(ScanActivity.EXTRA_LAYOUT_PAYLOAD) ?: return
+            val shared = LayoutQr.decode(payload) ?: return toast("That is not a layout QR")
+            val replaced = layouts.save(shared.name, shared.data)
+            view.applyLayout(shared.data)
+            toast(
+                if (replaced) "Layout \"${shared.name}\" updated from QR"
+                else "Layout \"${shared.name}\" imported from QR",
+            )
+            return
+        }
         if (requestCode != REQ_QR || resultCode != RESULT_OK || data == null) return
         val host = data.getStringExtra(ScanActivity.EXTRA_HOST) ?: return
         val port = data.getIntExtra(ScanActivity.EXTRA_PORT, Proto.PORT).coerceIn(1, 65535)
         val name = data.getStringExtra(ScanActivity.EXTRA_NAME) ?: ""
+        val auto = data.getBooleanExtra(ScanActivity.EXTRA_AUTO, false)
 
-        prefs.edit().putString(PrefsKeys.HOST, host).putInt(PrefsKeys.PORT, port).apply()
+        val editor = prefs.edit().putString(PrefsKeys.HOST, host).putInt(PrefsKeys.PORT, port)
+        if (auto) editor.putInt(PrefsKeys.PLAYER_SLOT, 0)
+        editor.apply()
         link.transport = transportById(prefs.getString(PrefsKeys.TRANSPORT, null))
+        if (auto) {
+            // Guest codes put this phone in AUTO; the PC fills the first free
+            // pad on the next input packet and reports it back through PONG.
+            link.cancelSwap()
+            link.wantSlot = 0
+        }
         link.retarget(host, port)
         link.serverName = name
         attachScreenStream()
-        toast(if (name.isBlank()) "Paired with $host" else "Paired with $name")
+        toast(
+            when {
+                auto && name.isBlank() -> "Joining next free pad on $host"
+                auto -> "Joining next free pad on $name"
+                name.isBlank() -> "Paired with $host"
+                else -> "Paired with $name"
+            }
+        )
     }
 
     override fun onRequestPermissionsResult(
@@ -422,7 +481,13 @@ class MainActivity : Activity() {
                 val batt = if (batteryLevel in 0..100) "  ·  $batteryLevel%" else ""
                 val via = if (linkName.isBlank()) "" else "  ·  $linkName"
                 val pad = if (link.assignedSlot > 0) "  ·  P${link.assignedSlot}" else ""
-                view.setStatus("$name$via$pad$rtt$jitter$loss$batt", GamepadView.STATUS_OK)
+                val party = when {
+                    link.isHost && link.partyLocked -> "  ·  HOST · LOCK"
+                    link.isHost -> "  ·  HOST"
+                    link.partyLocked -> "  ·  LOCK"
+                    else -> ""
+                }
+                view.setStatus("$name$via$pad$party$rtt$jitter$loss$batt", GamepadView.STATUS_OK)
             }
             else -> {
                 val kind = link.transport
@@ -547,12 +612,265 @@ class MainActivity : Activity() {
     // --------------------------------------------------- onboarding / what's new
     private fun continueStartupOverlays() {
         if (isFinishing || !resumed) return
-        if (!prefs.getBoolean(PrefsKeys.CONNECTION_DOCTOR_SEEN, false)) {
+        if (!SettingsGuard.bool(prefs, PrefsKeys.ONBOARDED, false)) {
+            setupStartup = true
+            showSetupGuide()
+            return
+        }
+        if (!SettingsGuard.bool(prefs, PrefsKeys.CONNECTION_DOCTOR_SEEN, false)) {
             doctorStartup = true
             showConnectionDoctor()
         } else {
             maybeShowWhatsNew()
         }
+    }
+
+    // ------------------------------------------------------- first-time setup
+    private fun showSetupGuide() {
+        if (setupGuide != null || isFinishing) return
+        setupStep = 0
+        val scrim = FrameLayout(this).apply {
+            setBackgroundColor(Color.argb(224, 0, 0, 0))
+            isClickable = true
+            isFocusable = true
+            elevation = px(29).toFloat()
+        }
+        val holder = FrameLayout(this)
+        scrim.addView(
+            holder,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.CENTER,
+            ).apply { marginStart = px(20); marginEnd = px(20) },
+        )
+        root.addView(
+            scrim,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            ),
+        )
+        setupGuide = scrim
+        setupCardHolder = holder
+        scrim.alpha = 0f
+        scrim.animate().alpha(1f).setDuration(200L).start()
+        renderSetupGuide()
+    }
+
+    private fun renderSetupGuide() {
+        val holder = setupCardHolder ?: return
+        holder.removeAllViews()
+        val t = view.theme
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            isClickable = true
+            setPadding(px(20), px(18), px(20), px(17))
+            background = GradientDrawable().apply {
+                cornerRadius = px(20).toFloat()
+                setColor(t.surface)
+                setStroke(px(1), withAlpha(t.accent, 145))
+            }
+            elevation = px(30).toFloat()
+        }
+
+        fun addCopy(text: String, size: Float, color: Int, bold: Boolean = false, top: Int = 0) {
+            card.addView(TextView(this).apply {
+                this.text = text
+                textSize = size
+                setTextColor(color)
+                setLineSpacing(px(3).toFloat(), 1f)
+                if (bold) typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                if (top > 0) setPadding(0, px(top), 0, 0)
+            }, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ))
+        }
+
+        fun choose(value: String) {
+            setupChoice = value
+            setupStep = 1
+            renderSetupGuide()
+        }
+
+        if (setupStep == 0) {
+            addCopy("FIRST-TIME SETUP  ·  1 / 2", 10f, t.accent, bold = true)
+            addCopy("How do you want to play?", 20f, t.text, bold = true, top = 6)
+            addCopy(
+                "Pick one path. Only the steps you need are shown, and nothing connects until you choose a host or scan a code.",
+                12f, t.textDim, top = 9,
+            )
+            val first = rowOfButtons()
+            first.addView(swapButton("WI-FI", t, primary = true) { choose("wifi") }, weightParams(1f, end = px(6)))
+            first.addView(swapButton("USB", t, primary = false) { choose("usb") }, weightParams(1f))
+            val second = rowOfButtons()
+            second.addView(swapButton("BLUETOOTH", t, primary = false) { choose("bluetooth") }, weightParams(1f, end = px(6)))
+            second.addView(swapButton("WEB PAD", t, primary = false) { choose("web") }, weightParams(1f))
+            card.addView(first, topParams(px(14)))
+            card.addView(second, topParams(px(7)))
+        } else {
+            addCopy("FIRST-TIME SETUP  ·  2 / 2", 10f, t.accent, bold = true)
+            when (setupChoice) {
+                "usb" -> {
+                    addCopy("USB tether", 20f, t.text, bold = true, top = 6)
+                    addCopy(
+                        "1. Connect the phone to the PC with a USB cable.\n" +
+                            "2. Enable USB tethering / mobile data passthrough on the phone.\n" +
+                            "3. Start the PC server, then use transport USB and enter the IP it prints.",
+                        12f, t.textDim, top = 10,
+                    )
+                }
+                "bluetooth" -> {
+                    addCopy("Bluetooth HID gamepad", 20f, t.text, bold = true, top = 6)
+                    addCopy(
+                        "1. Pair 'Lemo GamePad' from the PC or TV's Bluetooth settings.\n" +
+                            "2. In this app open Settings > Bluetooth gamepad and start it.\n" +
+                            "3. Tap SELECT HOST and pick that device. It never auto-connects.",
+                        12f, t.textDim, top = 10,
+                    )
+                }
+                "web" -> {
+                    addCopy("Browser pad (also works on iPhone)", 19f, t.text, bold = true, top = 6)
+                    addCopy(
+                        "1. Start the PC server and note the LAN address it prints.\n" +
+                            "2. Open http://PC-IP:9878 in the phone's browser on the same Wi-Fi.\n" +
+                            "3. On iPhone, use Safari > Share > Add to Home Screen.\n" +
+                            "The page must come from the PC; a public site cannot reach the local link.",
+                        12f, t.textDim, top = 10,
+                    )
+                }
+                else -> {
+                    addCopy("Wi-Fi gamepad", 20f, t.text, bold = true, top = 6)
+                    addCopy(
+                        "1. Put the phone and PC on the same Wi-Fi network.\n" +
+                            "2. Start lemoGamePad-server on the PC and leave it running.\n" +
+                            "3. Scan its QR code here, or enter the IP it prints.\n" +
+                            "Guest Wi-Fi that blocks devices and the PC firewall are the usual causes of trouble.",
+                        12f, t.textDim, top = 10,
+                    )
+                }
+            }
+            val paths = rowOfButtons()
+            when (setupChoice) {
+                "wifi" -> {
+                    paths.addView(swapButton("SCAN QR", t, primary = true) {
+                        dismissSetupGuide(markSeen = true, advanceStartup = false)
+                        startActivityForResult(Intent(this@MainActivity, ScanActivity::class.java), REQ_QR)
+                    }, weightParams(1f, end = px(6)))
+                    paths.addView(swapButton("USE WI-FI", t, primary = false) {
+                        link.transport = Transport.WIFI
+                        prefs.edit().putString(PrefsKeys.TRANSPORT, "wifi").apply()
+                        dismissSetupGuide(markSeen = true, advanceStartup = false)
+                        toast("Transport: Wi-Fi")
+                    }, weightParams(1f))
+                }
+                "usb" -> {
+                    paths.addView(swapButton("USE USB", t, primary = true) {
+                        link.transport = Transport.USB
+                        prefs.edit().putString(PrefsKeys.TRANSPORT, "usb").apply()
+                        dismissSetupGuide(markSeen = true, advanceStartup = false)
+                        toast("Transport: USB")
+                    }, weightParams(1f, end = px(6)))
+                    paths.addView(swapButton("SETTINGS", t, primary = false) {
+                        dismissSetupGuide(markSeen = true, advanceStartup = false)
+                        showSettings()
+                    }, weightParams(1f))
+                }
+                "bluetooth" -> {
+                    paths.addView(swapButton("OPEN SETTINGS", t, primary = true) {
+                        dismissSetupGuide(markSeen = true, advanceStartup = false)
+                        showSettings()
+                    }, weightParams(1f))
+                }
+                else -> {
+                    paths.addView(swapButton("ONLINE GUIDE", t, primary = true) { openUrl(SETUP_URL) }, weightParams(1f))
+                }
+            }
+            card.addView(paths, topParams(px(13)))
+        }
+
+        val actions = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.END or Gravity.CENTER_VERTICAL
+            setPadding(0, px(14), 0, 0)
+        }
+        if (setupStep > 0) {
+            actions.addView(
+                swapButton("BACK", t, primary = false) {
+                    setupStep--
+                    renderSetupGuide()
+                },
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ).apply { marginEnd = px(8) },
+            )
+        } else {
+            actions.addView(
+                swapButton("SKIP", t, primary = false) {
+                    dismissSetupGuide(markSeen = true, advanceStartup = setupStartup)
+                },
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ).apply { marginEnd = px(8) },
+            )
+        }
+        actions.addView(
+            swapButton(if (setupStep == 0) "NEXT" else "FINISH", t, primary = true) {
+                if (setupStep == 0) {
+                    setupStep = 1
+                    renderSetupGuide()
+                } else {
+                    dismissSetupGuide(markSeen = true, advanceStartup = setupStartup)
+                }
+            },
+        )
+        card.addView(actions)
+        holder.addView(
+            card,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ),
+        )
+        card.alpha = 0f
+        card.animate().alpha(1f).setDuration(150L).start()
+    }
+
+    private fun rowOfButtons(): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+    }
+
+    private fun weightParams(weight: Float, end: Int = 0): LinearLayout.LayoutParams =
+        LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, weight).apply {
+            marginEnd = end
+        }
+
+    private fun topParams(top: Int): LinearLayout.LayoutParams = LinearLayout.LayoutParams(
+        ViewGroup.LayoutParams.MATCH_PARENT,
+        ViewGroup.LayoutParams.WRAP_CONTENT,
+    ).apply { topMargin = top }
+
+    private fun dismissSetupGuide(markSeen: Boolean, advanceStartup: Boolean): Boolean {
+        val overlay = setupGuide ?: return false
+        setupGuide = null
+        setupCardHolder = null
+        if (markSeen) {
+            prefs.edit()
+                .putBoolean(PrefsKeys.ONBOARDED, true)
+                .putBoolean(PrefsKeys.WIFI_GUIDE_SEEN, true)
+                .putBoolean(PrefsKeys.CONNECTION_DOCTOR_SEEN, true)
+                .apply()
+        }
+        overlay.animate().alpha(0f).setDuration(140L)
+            .withEndAction { root.removeView(overlay) }
+            .start()
+        setupStartup = false
+        if (advanceStartup) continueStartupOverlays()
+        return true
     }
 
     @Suppress("DEPRECATION")
@@ -590,9 +908,60 @@ class MainActivity : Activity() {
         )
     }
 
+    /**
+     * Best-effort live probe. TCP 9877 and 9878 are opened by the PC server
+     * whenever it is running, so a successful connect proves the phone can
+     * reach the host on the same route the input link uses. A closed port is
+     * reported as information, not as a failure of UDP input.
+     */
+    private fun runDoctorChecks() {
+        if (doctorCheckRunning) return
+        val host = link.host ?: SettingsGuard.string(prefs, PrefsKeys.HOST, "").takeIf { it.isNotBlank() }
+        val readiness = link.readiness()
+        val local = link.boundLocalAddress()
+        val localSummary = link.localSummary().ifBlank { "none detected" }
+        val videoPort = Proto.videoPort(link.port)
+        doctorCheckRunning = true
+        doctorCheckResult = "Running checks…"
+        renderConnectionDoctor()
+
+        thread(name = "doctor-check") {
+            val lines = ArrayList<String>()
+            lines += "Wi-Fi path   " + if (readiness[Transport.WIFI] == true) "READY" else "not ready"
+            lines += "USB path     " + if (readiness[Transport.USB] == true) "READY" else "not ready"
+            lines += "This device  $localSummary"
+            if (host == null) {
+                lines += "PC probe     pair a host first"
+            } else {
+                fun tcp(port: Int): String = try {
+                    val socket = Socket()
+                    try {
+                        if (local != null) socket.bind(InetSocketAddress(local, 0))
+                        socket.connect(InetSocketAddress(host, port), 500)
+                        "reachable"
+                    } finally {
+                        socket.close()
+                    }
+                } catch (_: Exception) {
+                    "not reachable"
+                }
+                lines += "Paired host  $host"
+                lines += "Video TCP $videoPort  ${tcp(videoPort)}"
+                lines += "Web TCP 9878  ${tcp(9878)}"
+            }
+            val result = lines.joinToString("\n")
+            runOnUiThread {
+                doctorCheckRunning = false
+                doctorCheckResult = result
+                if (connectionDoctor != null) renderConnectionDoctor()
+            }
+        }
+    }
+
     private fun showConnectionDoctor() {
         if (connectionDoctor != null || isFinishing) return
         doctorStep = 0
+        doctorCheckResult = ""
         val t = view.theme
         val scrim = FrameLayout(this).apply {
             setBackgroundColor(Color.argb(222, 0, 0, 0))
@@ -681,6 +1050,15 @@ class MainActivity : Activity() {
                         ViewGroup.LayoutParams.WRAP_CONTENT,
                     ),
                 )
+                links.addView(
+                    swapButton("HELP", t, primary = false) {
+                        HelpCenter.show(this@MainActivity, view.theme)
+                    },
+                    LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ).apply { marginStart = px(8) },
+                )
                 card.addView(links)
             }
             1 -> {
@@ -708,6 +1086,20 @@ class MainActivity : Activity() {
                     "If both paths say not ready, start the PC server and check guest Wi-Fi isolation or the USB cable.",
                     10.5f, t.muted, top = 8,
                 )
+                if (doctorCheckResult.isNotBlank()) {
+                    addCopy("LIVE CHECK\n$doctorCheckResult", 11f, t.textDim, top = 10)
+                }
+                val checks = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.END or Gravity.CENTER_VERTICAL
+                    setPadding(0, px(12), 0, 0)
+                }
+                checks.addView(
+                    swapButton(if (doctorCheckRunning) "CHECKING…" else "RUN CHECK", t, primary = true) {
+                        runDoctorChecks()
+                    },
+                )
+                card.addView(checks)
             }
             else -> {
                 addCopy("CONNECTION DOCTOR  ·  3 / 3", 10f, t.accent, bold = true)
@@ -738,6 +1130,9 @@ class MainActivity : Activity() {
                     "Still not connected? Open Settings and use SCAN or the QR code. Keep the server window running on the PC.",
                     10.5f, t.muted, top = 8,
                 )
+                if (doctorCheckResult.isNotBlank()) {
+                    addCopy("LIVE CHECK\n$doctorCheckResult", 11f, t.textDim, top = 10)
+                }
             }
         }
 
@@ -1004,6 +1399,7 @@ class MainActivity : Activity() {
         deadzone = (view.deadzone * 100f).roundToInt(),
         stickCurve = (view.stickCurve * 100f).roundToInt(),
         haptics = view.hapticsEnabled,
+        gameRumble = gameRumbleEnabled,
         hapticStrength = (hapticStrength * 100f).roundToInt(),
         inputRate = link.inputRate.id,
         faceLabels = view.faceLabels.name,
@@ -1043,6 +1439,8 @@ class MainActivity : Activity() {
         view.deadzone = data.deadzone / 100f
         view.stickCurve = data.stickCurve / 100f
         view.hapticsEnabled = data.haptics
+        gameRumbleEnabled = data.gameRumble
+        if (!gameRumbleEnabled) handler.post { stopRumbleInternal() }
         view.controlAlpha = data.padAlpha / 100f
         view.faceSpacing = data.faceSpacing / 100f
         link.inputRate = rate
@@ -1065,6 +1463,7 @@ class MainActivity : Activity() {
             .putInt(PrefsKeys.DEADZONE, data.deadzone)
             .putInt(PrefsKeys.STICK_CURVE, data.stickCurve)
             .putBoolean(PrefsKeys.HAPTICS, data.haptics)
+            .putBoolean(PrefsKeys.GAME_RUMBLE, data.gameRumble)
             .putInt(PrefsKeys.HAPTIC_STRENGTH, data.hapticStrength.coerceIn(0, 100))
             .putInt(PrefsKeys.PAD_ALPHA, data.padAlpha)
             .putInt(PrefsKeys.FACE_SPACING, data.faceSpacing)
@@ -1289,6 +1688,15 @@ class MainActivity : Activity() {
                     )
                 }
 
+                override fun onScanLayoutQr() {
+                    settingsPanel?.dismiss()
+                    startActivityForResult(
+                        Intent(this@MainActivity, ScanActivity::class.java)
+                            .putExtra(ScanActivity.EXTRA_LAYOUT_MODE, true),
+                        REQ_LAYOUT_QR,
+                    )
+                }
+
                 override fun onEditLayout() {
                     settingsPanel?.dismiss()
                     handler.postDelayed({ startEditing() }, 260L)
@@ -1347,6 +1755,12 @@ class MainActivity : Activity() {
 
                 override fun onHapticsChanged(strength: Float) {
                     hapticStrength = strength.coerceIn(0f, 1f)
+                    if (rumbleAmp > 0) handler.post { startRumble(rumbleAmp) }
+                }
+
+                override fun onGameRumbleChanged(enabled: Boolean) {
+                    gameRumbleEnabled = enabled
+                    if (!enabled) handler.post { stopRumbleInternal() }
                 }
 
                 override fun attachScreenStream() {
@@ -1363,6 +1777,15 @@ class MainActivity : Activity() {
                     showConnectionDoctor()
                 }
 
+                override fun onOpenSetupGuide() {
+                    setupStartup = false
+                    showSetupGuide()
+                }
+
+                override fun onOpenHelp() {
+                    HelpCenter.show(this@MainActivity, view.theme)
+                }
+
                 override fun onClosed() {
                     settingsPanel = null
                 }
@@ -1373,6 +1796,12 @@ class MainActivity : Activity() {
 
                 override fun bluetoothPermissionsMissing(): Boolean =
                     BluetoothHidSupport.permissionsMissing(this@MainActivity)
+
+                override fun bluetoothSupported(): Boolean =
+                    BluetoothHidSupport.status(this@MainActivity).supported
+
+                override fun bluetoothEnabled(): Boolean =
+                    BluetoothHidSupport.status(this@MainActivity).enabled
 
                 override fun requestBluetoothPermissions() {
                     btPermissionAsked = true
@@ -1387,6 +1816,22 @@ class MainActivity : Activity() {
 
                 override fun onBluetoothDiscoverable() {
                     makeDiscoverable(manual = true)
+                }
+
+                override fun onBluetoothHostAudioSettings() {
+                    val address = if (phoneGamepadActive) {
+                        phoneGamepad.connectedAddress.orEmpty()
+                    } else {
+                        ""
+                    }
+                    val opened = BluetoothHidSupport.openHostSettings(this@MainActivity, address)
+                    toast(
+                        if (opened) {
+                            "Turn off Media audio and Phone audio for this host"
+                        } else {
+                            "Open Connected devices and turn off Media audio and Phone audio"
+                        },
+                    )
                 }
 
                 override fun bluetoothHosts(): List<BluetoothHost> = phoneGamepad.hosts()
@@ -1535,49 +1980,58 @@ class MainActivity : Activity() {
     }
 
     private fun handleRumble(small: Int, large: Int) {
-        // Rumble callbacks arrive on the link's receiver thread. After onPause
-        // the ticker has been removed and the vibrator cancelled, so ignore
-        // anything that was already in flight instead of re-arming it in the
-        // background.
+        // Callbacks arrive on the link's receiver thread. After onPause the
+        // vibrator is cancelled and resumed is false, so a packet already in
+        // flight cannot restart it in the background.
         if (!resumed) return
-        val now = SystemClock.uptimeMillis()
-        val amp = maxOf(small, large).coerceIn(0, 255)
-        if (amp == 0) {
-            // ViGEm reports the current motor state about once a second, so a
-            // "stop" right next to a live value is usually a stale datagram.
-            if (now - lastRumbleAt < RUMBLE_STALE_MS) return
-            lastRumbleAt = now
-            if (rumbleAmp != 0) {
-                rumbleAmp = 0
-                vibrator()?.cancel()
+        val amp = rumbleAmplitude(small, large)
+        if (amp == 0 || !view.hapticsEnabled || !gameRumbleEnabled) {
+            handler.post { stopRumbleInternal() }
+            return
+        }
+        // Keep the game's level rather than turning it into fixed pulses. The
+        // server repeats a live level every 500 ms, which only refreshes the
+        // watchdog here; the motor itself stays on continuously.
+        handler.post {
+            if (!resumed || !view.hapticsEnabled || !gameRumbleEnabled) return@post
+            if (rumbleAmp != amp) {
+                rumbleAmp = amp
+                startRumble(amp)
             }
-            return
+            handler.removeCallbacks(stopRumble)
+            handler.postDelayed(stopRumble, RUMBLE_TIMEOUT_MS)
         }
-
-        lastRumbleAt = now
-        if (!view.hapticsEnabled) {
-            if (rumbleAmp != 0) vibrator()?.cancel()
-            rumbleAmp = 0
-            return
-        }
-        if (rumbleAmp == 0) {
-            pulse(amp)
-            handler.removeCallbacks(rumbleTicker)
-            handler.postDelayed(rumbleTicker, RUMBLE_PERIOD_MS)
-        }
-        rumbleAmp = amp
     }
 
-    private fun pulse(amp: Int) {
+    /** XInput drives two motors; a phone has one, so keep both contributions. */
+    private fun rumbleAmplitude(small: Int, large: Int): Int {
+        val s = small.coerceIn(0, 255)
+        val l = large.coerceIn(0, 255)
+        return minOf(255, maxOf(s, l) + minOf(s, l) / 2)
+    }
+
+    private fun startRumble(amp: Int) {
         val v = vibrator() ?: return
         val strength = (amp * hapticStrength).toInt().coerceIn(0, 255)
+        v.cancel()
         if (strength == 0) return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            v.vibrate(VibrationEffect.createOneShot(RUMBLE_PULSE_MS, strength))
+            // A single repeating segment is a smooth, uninterrupted buzz whose
+            // amplitude tracks the game instead of a 130 ms on/off pattern.
+            v.vibrate(
+                VibrationEffect.createWaveform(longArrayOf(40L), intArrayOf(strength), 0),
+            )
         } else {
             @Suppress("DEPRECATION")
-            v.vibrate(RUMBLE_PULSE_MS)
+            v.vibrate(longArrayOf(40L, 10L), 0)
         }
+    }
+
+    private fun stopRumbleInternal() {
+        handler.removeCallbacks(stopRumble)
+        if (rumbleAmp == 0) return
+        rumbleAmp = 0
+        vibrator()?.cancel()
     }
 
     private fun vibrator(): Vibrator? =
@@ -1947,13 +2401,11 @@ class MainActivity : Activity() {
         private const val REQ_BT = 78
         /** Permission prompt opened by SELECT HOST; only it may consume a pick. */
         private const val REQ_BT_HOST = 79
+        private const val REQ_LAYOUT_QR = 80
 
-        // Rumble: short pulses repeated while the PC keeps reporting a motor
-        // speed; the hold timeout covers a dropped "stop" packet.
-        private const val RUMBLE_PULSE_MS = 130L
-        private const val RUMBLE_PERIOD_MS = 160L
-        private const val RUMBLE_HOLD_MS = 1600L
-        private const val RUMBLE_STALE_MS = 250L
+        // Rumble follows the game's motor levels. The server repeats a live
+        // level every 500 ms; this timeout only covers lost refreshes.
+        private const val RUMBLE_TIMEOUT_MS = 1600L
 
         // Adaptive quality: 2 s windows, with the controller's own hysteresis
         // and cooldown. Notices are throttled separately so the badge can change

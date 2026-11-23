@@ -33,12 +33,12 @@
 | Browser pad says `Pairing link is not valid` | The server restarted (new random key) or the `?k=` part was dropped. Copy the current URL or rescan `lemoGamePad-web-qr-*.png`. |
 | Browser pad loads but the dot stays red | The WebSocket is blocked. Guest / AP-isolation Wi-Fi blocks device-to-device traffic; use a normal network or USB tethering. |
 | Browser pad connects but no controller appears | All `--max-phones` slots are busy, or the page has not sent input yet — touch the pad or press a key. Disconnect an idle phone or raise the limit (maximum eight). |
-| Browser pad has no rumble | iOS Safari has no Vibration API; rumble is skipped there. On Android, allow the browser to vibrate. |
+| Browser pad has no rumble | Check **Vibration from games** and the main vibration switch in Controls. iOS Safari has no Vibration API; rumble is skipped there. On Android, allow the browser to vibrate. |
 | Browser pad controls feel delayed | Prefer 5 GHz Wi-Fi and close background downloads. The page sends at up to 60 Hz and the server coalesces bursts. |
 | Screen preview is black or says capture is unavailable on Linux | Native Wayland blocks `mss`. Install `grim`, `spectacle` or `gnome-screenshot` (see Linux notes), or log in with an X11 session. |
 | Game doesn't see a controller | It probably wants XInput; the virtual pad *is* XInput. For DirectInput-only games, use Steam Input. A Bluetooth HID pad is DirectInput only, so use the Wi-Fi/USB server link for XInput games. |
 | Device Manager lists greyed "Xbox 360 Controller for Windows" | Ghosts from a server that was killed instead of closed. Run `pc\clean_pads.ps1` as Administrator. |
-| Rumble not working | Some games only rumble on the pad they detect at launch — connect before starting the game. Run `python pc\test_rumble.py` (server closed) to prove the PC side works. |
+| Rumble not working | Check **Vibration from games** in the Android controls card. Some games only rumble on the pad they detect at launch — connect before starting the game. Run `python pc\test_rumble.py` (server closed) to prove the PC side works. |
 | Windows asks to reboot after ViGEmBus | Reboot, then start the server again. The driver is registered either way. |
 | Rebuilt APK won't install over the release APK | Different signing keys. Uninstall the old app first, or sign with the same key. |
 

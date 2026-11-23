@@ -139,15 +139,15 @@
   // One press animation per palette. The style is drawn on the pad, while the
   // ms/spread values also pace the DOM feedback in style.css.
   const MOTIONS = {
-    pulse: { style: "pulse", ms: 420, spread: 1.55 },
-    wave: { style: "wave", ms: 540, spread: 1.75 },
-    halo: { style: "halo", ms: 640, spread: 1.35 },
-    shock: { style: "shock", ms: 360, spread: 1.85 },
-    burst: { style: "burst", ms: 460, spread: 1.70 },
-    step: { style: "step", ms: 440, spread: 1.60 },
-    ripple: { style: "ripple", ms: 660, spread: 1.95 },
-    line: { style: "line", ms: 380, spread: 1.45 },
-    void: { style: "void", ms: 300, spread: 1.30 },
+    pulse: { style: "pulse", ms: 460, spread: 1.70 },
+    wave: { style: "wave", ms: 600, spread: 1.90 },
+    halo: { style: "halo", ms: 700, spread: 1.50 },
+    shock: { style: "shock", ms: 390, spread: 2.00 },
+    burst: { style: "burst", ms: 500, spread: 1.85 },
+    step: { style: "step", ms: 480, spread: 1.70 },
+    ripple: { style: "ripple", ms: 720, spread: 2.10 },
+    line: { style: "line", ms: 420, spread: 1.55 },
+    void: { style: "void", ms: 340, spread: 1.40 },
   };
 
   function motionOf(theme) {
@@ -222,6 +222,8 @@
     deadzone: "lmgb.deadzone",
     curve: "lmgb.curve",
     haptics: "lmgb.haptics",
+    gameRumble: "lmgb.gameRumble",
+    soundCue: "lmgb.soundCue",
     motion: "lmgb.motion",
     strength: "lmgb.strength",
     rate: "lmgb.rate",
@@ -234,6 +236,9 @@
     screenQuality: "lmgb.screenQuality",
     screenX: "lmgb.screenX",
     screenY: "lmgb.screenY",
+    sheetGroup: "lmgb.sheetGroup",
+    sheetScroll: "lmgb.sheetScroll",
+    dense: "lmgb.dense",
   };
 
   function readPref(key, fallback) {
@@ -271,23 +276,32 @@
     turbo: { hint: "Continuous ~60 Hz \u2014 lowest browser latency, more battery" },
   };
 
+  // The PC prints a second browser QR with &auto=1 for guests. It only changes
+  // this tab's in-memory seat request; the stored preference is left alone.
+  const JOIN_PARAMS = new URLSearchParams(location.search);
+  const AUTO_JOIN = JOIN_PARAMS.get("auto") === "1";
+
   const prefs = {
     theme: themeById(readPref(PREF.theme, NEON.id)).id,
     faces: readPref(PREF.faces, "ps") === "xbox" ? "xbox" : "ps",
     deadzone: Math.max(0, Math.min(40, readNumber(PREF.deadzone, 12))),
     curve: Math.max(0, Math.min(100, readNumber(PREF.curve, 0))),
     haptics: readBool(PREF.haptics, true),
+    gameRumble: readBool(PREF.gameRumble, true),
+    soundCue: readBool(PREF.soundCue, true),
     motion: readBool(PREF.motion, !REDUCED_MOTION),
     strength: Math.max(0, Math.min(100, readNumber(PREF.strength, 100))),
     rate: ["eco", "standard", "turbo"].includes(readPref(PREF.rate, ""))
       ? readPref(PREF.rate, "standard")
       : "standard",
-    slot: Math.max(0, Math.min(MAX_PLAYERS, readNumber(PREF.slot, 0))),
+    slot: AUTO_JOIN ? 0 : Math.max(0, Math.min(MAX_PLAYERS, readNumber(PREF.slot, 0))),
     screen: readBool(PREF.screen, false),
     screenSmall: readBool(PREF.screenSmall, true),
     screenQuality: Math.max(0, Math.min(2, readNumber(PREF.screenQuality, 1))),
     screenX: readNumber(PREF.screenX, 0.5),
     screenY: readNumber(PREF.screenY, 0.3),
+    sheetGroup: Math.max(0, Math.min(4, readNumber(PREF.sheetGroup, 0))),
+    dense: readBool(PREF.dense, false),
   };
 
   function savePref(key, value) {
@@ -345,12 +359,15 @@
       "--warn": theme.warn,
       "--on-accent": onColor(theme.accent),
       "--surface-sheet": sheet,
+      "--surface-alt-sheet": alpha(theme.surfaceAlt, theme.dark ? 0.96 : 0.98),
       "--card-bg": card,
       "--card-line": alpha(theme.accent, theme.dark ? 0.16 : 0.24),
       "--line": line,
       "--line-strong": lineStrong,
       "--text-soft": alpha(theme.text, 0.14),
       "--accent-soft": alpha(theme.accent, 0.18),
+      "--accent-2-soft": alpha(theme.accent2, 0.14),
+      "--accent-sheen": alpha(theme.accent, theme.dark ? 0.10 : 0.07),
       "--accent-line": alpha(theme.accent, 0.55),
       "--scrim": theme.dark ? "rgba(0,0,0,0.66)" : "rgba(0,0,0,0.42)",
     };
@@ -483,16 +500,17 @@
     const baseY = H * 0.585;
 
     for (const node of nodes) {
+      const s = node.scale;
       switch (node.kind) {
         case K_DPAD:
-          node.r = H * 0.145 * a * node.scale;
+          node.r = H * 0.145 * a * s;
           break;
         case K_STICK_L:
         case K_STICK_R:
-          node.r = H * 0.14 * a * node.scale;
+          node.r = H * 0.14 * a * s;
           break;
         case K_FACE:
-          node.r = H * 0.058 * a * node.scale;
+          node.r = H * 0.058 * a * s;
           if (!node.customized) {
             node.fx = (baseX + node.homeDx * H * a) / W;
             node.fy = (baseY + node.homeDy * H * a) / H;
@@ -501,17 +519,17 @@
           }
           break;
         case K_PILL:
-          node.hw = H * node.bw * node.scale;
-          node.hh = H * node.bh * node.scale;
+          node.hw = H * node.bw * s;
+          node.hh = H * node.bh * s;
           break;
         case K_PS:
-          node.r = H * node.bw * node.scale;
+          node.r = H * node.bw * s;
           node.hw = node.r;
           node.hh = node.r;
           break;
         case K_SHOULDER:
-          node.hw = W * 0.0975 * node.scale;
-          node.hh = H * 0.0625 * node.scale;
+          node.hw = W * 0.0975 * s;
+          node.hh = H * 0.0625 * s;
           break;
       }
 
@@ -619,21 +637,27 @@
     ctx.lineJoin = "round";
 
     if (m.style === "pulse") {
-      ctx.strokeStyle = alpha(accent, 0.55 * fade);
-      ctx.lineWidth = px(1.2 + 2.4 * fade);
+      ctx.strokeStyle = alpha(accent, 0.24 * fade);
+      ctx.lineWidth = px(1 + 5 * fade);
+      ctx.beginPath();
+      ctx.arc(cx, cy, radius + (reach - radius) * 0.55, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.strokeStyle = alpha(accent, 0.66 * fade);
+      ctx.lineWidth = px(1.2 + 2.2 * fade);
       ctx.beginPath();
       ctx.arc(cx, cy, reach, 0, Math.PI * 2);
       ctx.stroke();
     } else if (m.style === "wave") {
-      ctx.strokeStyle = alpha(accent, 0.50 * fade);
+      const spin = Math.PI * 2 * ease;
+      ctx.strokeStyle = alpha(accent, 0.54 * fade);
       ctx.lineWidth = px(1.2 + 2.0 * fade);
       ctx.beginPath();
-      ctx.arc(cx, cy, reach, Math.PI * -0.35, Math.PI * 1.15);
+      ctx.arc(cx, cy, reach, Math.PI * -0.35 + spin, Math.PI * 1.0 + spin);
       ctx.stroke();
-      ctx.strokeStyle = alpha(accent, 0.28 * fade);
+      ctx.strokeStyle = alpha(accent, 0.33 * fade);
       ctx.lineWidth = thin;
       ctx.beginPath();
-      ctx.arc(cx, cy, reach * 0.80, Math.PI * 0.15, Math.PI * 1.65);
+      ctx.arc(cx, cy, reach * 0.82, Math.PI * 0.20 - spin, Math.PI * 1.5 - spin);
       ctx.stroke();
     } else if (m.style === "halo") {
       const grd = ctx.createRadialGradient(cx, cy, radius * 0.72, cx, cy, reach);
@@ -649,6 +673,15 @@
       ctx.beginPath();
       ctx.arc(cx, cy, reach * 0.94, 0, Math.PI * 2);
       ctx.stroke();
+      const spin = Math.PI * 2.3 * ease;
+      ctx.strokeStyle = alpha(themeNow.accent2, 0.44 * fade);
+      ctx.lineWidth = px(1.6);
+      ctx.beginPath();
+      ctx.arc(cx, cy, reach * 1.06, spin, spin + 0.34 * Math.PI);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(cx, cy, reach * 1.06, spin + Math.PI, spin + 1.34 * Math.PI);
+      ctx.stroke();
     } else if (m.style === "shock") {
       ctx.strokeStyle = alpha(accent, 0.62 * fade);
       ctx.lineWidth = px(0.6 + 2.0 * fade);
@@ -661,8 +694,9 @@
       ctx.arc(cx, cy, reach * 0.74, 0, Math.PI * 2);
       ctx.stroke();
       ctx.strokeStyle = alpha(accent, 0.22 * fade);
+      const spin = 0.55 * ease;
       for (let i = 0; i < 4; i++) {
-        const a = Math.PI / 4 + (i * Math.PI) / 2;
+        const a = Math.PI / 4 + spin + (i * Math.PI) / 2;
         const c = Math.cos(a);
         const s = Math.sin(a);
         ctx.beginPath();
@@ -673,8 +707,9 @@
     } else if (m.style === "burst") {
       ctx.strokeStyle = alpha(accent, 0.52 * fade);
       ctx.lineWidth = px(1.6);
+      const spin = 0.38 * ease;
       for (let i = 0; i < 8; i++) {
-        const a = (i * Math.PI) / 4;
+        const a = spin + (i * Math.PI) / 4;
         const c = Math.cos(a);
         const s = Math.sin(a);
         const inner = radius * (0.72 + 0.16 * ease);
@@ -715,6 +750,16 @@
       ctx.beginPath();
       ctx.arc(cx, cy, reach + px(2.6), 0, Math.PI * 2);
       ctx.stroke();
+      ctx.strokeStyle = alpha(accent, 0.42 * fade);
+      for (let i = 0; i < 4; i++) {
+        const a = (i * Math.PI) / 2;
+        const c = Math.cos(a);
+        const s = Math.sin(a);
+        ctx.beginPath();
+        ctx.moveTo(cx + c * (reach + px(4)), cy + s * (reach + px(4)));
+        ctx.lineTo(cx + c * (reach + px(8)), cy + s * (reach + px(8)));
+        ctx.stroke();
+      }
     } else {
       // mono: a precise underline that shoots out from the centre.
       const y = cy + radius * 0.86;
@@ -1110,6 +1155,7 @@
 
     drawTracked(statusText, x + h * 0.62 + tw / 2, y + h / 2, textSize, themeNow.text, tracking, true);
     drawGear(x + w - h * 0.40, y + h / 2, h * 0.19, alpha(themeNow.text, 0.59));
+
   }
 
   function drawEditOverlay() {
@@ -1168,21 +1214,23 @@
       ctx.fillRect(0, 0, W, H);
     }
 
+    const entryAlpha = enterT < 1 ? 1 - Math.pow(1 - enterT, 3) : 1;
     ctx.save();
     if (enterT < 1) {
-      const k = 1 - Math.pow(1 - enterT, 3);
-      ctx.globalAlpha = k;
+      ctx.globalAlpha = entryAlpha;
       ctx.translate(W / 2, H / 2);
-      const scale = 0.982 + 0.018 * k;
+      const scale = 0.982 + 0.018 * entryAlpha;
       ctx.scale(scale, scale);
       ctx.translate(-W / 2, -H / 2);
     }
 
     for (const node of nodes) {
       if (node.hidden) {
+        ctx.globalAlpha = entryAlpha;
         if (editMode) drawPlaceholder(node);
         continue;
       }
+      ctx.globalAlpha = entryAlpha;
       if (node.kind === K_DPAD) drawDpad(node);
       else if (node.kind === K_STICK_L || node.kind === K_STICK_R) drawStick(node);
       else if (node.kind === K_FACE) drawFace(node);
@@ -1285,6 +1333,20 @@
     else lastFrameAt = 0;
   }
 
+  function safeInsets() {
+    const style = getComputedStyle(document.documentElement);
+    const read = (name) => {
+      const value = parseFloat(style.getPropertyValue(name));
+      return Number.isFinite(value) ? Math.max(0, value) : 0;
+    };
+    return {
+      top: read("--safe-top"),
+      right: read("--safe-right"),
+      bottom: read("--safe-bottom"),
+      left: read("--safe-left"),
+    };
+  }
+
   function resize() {
     const rect = canvas.getBoundingClientRect();
     W = Math.max(1, rect.width);
@@ -1295,6 +1357,7 @@
     layoutControls();
     dirty = true;
     requestFrame();
+    if (pip && !pip.hidden) placePip();
     if (!entered) {
       entered = true;
       enterT = 0;
@@ -1312,6 +1375,16 @@
   const keyDpad = { up: false, down: false, left: false, right: false };
   let hudPointer = null;
   let lastRumbleAt = 0;
+  let lastRumbleLevel = -1;
+
+  function cancelRumble() {
+    lastRumbleLevel = -1;
+    try {
+      if ("vibrate" in navigator) navigator.vibrate(0);
+    } catch (_error) {
+      /* ignore */
+    }
+  }
 
   let editNode = null;
   let editPointer = null;
@@ -1527,7 +1600,7 @@
     }
   }
 
-  function padUp(event) {
+  function padUp(event, cancelled = false) {
     const { x, y } = localPoint(event);
     const id = event.pointerId;
 
@@ -1536,7 +1609,9 @@
       hudPressed = false;
       dirty = true;
       requestFrame();
-      if (x >= hud.x && x <= hud.x + hud.w && y >= hud.y && y <= hud.y + hud.h) {
+      // An iOS interruption sends pointercancel, not a completed tap. Never
+      // treat that as the user opening CONTROL CENTRE.
+      if (!cancelled && x >= hud.x && x <= hud.x + hud.w && y >= hud.y && y <= hud.y + hud.h) {
         openSettings();
       }
       return;
@@ -1830,12 +1905,39 @@
 
   const finishPointer = (event) => {
     if (editMode) editUp(event);
-    else padUp(event);
+    else padUp(event, event.type === "pointercancel");
   };
   canvas.addEventListener("pointerup", finishPointer);
   canvas.addEventListener("pointercancel", finishPointer);
   canvas.addEventListener("lostpointercapture", finishPointer);
   canvas.addEventListener("contextmenu", (event) => event.preventDefault());
+
+  // iOS 12 and older have no Pointer Events. Translate native touch events
+  // into the same small shape the pointer handlers use so the pad, stick
+  // dragging and layout editing still work. Newer Safari uses the pointer path
+  // above; registering both there would apply every touch twice.
+  if (!window.PointerEvent) {
+    const asPointer = (touch, type) => ({
+      pointerId: touch.identifier,
+      clientX: touch.clientX,
+      clientY: touch.clientY,
+      type,
+      preventDefault() {},
+    });
+    const dispatch = (handler) => (event) => {
+      event.preventDefault();
+      for (const touch of Array.from(event.changedTouches || [])) {
+        handler(asPointer(touch, event.type), event.type);
+      }
+    };
+    const down = (point) => (editMode ? editDown(point) : padDown(point));
+    const move = (point) => (editMode ? editMove(point) : padMove(point));
+    const up = (point, type) => (editMode ? editUp(point) : padUp(point, type === "touchcancel"));
+    canvas.addEventListener("touchstart", dispatch(down), { passive: false });
+    canvas.addEventListener("touchmove", dispatch(move), { passive: false });
+    canvas.addEventListener("touchend", dispatch(up), { passive: false });
+    canvas.addEventListener("touchcancel", dispatch(up), { passive: false });
+  }
 
   // ----------------------------------------------------------------- keyboard
   const keyButtons = {
@@ -1924,6 +2026,7 @@
   window.addEventListener("blur", resetInputs);
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) resetInputs();
+    else wakeSocket();
   });
 
   // ------------------------------------------------------------------ network
@@ -1937,9 +2040,12 @@
   let maxPlayers = MAX_PLAYERS;
   let screenAvailable = false;
   let assignedSlot = 0;
+  let partyLocked = false;
+  let isHost = false;
   let lastSnapshot = "";
   let lastSentAt = 0;
   let lastPingAt = 0;
+  let lastPongAt = 0;
   let lastRtt = -1;
   let rttHistory = [];
   // Pad swap: pendingSwap is the pad we asked for, swapPromptId the request
@@ -1969,7 +2075,10 @@
     }
     const name = serverName || location.hostname;
     const rtt = lastRtt >= 0 ? `  \u00b7  ${lastRtt} ms` : "";
-    setStatus(`${name}  \u00b7  P${assignedSlot}${rtt}`, STATUS_OK);
+    const party = partyLocked
+      ? (isHost ? "  \u00b7  HOST \u00b7 LOCK" : "  \u00b7  LOCK")
+      : (isHost ? "  \u00b7  HOST" : "");
+    setStatus(`${name}  \u00b7  P${assignedSlot}${party}${rtt}`, STATUS_OK);
   }
 
   function openSocket() {
@@ -1995,6 +2104,7 @@
       lastSnapshot = "";
       lastSentAt = 0;
       lastPingAt = 0;
+      lastPongAt = Date.now();
       updateStatus();
       syncSheet();
     });
@@ -2013,14 +2123,18 @@
         serverName = String(message.n || "lemoGamePad").slice(0, 32);
         maxPlayers = Math.max(1, Math.min(MAX_PLAYERS, Number(message.max) || MAX_PLAYERS));
         screenAvailable = Boolean(message.screen);
+        partyLocked = Boolean(message.locked);
+        isHost = Boolean(message.host);
         updateStatus();
         syncSheet();
+        syncSlotChips();
       } else if (message.t === "s") {
         assignedSlot = Math.max(0, Number(message.n) || 0);
         updateStatus();
         refreshSlotChips();
         syncStatus();
       } else if (message.t === "q") {
+        lastPongAt = Date.now();
         if (typeof message.c === "number") {
           const sample = Math.max(0, Date.now() - message.c);
           if (sample < 60000) {
@@ -2037,6 +2151,15 @@
             syncStatus();
           }
         }
+        if (typeof message.lock === "boolean" || typeof message.host === "boolean") {
+          const nextLocked = Boolean(message.lock);
+          const nextHost = Boolean(message.host);
+          if (nextLocked !== partyLocked || nextHost !== isHost) {
+            partyLocked = nextLocked;
+            isHost = nextHost;
+            syncSlotChips();
+          }
+        }
         updateStatus();
         syncStatus();
       } else if (message.t === "r") {
@@ -2045,6 +2168,18 @@
         showSwapPrompt(Number(message.id) || 0, Number(message.f) || 0);
       } else if (message.t === "sr") {
         handleSwapResult(message);
+      } else if (message.t === "ps") {
+        const nextLocked = Boolean(message.on);
+        const nextHost = Boolean(message.host);
+        const changed = nextLocked !== partyLocked || nextHost !== isHost;
+        partyLocked = nextLocked;
+        isHost = nextHost;
+        if (changed) {
+          if (!partyLocked) clearPendingSwap();
+          updateStatus();
+          syncSlotChips();
+          if (partyLocked && !isHost) hideSwapPrompt();
+        }
       }
     });
 
@@ -2053,6 +2188,8 @@
       socket = null;
       connected = false;
       assignedSlot = 0;
+      partyLocked = false;
+      isHost = false;
       lastSnapshot = "";
       resetSwapState();
       updateStatus();
@@ -2096,33 +2233,107 @@
     }, delay);
   }
 
+  // A sleeping iPhone can freeze the WebSocket without a close event. When the
+  // page wakes, reconnect if pings stopped arriving a while ago.
+  function wakeSocket() {
+    if (manualOffline) return;
+    if (!connected) {
+      openSocket();
+    } else if (Date.now() - lastPongAt > 12000) {
+      dropSocket();
+      openSocket();
+    }
+  }
+
+  window.addEventListener("pageshow", wakeSocket);
+  window.addEventListener("online", wakeSocket);
+
+  // iPhone Safari has no Vibration API. A quiet Web Audio cue keeps rumble
+  // meaningful there. Safari only allows audio after a gesture, so the context
+  // is created/resumed from the first real tap or key press.
+  let rumbleAudio = null;
+
+  function soundCueAvailable() {
+    return prefs.haptics && prefs.gameRumble && prefs.soundCue && !("vibrate" in navigator);
+  }
+
+  function unlockRumbleAudio() {
+    if (!soundCueAvailable()) return;
+    try {
+      const Audio = window.AudioContext || window.webkitAudioContext;
+      if (!Audio) return;
+      if (!rumbleAudio) rumbleAudio = new Audio();
+      if (rumbleAudio.state === "suspended") rumbleAudio.resume();
+    } catch (_error) {
+      rumbleAudio = null;
+    }
+  }
+
+  function playRumbleCue(level) {
+    if (!soundCueAvailable() || !rumbleAudio || rumbleAudio.state !== "running") return;
+    try {
+      const now = rumbleAudio.currentTime;
+      const duration = 0.045 + level * 0.075;
+      const osc = rumbleAudio.createOscillator();
+      const gain = rumbleAudio.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(80 + level * 45, now);
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.exponentialRampToValueAtTime(0.02 + level * 0.05, now + 0.008);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+      osc.connect(gain);
+      gain.connect(rumbleAudio.destination);
+      osc.start(now);
+      osc.stop(now + duration + 0.02);
+    } catch (_error) {
+      /* audio is a nicety; never let a failed cue break input */
+    }
+  }
+
+  document.addEventListener("pointerdown", unlockRumbleAudio, { capture: true });
+  document.addEventListener("keydown", unlockRumbleAudio, { capture: true });
+
   function vibrateRumble(small, large) {
-    if (!prefs.haptics || prefs.strength <= 0) return;
-    if (!("vibrate" in navigator)) return;
-    const strength = Math.max(Number(small) || 0, Number(large) || 0);
-    if (strength <= 0) {
-      try {
-        navigator.vibrate(0);
-      } catch (_error) {
-        /* ignore */
-      }
+    if (!prefs.haptics || !prefs.gameRumble || prefs.strength <= 0) {
+      cancelRumble();
+      return;
+    }
+    // XInput has a light and a heavy motor; a phone has one. Combine both so a
+    // two-motor game effect does not get flattened into whichever is louder.
+    const s = Math.min(255, Math.max(0, Number(small) || 0));
+    const l = Math.min(255, Math.max(0, Number(large) || 0));
+    const amp = Math.min(255, Math.max(s, l) + Math.floor(Math.min(s, l) / 2));
+    const level = (amp / 255) * (prefs.strength / 100);
+    if (level <= 0) {
+      cancelRumble();
       return;
     }
     const now = Date.now();
-    if (now - lastRumbleAt < 80) return;
+    const changed = Math.abs(level - lastRumbleLevel) >= 0.04;
+    lastRumbleLevel = level;
+    if (!("vibrate" in navigator)) {
+      // Repeating the same tone on every keepalive would be a beep storm.
+      if (changed || now - lastRumbleAt >= 400) {
+        playRumbleCue(level);
+        lastRumbleAt = now;
+      }
+      return;
+    }
+    // The server refreshes a live level every 500 ms. Extending a single
+    // vibration past that gap keeps it smooth instead of pulsing twice a second.
+    if (!changed && now - lastRumbleAt < 400) return;
     lastRumbleAt = now;
-    const scaled = (strength / 255) * (prefs.strength / 100);
     try {
-      navigator.vibrate(Math.max(30, Math.round(scaled * 180)));
+      navigator.vibrate(Math.max(120, Math.round(level * 700)));
     } catch (_error) {
       /* ignore */
     }
   }
 
   function inputTick() {
-    if (!socket || socket.readyState !== WebSocket.OPEN) return;
     const now = performance.now();
     const state = snapshot();
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
     const payload = JSON.stringify({ t: "i", ...state });
     const interval = prefs.rate === "turbo" ? 16 : prefs.rate === "standard" ? 250 : 1000;
     if (payload !== lastSnapshot || now - lastSentAt >= interval) {
@@ -2160,6 +2371,7 @@
   const serverLine = $("#server-line");
   const slotRow = $("#slot-row");
   const slotLine = $("#slot-line");
+  const partyLockBtn = $("#party-lock-btn");
   const themeGrid = $("#theme-grid");
   const layoutList = $("#layout-list");
   const layoutSummary = $("#layout-summary");
@@ -2180,9 +2392,79 @@
   let sheetOpen = false;
   let sheetCloseTimer = 0;
 
+  // Control Centre navigation. Groups stay mounted (live controls keep their
+  // callbacks); only visibility changes, and each group remembers its scroll.
+  const sheetBody = $("#settings .sheet-body");
+  const sheetGroups = Array.from(document.querySelectorAll(".sheet-group"));
+  const jumpButtons = Array.from(document.querySelectorAll("#sheet-jump button"));
+  const densityToggle = $("#density-toggle");
+  const sheetScrollMemory = new Array(5).fill(0);
+  let activeGroup = prefs.sheetGroup;
+  try {
+    const saved = JSON.parse(readPref(PREF.sheetScroll, "[]"));
+    if (Array.isArray(saved)) {
+      saved.slice(0, sheetScrollMemory.length).forEach((value, index) => {
+        if (Number.isFinite(Number(value))) sheetScrollMemory[index] = Math.max(0, Number(value));
+      });
+    }
+  } catch (_error) {
+    /* a corrupt scroll cache is not worth resetting the whole sheet */
+  }
+
+  function rememberSheetScroll() {
+    sheetScrollMemory[activeGroup] = sheetBody.scrollTop;
+  }
+
+  function applyDense() {
+    sheetBody.classList.toggle("dense", prefs.dense);
+    densityToggle.textContent = prefs.dense ? "FULL" : "DENSE";
+    densityToggle.classList.toggle("on", prefs.dense);
+    densityToggle.setAttribute("aria-pressed", prefs.dense ? "true" : "false");
+  }
+
+  function selectSheetGroup(index) {
+    if (!sheetGroups.length) return;
+    rememberSheetScroll();
+    try {
+      writePref(PREF.sheetScroll, JSON.stringify(sheetScrollMemory));
+    } catch (_error) {
+      /* private mode: keep the session cache only */
+    }
+    activeGroup = Math.max(0, Math.min(sheetGroups.length - 1, Number(index) || 0));
+    sheetGroups.forEach((group, i) => {
+      group.hidden = i !== activeGroup;
+    });
+    jumpButtons.forEach((button) => {
+      const on = Number(button.dataset.group) === activeGroup;
+      button.classList.toggle("on", on);
+      button.setAttribute("aria-pressed", on ? "true" : "false");
+    });
+    // Restart the short entrance on the newly visible group. The cards stay
+    // mounted; only the wrapper animates, so controls and scroll state survive.
+    const visibleGroup = sheetGroups[activeGroup];
+    visibleGroup.classList.remove("enter");
+    void visibleGroup.offsetWidth;
+    visibleGroup.classList.add("enter");
+    prefs.sheetGroup = activeGroup;
+    savePref(PREF.sheetGroup, activeGroup);
+    requestAnimationFrame(() => {
+      sheetBody.scrollTop = sheetScrollMemory[activeGroup] || 0;
+    });
+  }
+
+  function quickJump(group, cardId) {
+    selectSheetGroup(group);
+    requestAnimationFrame(() => {
+      const card = document.getElementById(cardId);
+      if (card) card.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }
+
   function openSettings() {
     clearTimeout(sheetCloseTimer);
     sheetOpen = true;
+    applyDense();
+    selectSheetGroup(activeGroup);
     syncSheet();
     scrim.hidden = false;
     requestAnimationFrame(() => scrim.classList.add("show"));
@@ -2400,10 +2682,11 @@
     clearPendingSwap();
     if (code === 1) {
       if (slot > 0) {
-        // Keep the new seat in both the preference and the live status so the
-        // next input frame cannot claim the old pad.
+        // Keep the new seat in the live status so the next input frame cannot
+        // claim the old pad. A guest QR tab stays temporary: do not turn its
+        // assigned seat into a permanent preference.
         prefs.slot = slot;
-        savePref(PREF.slot, slot);
+        if (!AUTO_JOIN) savePref(PREF.slot, slot);
         assignedSlot = slot;
         lastSnapshot = "";
         toast(`Swapped \u2014 now P${slot}`);
@@ -2417,7 +2700,7 @@
     } else if (code === 3) {
       toast(`No answer \u2014 staying on P${assignedSlot}`);
     } else if (code === 4) {
-      toast(`That player left \u2014 staying on P${assignedSlot}`);
+      toast(`Seat unavailable \u2014 party may be locked`);
     }
     refreshSlotChips();
     syncSlotChips();
@@ -2440,6 +2723,7 @@
   }
 
   function refreshSlotChips() {
+    const lockedForGuest = partyLocked && !isHost;
     for (const button of slotRow.querySelectorAll("[data-slot]")) {
       const slot = Number(button.dataset.slot);
       const selected = slot === prefs.slot;
@@ -2448,14 +2732,22 @@
       button.classList.toggle("on", selected);
       button.classList.toggle("assigned", isAssigned && !selected);
       button.classList.toggle("pending", isPending && !selected);
+      button.classList.toggle("locked", lockedForGuest);
       button.setAttribute("aria-pressed", selected ? "true" : "false");
+      button.setAttribute("aria-disabled", lockedForGuest ? "true" : "false");
     }
   }
 
   function syncSlotChips() {
     refreshSlotChips();
+    partyLockBtn.hidden = !connected || !isHost;
+    partyLockBtn.textContent = partyLocked ? "UNLOCK PARTY" : "LOCK PARTY";
     if (!connected) {
       slotLine.textContent = "Waiting for the PC\u2026";
+    } else if (partyLocked && !isHost) {
+      slotLine.textContent = "Party locked \u2014 your seat is frozen.";
+    } else if (partyLocked && isHost) {
+      slotLine.textContent = "Party locked \u2014 you can still change seats.";
     } else if (assignedSlot <= 0) {
       slotLine.textContent = "Waiting for the PC to assign a pad\u2026";
     } else if (pendingSwap > 0) {
@@ -2471,6 +2763,10 @@
 
   function chooseSlot(slot) {
     const wanted = Math.max(0, Math.min(MAX_PLAYERS, slot));
+    if (connected && partyLocked && !isHost) {
+      toast("Party locked by the host");
+      return;
+    }
     // Moving onto another player's pad needs their consent. Do not change the
     // preference yet: a decline must leave this tab exactly where it was.
     if (connected && assignedSlot > 0 && wanted !== 0 && wanted !== assignedSlot) {
@@ -2555,6 +2851,8 @@
   const curveEl = $("#curve");
   const curveLabel = $("#curve-label");
   const hapticsToggle = $("#haptics-toggle");
+  const gameRumbleToggle = $("#game-rumble-toggle");
+  const soundCueToggle = $("#sound-cue-toggle");
   const motionToggle = $("#motion-toggle");
   const strengthEl = $("#strength");
   const strengthLabel = $("#strength-label");
@@ -2567,6 +2865,12 @@
     hapticsToggle.textContent = prefs.haptics ? "ON" : "OFF";
     hapticsToggle.classList.toggle("on", prefs.haptics);
     hapticsToggle.setAttribute("aria-pressed", prefs.haptics ? "true" : "false");
+    gameRumbleToggle.textContent = prefs.gameRumble ? "ON" : "OFF";
+    gameRumbleToggle.classList.toggle("on", prefs.gameRumble);
+    gameRumbleToggle.setAttribute("aria-pressed", prefs.gameRumble ? "true" : "false");
+    soundCueToggle.textContent = prefs.soundCue ? "ON" : "OFF";
+    soundCueToggle.classList.toggle("on", prefs.soundCue);
+    soundCueToggle.setAttribute("aria-pressed", prefs.soundCue ? "true" : "false");
     motionToggle.textContent = prefs.motion ? "ON" : "OFF";
     motionToggle.classList.toggle("on", prefs.motion);
     motionToggle.setAttribute("aria-pressed", prefs.motion ? "true" : "false");
@@ -2615,6 +2919,22 @@
     hapticsToggle.addEventListener("click", () => {
       prefs.haptics = !prefs.haptics;
       savePref(PREF.haptics, prefs.haptics);
+      if (!prefs.haptics) cancelRumble();
+      syncControls();
+    });
+
+    gameRumbleToggle.addEventListener("click", () => {
+      prefs.gameRumble = !prefs.gameRumble;
+      savePref(PREF.gameRumble, prefs.gameRumble);
+      if (!prefs.gameRumble) cancelRumble();
+      else unlockRumbleAudio();
+      syncControls();
+    });
+
+    soundCueToggle.addEventListener("click", () => {
+      prefs.soundCue = !prefs.soundCue;
+      savePref(PREF.soundCue, prefs.soundCue);
+      unlockRumbleAudio();
       syncControls();
     });
 
@@ -2689,6 +3009,61 @@
       const scale = Math.trunc(node.scale * 1000);
       return `${node.key}:${fx},${fy},${scale},${node.hidden ? 1 : 0}`;
     }).join(";");
+  }
+
+  // Same three-line payload Android renders as a QR. Keeping the format shared
+  // means a browser code scans on a phone and a phone QR pastes into the pad.
+  const LAYOUT_SHARE_PREFIX = "LMGB-LAYOUT-1";
+
+  function buildLayoutShare() {
+    const name = (activeLayout || "SHARED").replace(/\n/g, " ").trim().slice(0, 40) || "SHARED";
+    return `${LAYOUT_SHARE_PREFIX}\n${name}\n${layoutSnapshot()}`;
+  }
+
+  function parseLayoutShare(text) {
+    const parts = String(text || "").trim().split("\n", 3);
+    if (parts.length !== 3 || parts[0] !== LAYOUT_SHARE_PREFIX) return null;
+    const name = parts[1].trim().slice(0, 40) || "SHARED";
+    const data = parts[2].trim();
+    if (!data.includes(":") || !data.includes(",")) return null;
+    return { name, data };
+  }
+
+  function importSharedLayout(shared) {
+    const index = layouts.findIndex((entry) => entry.name.toLowerCase() === shared.name.toLowerCase());
+    const entry = {
+      name: index >= 0 ? layouts[index].name : shared.name,
+      data: shared.data,
+    };
+    if (index >= 0) layouts[index] = entry;
+    else layouts.push(entry);
+    activeLayout = entry.name;
+    saveLayoutStore();
+    writePref(PREF.layout, entry.data);
+    applyLayout(entry.data);
+    syncLayouts();
+    return index >= 0;
+  }
+
+  function consumeLayoutLink() {
+    if (!location.hash.startsWith("#layout=")) return;
+    let shared = null;
+    try {
+      shared = parseLayoutShare(decodeURIComponent(location.hash.slice(8)));
+    } catch (_error) {
+      shared = null;
+    }
+    try {
+      history.replaceState(null, "", location.pathname + location.search);
+    } catch (_error) {
+      /* some embedded webviews disallow history edits; the import still worked */
+    }
+    if (!shared) {
+      toast("That layout link is invalid");
+      return;
+    }
+    const replaced = importSharedLayout(shared);
+    toast(replaced ? `Layout "${shared.name}" updated` : `Layout "${shared.name}" imported`);
   }
 
   function applyLayout(data) {
@@ -2830,6 +3205,41 @@
     });
     $("#save-layout").addEventListener("click", saveLayoutAs);
 
+    $("#share-layout-code").addEventListener("click", () => {
+      const code = buildLayoutShare();
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(code).catch(() => {});
+      }
+      showDialog({
+        eyebrow: "LAYOUT",
+        title: "SHARE LAYOUT",
+        message: "Copy this code, or paste it into another browser. Android can scan the same text as a QR.",
+        input: true,
+        value: code,
+        ok: "DONE",
+      });
+    });
+
+    $("#import-layout-code").addEventListener("click", () => {
+      showDialog({
+        eyebrow: "LAYOUT",
+        title: "IMPORT LAYOUT",
+        message: "Paste a SHARE CODE or a layout QR's text.",
+        input: true,
+        value: "",
+        ok: "IMPORT",
+        onOk: (raw) => {
+          const shared = parseLayoutShare(raw);
+          if (!shared) {
+            toast("That is not a layout code");
+            return;
+          }
+          const replaced = importSharedLayout(shared);
+          toast(replaced ? `Layout "${shared.name}" updated` : `Layout "${shared.name}" imported`);
+        },
+      });
+    });
+
     for (const button of document.querySelectorAll("[data-edit]")) {
       button.addEventListener("click", () => {
         const action = button.dataset.edit;
@@ -2896,10 +3306,17 @@
       requestAnimationFrame(placePip);
       return;
     }
+    const safe = safeInsets();
     const fx = Number.isFinite(prefs.screenX) ? prefs.screenX : 0.5;
     const fy = Number.isFinite(prefs.screenY) ? prefs.screenY : 0.3;
-    const left = Math.max(4, Math.min(W - width - 4, fx * W - width / 2));
-    const top = Math.max(4, Math.min(H - height - 4, fy * H - height / 2));
+    // W/H describe the safe-area canvas; the preview is positioned in the
+    // full viewport, so add the origin back before clamping.
+    const minLeft = 4 + safe.left;
+    const minTop = 4 + safe.top;
+    const maxLeft = Math.max(minLeft, W + safe.left - width - 4 - safe.right);
+    const maxTop = Math.max(minTop, H + safe.top - height - 4 - safe.bottom);
+    const left = Math.max(minLeft, Math.min(maxLeft, safe.left + fx * W - width / 2));
+    const top = Math.max(minTop, Math.min(maxTop, safe.top + fy * H - height / 2));
     pip.style.left = `${Math.round(left)}px`;
     pip.style.top = `${Math.round(top)}px`;
   }
@@ -3225,6 +3642,14 @@
       event.stopPropagation();
       answerSwap(false);
     });
+    partyLockBtn.addEventListener("click", () => {
+      if (!isHost || !socket || socket.readyState !== WebSocket.OPEN) return;
+      try {
+        socket.send(JSON.stringify({ t: "lock", on: partyLocked ? 0 : 1 }));
+      } catch (_error) {
+        /* the close handler reconnects */
+      }
+    });
 
     pip.addEventListener("pointerdown", (event) => {
       if (event.target.closest("#pip-close")) return;
@@ -3235,6 +3660,8 @@
         id: event.pointerId,
         dx: event.clientX - rect.left,
         dy: event.clientY - rect.top,
+        width: rect.width,
+        height: rect.height,
         moved: false,
       };
       try {
@@ -3247,8 +3674,8 @@
     pip.addEventListener("pointermove", (event) => {
       if (!pipDrag || event.pointerId !== pipDrag.id) return;
       event.preventDefault();
-      const width = pip.offsetWidth;
-      const height = pip.offsetHeight;
+      const width = pipDrag.width;
+      const height = pipDrag.height;
       const left = Math.max(4, Math.min(W - width - 4, event.clientX - pipDrag.dx));
       const top = Math.max(4, Math.min(H - height - 4, event.clientY - pipDrag.dy));
       if (!pipDrag.moved && Math.hypot(left - parseFloat(pip.style.left || "0"), top - parseFloat(pip.style.top || "0")) > 6) {
@@ -3261,9 +3688,9 @@
     const pipUp = (event) => {
       if (!pipDrag || event.pointerId !== pipDrag.id) return;
       const wasMoved = pipDrag.moved;
+      const width = pipDrag.width;
+      const height = pipDrag.height;
       pipDrag = null;
-      const width = pip.offsetWidth;
-      const height = pip.offsetHeight;
       prefs.screenX = (parseFloat(pip.style.left || "0") + width / 2) / Math.max(1, W);
       prefs.screenY = (parseFloat(pip.style.top || "0") + height / 2) / Math.max(1, H);
       savePref(PREF.screenX, prefs.screenX);
@@ -3323,6 +3750,35 @@
 
   function bindDialogs() {
     $("#settings-close").addEventListener("click", closeSettings);
+
+    jumpButtons.forEach((button) => {
+      button.addEventListener("click", () => selectSheetGroup(Number(button.dataset.group)));
+    });
+    for (const button of document.querySelectorAll("[data-quick]")) {
+      button.addEventListener("click", () => {
+        const action = button.dataset.quick;
+        if (action === "connect") {
+          connectBtn.click();
+        } else if (action === "slot") {
+          quickJump(0, "card-connection");
+        } else if (action === "stick") {
+          quickJump(1, "card-controls");
+        } else if (action === "theme") {
+          quickJump(2, "card-appearance");
+        } else if (action === "screen") {
+          quickJump(4, "card-screen");
+        }
+      });
+    }
+    densityToggle.addEventListener("click", () => {
+      prefs.dense = !prefs.dense;
+      savePref(PREF.dense, prefs.dense);
+      applyDense();
+    });
+    sheetBody.addEventListener("scroll", rememberSheetScroll, { passive: true });
+    applyDense();
+    selectSheetGroup(activeGroup);
+
     // Close on pointerdown, not click. The sheet is opened from the pad's
     // pointerup handler, and the browser dispatches a compatibility click for
     // that same tap afterwards. By then the scrim is visible but the sheet is
@@ -3437,6 +3893,8 @@
     area.value = text;
     area.style.position = "fixed";
     area.style.opacity = "0";
+    area.style.fontSize = "16px"; // iOS zooms the page for smaller inputs
+    area.readOnly = true;
     document.body.appendChild(area);
     area.select();
     let ok = false;
@@ -3467,6 +3925,7 @@
     bindDialogs();
     applyCssTheme(themeNow);
     applyMotionPref();
+    consumeLayoutLink();
     resize();
     syncScreen();
 

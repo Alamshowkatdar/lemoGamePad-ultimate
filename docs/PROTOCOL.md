@@ -26,15 +26,25 @@
   consent request, and the move happens only after Accept. Requests are retried
   on later packets so the phone moves as soon as the wanted pad frees up. The
   server reports the pad it actually assigned in every `PONG`.
-- Rumble: the virtual pad reports its motor speeds (ViGEmBus about once a second
-  and on every change; evdev on each force-feedback event). The server forwards
-  them as type-7 packets **to that slot's phone only**, dropping repeats, and the
-  phone keeps pulsing its vibration motor while they stay above zero.
+- Party lock is a host-only brake on those seat changes. The first registered
+  peer becomes the host and may send type 12 with a `1`/`0` flag. While locked,
+  the server refuses `want_pad` moves, swap requests and swap votes from every
+  other peer, but input is never paused and brand-new peers may still claim a
+  free pad. `PONG` carries the lock and host bits so phones can dim the slot
+  chips and reveal the host control. If the host drops, the lowest remaining
+  token inherits the role and the lock is cleared.
+- Rumble: the virtual pad reports its light and heavy motor speeds (ViGEmBus on
+  every change; evdev on each force-feedback event). The server forwards them as
+  type-7 packets **to that slot's phone only**, dropping game-driven repeats. A
+  non-zero level is then refreshed every 500 ms so a long game effect survives a
+  lost packet. The phone sustains one continuous vibration whose amplitude
+  combines both motors and stops immediately on a zero level.
 - Screen preview: a TCP server on control port + 1 sends
   `u32 big-endian length + JPEG bytes` frames; the phone decodes them into the PiP
   view.
-- QR pairing payload: `vpad://connect?h=<ip>&p=<port>&n=<hostname>`. The app also
-  accepts plain `1.2.3.4:9876` text.
+- QR pairing payload: `vpad://connect?h=<ip>&p=<port>&n=<hostname>`. Guest
+  codes append `&a=1`, which makes the app force AUTO so the PC assigns the next
+  free pad. The app also accepts plain `1.2.3.4:9876` text.
 
 ### Browser pad transport
 
@@ -60,6 +70,11 @@ PC serves a page on TCP control port + 2 and accepts a WebSocket at `/ws?k=<key>
   are `1 ACCEPTED`, `2 DECLINED`, `3 TIMEOUT`, `4 UNAVAILABLE`,
   `5 CANCELLED`. A free pad moves immediately without an ask; duplicate asks
   and results are ignored by id.
+- The host sends `{"t":"lock","on":1|0}` to freeze or release seat changes.
+  Every tab receives `{"t":"ps","on":1|0,"host":true|false}` on a change;
+  `hello` and `q` also carry the current `locked` / `host` state (`q` uses the
+  short key `lock`) so late joiners see the role. Locking never pauses input or
+  new joins.
 - Rumble: `{"t":"r","s":<small>,"l":<large>}` replaces the type-7 UDP packet for
   that peer; it is routed to the browser tab instead of an address.
 - The server assigns each WebSocket a fresh token and feeds it through the same
@@ -79,15 +94,18 @@ type 3 OFFER   : header + name_len u8 + name + pad_type u8
 type 5 PING    : header + client_clock u32
 type 6 PONG    : echo of PING + loss_permille u16 (1.4+)
                  + assigned_pad u8 (1.5+)
+                  + party_locked u8 + is_host u8 (party lock)
 type 7 RUMBLE  : header + small u8 + large u8
 type 8 SLOT_REQUEST : header + target pad u8 (1..8)            (1.6.9+)
 type 9 SLOT_ASK     : header + request_id u32 + requester pad u8
 type 10 SLOT_VOTE   : header + request_id u32 + accept u8
 type 11 SLOT_RESULT : header + request_id u32 + result u8 + pad u8
+type 12 PARTY_LOCK  : header + locked u8 (1 = lock, 0 = unlock; host only)
 ```
 
-Types 8–11 are additive. `VERSION` stays 1: an older app ignores the new types,
-and a request to one simply times out. Result codes are `1 ACCEPTED`,
+Types 8–12 are additive. `VERSION` stays 1: an older app ignores the new types,
+and a request to one simply times out. The two extra `PONG` bytes are likewise
+ignored by old apps, which stop reading after the assigned-pad byte. Result codes are `1 ACCEPTED`,
 `2 DECLINED`, `3 TIMEOUT`, `4 UNAVAILABLE`, `5 CANCELLED`.
 
 Button bits: Select 0, L3 1, R3 2, Start 3, Up 4, Right 5, Down 6, Left 7,

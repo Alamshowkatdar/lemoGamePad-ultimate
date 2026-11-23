@@ -2,6 +2,118 @@
 
 Newest first. The reasoning behind each release is in [`docs/REVIEW.md`](docs/REVIEW.md).
 
+## 2.1.0
+
+- **Fixed a rumble stop race and tightened party lock.** A delayed refresh can
+  no longer re-send an old motor level after the game has stopped, and a lock
+  command can no longer lose a race with a swap request or leave a stale Accept
+  prompt on the target's phone. The lock button now waits for the PC's confirmed
+  state instead of guessing.
+- **Trimmed hot-path allocations.** Reused UDP packet wrappers on Android, a
+  growable screen-frame buffer, one QR pixel array, the browser PiP drag size,
+  and the WebSocket unmask buffer on the PC. Guest QR tabs no longer save a
+  swapped seat as a permanent preference.
+- **Game rumble now follows the game instead of a fixed pulse.** Both XInput
+  motor levels are combined into one continuous vibration, a zero level stops it
+  immediately, and the server refreshes live levels so long effects survive a
+  lost packet. The browser does the same with a longer sustained vibration.
+  **Vibration from games** is now a separate on/off switch on Android and in the
+  browser, so button-click haptics can stay on while game force feedback is
+  silenced. Game profiles remember the choice.
+- **Party lock keeps the lineup stable.** The first connected controller is the
+  host and gets a **LOCK PARTY** / **UNLOCK PARTY** control in the Android LINK
+  card and browser CONNECTION card. While locked, other players cannot move to a
+  different pad or ask for a swap, but their inputs keep flowing and late guests
+  can still claim a free pad. The host can still rearrange seats, and the lock
+  is released automatically if the host disconnects.
+- **Guest QR join adds players without setup.** The server now prints a second
+  `lemoGamePad-guest-qr-*.png` code (plus a browser guest variant with
+  `&auto=1`). Scanning it puts that device in AUTO and the PC assigns the next
+  free pad on the first input packet. A guest code never rewrites the browser
+  tab's stored slot preference.
+- **Layout QR sharing moves a pad between devices.** Android's LAYOUTS card now
+  has **SHARE QR** and **SCAN QR**; the browser LAYOUTS card has **SHARE CODE**
+  and **IMPORT CODE**. Both use one `LMGB-LAYOUT-1` text payload, so a browser
+  code scans on a phone and a phone QR pastes into the browser. The browser also
+  accepts a `#layout=` link, and Android reuses the bundled ZXing scanner with a
+  layout-specific mode. No server endpoint or cloud service was added.
+- **Removed the Android sheet-height peek.** The `⤢` header control and its
+  dead `sheetExpanded` / `toggleSheetHeight()` path are gone; the header is now
+  just the title, **SETUP**, **?** and **✕**.
+- **Added a guided first-run setup.** New installs pick Wi-Fi, USB, Bluetooth
+  or Web pad and see only the steps for that path. It replaces the old Wi-Fi
+  card and first-run doctor, and can be replayed from **SETUP** in the settings
+  header.
+- **Connection Doctor now runs live checks.** **RUN CHECK** probes the paired
+  PC's video (TCP 9877) and web-pad (TCP 9878) ports on the selected network,
+  alongside Wi-Fi/USB readiness and interface state. The existing single
+  **OPEN WEBSITE** button is unchanged.
+- **Game profiles can be copied, exported and imported.** Each profile has a
+  **COPY** action; **EXPORT** puts a JSON backup on the clipboard and **IMPORT**
+  merges profiles whose names are not already in use.
+- **Saved preferences are validated on startup.** Wrong types, unknown ids and
+  out-of-range values are repaired without clearing valid settings, tokens,
+  layouts or profiles.
+- **Added an offline Help centre.** Global **?** buttons in Settings and
+  Connection Doctor open local, bundled help for setup, links, Bluetooth, aim,
+  profiles, layouts and the preview; every settings card keeps its own **?**
+  help.
+- **Control Centre now uses collapsible categories.** LINK, PAD, BLUETOOTH,
+  STYLE and GAMES are tappable headers; one group opens at a time, and tapping
+  the open header collapses it. The chosen section is remembered, so the
+  setting you want is no longer buried in one long scroll.
+- **Control Centre reads more clearly.** Category rows have a consistent height,
+  a live `LINK UP` / `HID` / `READY` badge, and an accent rail on the open group;
+  card text and buttons have slightly more room and stronger line spacing.
+- **Bluetooth host selection is more accurate.** TVs and monitors now appear
+  alongside PCs and phones, while headsets and speakers are still filtered out.
+  The last host you actually connected to is remembered for picker order and
+  tagged `LAST USED`, but is never connected automatically. Bluetooth-off and
+  permission states now disable the right buttons and explain the reason.
+- **Added a safe route to stop host audio.** Android can connect `Media audio`
+  and `Phone audio` to a bonded HID host by itself; a normal app has no public
+  API to disable those shared profile switches. While a host is connected the
+  Bluetooth card now offers **HOST AUDIO SETTINGS**, which opens that host's
+  Android Bluetooth details page (or the paired-device list on OEM skins) with
+  a reminder to switch both audio profiles off once for that device. The app
+  still only requests HID and never changes audio profiles itself.
+- **iPhone/Safari compatibility pass for the browser pad.** The page now
+  declares Home Screen standalone mode, keeps the pad and preview clear of the
+  notch and home indicator, avoids iOS focus zoom on inputs, enlarges touch
+  targets, suppresses the long-press callout, and no longer opens CONTROL
+  CENTRE when iOS cancels a touch. Safari versions without Pointer Events get a
+  touch-event fallback for the pad, and the screen preview's blob fallback is
+  allowed by the CSP. Gyro/tilt and vibration remain Android-only and are now
+  documented as such.
+- **Home Screen shortcuts survive a server restart.** The new
+  `--web-key-file PATH` reuses the browser pairing key between runs, so an
+  iPhone bookmark with its `?k=` URL keeps working. An explicit `--web-key`
+  still wins, and a missing or corrupt file falls back to a random key.
+- **Rumble has an iPhone fallback.** With **SOUND CUE FALLBACK** on by default,
+  browsers without the Vibration API (iPhone Safari) play a quiet tone scaled
+  by rumble strength instead. Vibration-capable browsers keep using the motor.
+- **The browser pad reconnects after a phone sleeps.** It releases held buttons
+  when hidden and forces a fresh socket on wake, page show or network return if
+  pings have stopped, instead of waiting for a close event that iOS may never
+  send.
+- **Control Centre is now a dashboard, not a scrolling list.** The browser pad
+  gets a pinned quick dock and category rail with per-group scroll memory. The
+  Android sheet uses a compact header plus one six-chip tab row (LINK, PAD, BT,
+  STYLE, GAMES, DENSE), with no separate dock or section headers, so settings
+  start near the top. Cards use one roomy column on phones and two columns on
+  wide browser windows. **DENSE** hides explanatory prose so more controls fit
+  on screen. All of these are shortcuts into the existing live controls — no
+  setting behaviour or wire format changed.
+- **Themes feel alive.** Every palette's press ripple now has a longer, wider
+  signature: pulse breathes with an inner ring, waves spin, halos sweep with a
+  second colour, shocks kick, bursts radiate and step/ripple/void/line read
+  distinctly. The browser sheet also gained a themed gradient, glowing active
+  tabs, animated theme swatches and a short card-group entrance. All of it
+  follows the existing MOTION setting and OFF removes every flourish.
+- **Fixed a Control Centre crash on Android 17.** The removed quick dock and
+  landscape grid used invalid `GridLayout` row/span specs; the new layout uses
+  weighted `LinearLayout` rows and one readable card column.
+
 ## 2.0.3
 
 - **The launcher icon now shows the blue-glass artwork instead of a themed

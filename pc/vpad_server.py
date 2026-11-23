@@ -71,6 +71,7 @@ MSG_SLOT_REQUEST = 8
 MSG_SLOT_ASK = 9
 MSG_SLOT_VOTE = 10
 MSG_SLOT_RESULT = 11
+MSG_PARTY_LOCK = 12
 
 SLOT_ACCEPTED = 1
 SLOT_DECLINED = 2
@@ -556,8 +557,11 @@ class PadSlot:
         self.peer: Optional["Peer"] = None
         self.pad = None  # WindowsVirtualPad or LinuxVirtualPad
         # The pad backend re-reports the current motor speeds periodically, so
-        # keep the last value to avoid duplicate packets to the phone.
+        # keep the last value to avoid duplicate packets to the phone. A per-slot
+        # lock keeps state updates and their outgoing packets in order: a late
+        # refresh must never re-send a level the game has already stopped.
         self.rumble_state = (0, 0)
+        self.rumble_lock = threading.Lock()
 
     def ensure_pad(self):
         if self.pad is None:
@@ -1149,8 +1153,12 @@ class VideoServer:
         finally:
             capture.close()
 
-def qr_payload(ip: str, port: int, name: str) -> str:
-    query = urllib.parse.urlencode({"h": ip, "p": port, "n": name})
+def qr_payload(ip: str, port: int, name: str, auto: bool = False) -> str:
+    values = {"h": ip, "p": port, "n": name}
+    if auto:
+        # Guest code: the app goes to AUTO and the PC picks the next free pad.
+        values["a"] = 1
+    query = urllib.parse.urlencode(values)
     return f"vpad://connect?{query}"
 
 
@@ -1338,6 +1346,8 @@ class Server:
                 on_token=self._new_web_token,
                 on_swap=self._web_swap,
                 on_vote=self._web_vote,
+                on_lock=self._web_lock,
+                party_state=self._party_state,
                 log=self._log,
                 server_name=socket.gethostname()[:32],
                 max_players=self.max_phones,
@@ -1421,6 +1431,10 @@ class Server:
         # not be asked again. Retries already in flight must not reopen a
         # popup that was just declined.
         self._swap_cooldown: dict[tuple[int, int], float] = {}
+        # Party lock is a host-only brake on seat changes. New guests may still
+        # claim a free pad; only moves/swaps by non-hosts are refused.
+        self.locked = False
+        self.host_token: Optional[int] = None
 
     @staticmethod
     def _pack_addresses(addresses) -> list:
@@ -1580,21 +1594,25 @@ class Server:
                 # after that a deliberate request for the old pad is valid.
                 if now >= peer.stale_until:
                     peer.stale_slot = 0
-                if 1 <= want_slot <= self.max_phones:
-                    if want_slot == peer.stale_slot:
-                        # Frame written before the swap result reached the
-                        # phone; honouring it would undo the move.
-                        pass
-                    elif now < peer.move_guard:
-                        pass
-                    else:
-                        index = want_slot - 1
-                        if self.slots[index].peer is None:
-                            old = self._slot_of(peer)
-                            # Use the same guarded path as swap/consent moves so
-                            # stale frames and move guards behave identically.
-                            if self._move_peer_locked(peer, index):
-                                moved_from = old.index if old is not None else -1
+                # The host can still rearrange seats while the party is locked;
+                # everyone else keeps the pad they already have. New guests are
+                # handled below and may still claim a free pad.
+                if not (self.locked and token != self.host_token):
+                    if 1 <= want_slot <= self.max_phones:
+                        if want_slot == peer.stale_slot:
+                            # Frame written before the swap result reached the
+                            # phone; honouring it would undo the move.
+                            pass
+                        elif now < peer.move_guard:
+                            pass
+                        else:
+                            index = want_slot - 1
+                            if self.slots[index].peer is None:
+                                old = self._slot_of(peer)
+                                # Use the same guarded path as swap/consent moves so
+                                # stale frames and move guards behave identically.
+                                if self._move_peer_locked(peer, index):
+                                    moved_from = old.index if old is not None else -1
             else:
                 if len(self.peers) >= self.max_phones:
                     return None, False, "full"
@@ -1624,6 +1642,8 @@ class Server:
                 self.peers[token] = peer
                 self._pads_dirty = True
                 is_new = True
+                if self.host_token is None:
+                    self.host_token = token
 
         # Pad creation/removal happens in the main loop so it cannot race with
         # another assignment. _flush_inputs skips a slot until its pad exists.
@@ -1636,8 +1656,16 @@ class Server:
 
     def _drop_peer(self, peer: Peer) -> None:
         cancelled: list[tuple[Peer, int, int, int]] = []
+        host_left = False
+        host_locked = False
         with self.lock:
             self.peers.pop(peer.token, None)
+            if peer.token == self.host_token:
+                # Never leave the party stuck behind a host that walked away.
+                host_locked = self.locked
+                self.host_token = min(self.peers) if self.peers else None
+                self.locked = False
+                host_left = True
             slot = self._slot_of(peer)
             if slot is not None:
                 slot.reset()
@@ -1656,6 +1684,12 @@ class Server:
         for other, rid, code, slot_index in cancelled:
             self._swap_result(other, rid, code, slot_index)
         self._log(f"controller disconnected: {peer.describe()}")
+        if host_left:
+            if host_locked:
+                self._log("party host left; lock released")
+            # The surviving peer inherits the host role, so browser tabs need
+            # the new flag even when the party was never locked.
+            self._broadcast_party_state()
 
     # --------------------------------------------------------------- browser pad
     def _new_web_token(self) -> int:
@@ -1869,6 +1903,18 @@ class Server:
         if not (1 <= target_slot <= self.max_phones):
             self._cancel_pending(requester)
             return
+        # A locked party refuses seat changes from everyone but the host. Reply
+        # with UNAVAILABLE so the client clears its pending card immediately.
+        with self.lock:
+            locked_for_requester = self.locked and requester.token != self.host_token
+            current = self._slot_of(requester)
+        if locked_for_requester:
+            if current is not None:
+                self._swap_result(
+                    requester, self._next_swap_id(), SLOT_UNAVAILABLE,
+                    current.index + 1,
+                )
+            return
         asks: list[SwapRequest] = []
         results: list[tuple[Peer, int, int, int]] = []
         with self.lock:
@@ -1899,7 +1945,14 @@ class Server:
             # Any pending ask from this player must be withdrawn when the new
             # request is handled, so only one card can ever be on screen.
             requester.stale_slot = 0
-            if target_slot == from_slot:
+            if self.locked and requester.token != self.host_token:
+                # The host may have locked the party after the earlier check.
+                # Re-check here so no seat change is created or applied late.
+                cancel_existing()
+                results.append(
+                    (requester, self._next_swap_id(), SLOT_UNAVAILABLE, from_slot)
+                )
+            elif target_slot == from_slot:
                 cancel_existing()
                 results.append((requester, self._next_swap_id(), SLOT_ACCEPTED,
                                 from_slot))
@@ -1996,6 +2049,8 @@ class Server:
         """Record the target player's answer and, on accept, trade pads."""
         results: list[tuple[Peer, int, int, int]] = []
         with self.lock:
+            if self.locked and voter.token != self.host_token:
+                return
             swap = self._swaps.get(request_id)
             if swap is None or swap.target is not voter:
                 return
@@ -2117,34 +2172,120 @@ class Server:
             return
         self._resolve_swap(voter, int(request_id), bool(accept), time.time())
 
+    # --------------------------------------------------------------- party lock
+    def _party_state(self):
+        """Snapshot consumed by the browser hello and broadcast helper."""
+        with self.lock:
+            return bool(self.locked), self.host_token
+
+    def _broadcast_party_state(self) -> None:
+        web = self.web
+        if web is not None:
+            try:
+                web.broadcast_party(self._party_state())
+            except Exception:
+                pass
+
+    def _set_lock(self, token: int, enabled: bool) -> None:
+        """Toggle the host-only seat lock, cancelling any ask in flight."""
+        cancelled: list[tuple[Peer, int, int, int]] = []
+        changed = False
+        enabled = bool(enabled)
+        with self.lock:
+            if token != self.host_token:
+                return
+            if self.locked != enabled:
+                self.locked = enabled
+                changed = True
+            if enabled:
+                for swap in list(self._swaps.values()):
+                    self._swaps.pop(swap.id, None)
+                    cancelled.append(
+                        (swap.requester, swap.id, SLOT_UNAVAILABLE,
+                         swap.requester.slot + 1)
+                    )
+                    # The target had a live Accept prompt too. Without this it
+                    # could accept a swap the server had already discarded.
+                    cancelled.append(
+                        (swap.target, swap.id, SLOT_CANCELLED,
+                         swap.target.slot + 1)
+                    )
+        for peer, request_id, code, slot in cancelled:
+            self._swap_result(peer, request_id, code, slot)
+        if changed:
+            self._log("party lock on" if enabled else "party lock off")
+        self._broadcast_party_state()
+
+    def _handle_party_lock(self, data: bytes, addr: tuple) -> None:
+        if len(data) < HEADER.size + 1:
+            return
+        token = HEADER.unpack_from(data)[4]
+        enabled = bool(data[HEADER.size] & 1)
+        with self.lock:
+            peer = self.peers.get(token)
+            if peer is None or peer.web_send is not None or peer.addr != addr:
+                return
+        self._set_lock(token, enabled)
+
+    def _web_lock(self, token: int, enabled: bool) -> None:
+        self._set_lock(int(token), bool(enabled))
+
     # ------------------------------------------------------------------- rumble
+    def _send_rumble(self, peer: Peer, small: int, large: int) -> None:
+        """Send one level. Caller holds the slot's rumble lock for ordering."""
+        if peer.web_send is not None:
+            try:
+                peer.web_send(small, large)
+            except Exception:
+                pass
+            return
+        packet = HEADER.pack(MAGIC, VERSION, MSG_RUMBLE, 0, peer.token)
+        packet += bytes([small, large])
+        try:
+            self.sock.sendto(packet, peer.addr)
+        except OSError:
+            pass
+
     def _slot_rumble(self, slot: PadSlot, small: int, large: int) -> None:
         if not self.rumble_enabled:
             return
         small = min(max(int(small), 0), 255)
         large = min(max(int(large), 0), 255)
-        with self.lock:
+        # Keep the state change, peer lookup and send atomic per slot. A game can
+        # report a new level while a refresh is in flight; without this lock the
+        # older packet could arrive after a zero stop and buzz forever.
+        with slot.rumble_lock:
+            # Backends repeat their current level; suppress those copies, but a
+            # refresh reads the state directly and can still re-send a live one.
             if (small, large) == slot.rumble_state:
                 return
             slot.rumble_state = (small, large)
             peer = slot.peer
             if peer is None:
                 return
-            addr = peer.addr
-            token = peer.token
-            web_send = peer.web_send
-        if web_send is not None:
-            try:
-                web_send(small, large)
-            except Exception:
-                pass
+            self._send_rumble(peer, small, large)
+
+    def _refresh_active_rumble(self) -> None:
+        """Re-send every non-zero motor level so a long game effect stays alive.
+
+        The phone treats a gap in these refreshes as a lost link and cancels the
+        motor. Zeros are never refreshed: a stop is a one-shot transition and
+        repeating it would only waste packets. The level is re-read under the
+        slot lock, so a stop that lands during this loop wins.
+        """
+        if not self.rumble_enabled:
             return
-        packet = HEADER.pack(MAGIC, VERSION, MSG_RUMBLE, 0, token)
-        packet += bytes([small, large])
-        try:
-            self.sock.sendto(packet, addr)
-        except OSError:
-            pass
+        with self.lock:
+            slots = tuple(self.slots)
+        for slot in slots:
+            with slot.rumble_lock:
+                small, large = slot.rumble_state
+                if small == 0 and large == 0:
+                    continue
+                peer = slot.peer
+                if peer is None:
+                    continue
+                self._send_rumble(peer, small, large)
 
     # ------------------------------------------------------------------- input
     def _handle_input(self, data: bytes, addr: tuple, now: float) -> None:
@@ -2386,6 +2527,9 @@ class Server:
             return
         if mtype == MSG_SLOT_VOTE:
             self._handle_slot_vote(data, addr, now)
+            return
+        if mtype == MSG_PARTY_LOCK:
+            self._handle_party_lock(data, addr)
 
     def _drain(self, now: float) -> None:
         """
@@ -2410,6 +2554,8 @@ class Server:
         loss_permille = -1
         assigned_slot = 0
         peer_present = False
+        party_locked = 0
+        is_host = 0
         with self.lock:
             peer = self.peers.get(token)
             if peer is not None:
@@ -2429,6 +2575,8 @@ class Server:
                 peer.last_seen = now
                 peer_present = True
                 assigned_slot = peer.slot + 1
+                party_locked = 1 if self.locked else 0
+                is_host = 1 if token == self.host_token else 0
                 received = max(0, peer.packet_count - peer.rate_mark)
                 total = received + peer.lost
                 if total > 0:
@@ -2443,6 +2591,9 @@ class Server:
             # may have been busy). Older apps stop after the clock echo.
             pong += struct.pack("<H", max(0, loss_permille))
             pong += bytes([assigned_slot & 0xFF])
+            # Party state. Old apps stop after the slot byte and ignore these,
+            # just as they did when loss/slot were appended after the clock.
+            pong += bytes([party_locked, is_host])
         try:
             self.sock.sendto(pong, addr)
         except OSError:
@@ -2577,9 +2728,10 @@ class Server:
                 errors.append(message)
         return errors
 
-    def web_url(self, ip: str) -> str:
+    def web_url(self, ip: str, auto: bool = False) -> str:
         key = urllib.parse.quote(self.web_key, safe="")
-        return f"http://{ip}:{self.web_port}/?k={key}"
+        url = f"http://{ip}:{self.web_port}/?k={key}"
+        return f"{url}&auto=1" if auto else url
 
     def _print_banner(self) -> None:
         for line in self._banner_lines():
@@ -2595,29 +2747,52 @@ class Server:
         print()
 
     def _print_qr_codes(self, ips) -> None:
-        """Draw the app and browser pairing codes for [ips]."""
+        """Draw app/browser pairing codes and the guest auto-join variants."""
         if not ips:
             return
-        print_qr(ips[0], self.port, self.hostname, os.getcwd())
+        first = ips[0]
+        safe = first.replace(":", "-").replace(".", "_")
+        print_qr(first, self.port, self.hostname, os.getcwd())
+        print_qr_block(
+            qr_payload(first, self.port, self.hostname, auto=True),
+            os.getcwd(),
+            f"lemoGamePad-guest-qr-{safe}.png",
+            "Guest join link",
+        )
         for extra in ips[1:]:
+            extra_safe = extra.replace(":", "-").replace(".", "_")
             print(f"  Other address: {qr_payload(extra, self.port, self.hostname)}")
+            save_qr_png(
+                qr_payload(extra, self.port, self.hostname, auto=True),
+                os.path.join(os.getcwd(), f"lemoGamePad-guest-qr-{extra_safe}.png"),
+            )
         if self.web is None:
             return
         # The browser pad gets its own scannable code: point any phone camera
-        # at it and the page opens directly.
-        first = ips[0]
-        safe = first.replace(":", "-").replace(".", "_")
+        # at it and the page opens directly. The guest variant lands in AUTO.
         print_qr_block(
             self.web_url(first),
             os.getcwd(),
             f"lemoGamePad-web-qr-{safe}.png",
             "Browser link",
         )
+        print_qr_block(
+            self.web_url(first, auto=True),
+            os.getcwd(),
+            f"lemoGamePad-web-guest-qr-{safe}.png",
+            "Browser guest link",
+        )
         for extra in ips[1:]:
-            safe = extra.replace(":", "-").replace(".", "_")
-            name = f"lemoGamePad-web-qr-{safe}.png"
+            extra_safe = extra.replace(":", "-").replace(".", "_")
+            name = f"lemoGamePad-web-qr-{extra_safe}.png"
             if save_qr_png(self.web_url(extra), os.path.join(os.getcwd(), name)):
                 print(f"  Browser QR   : {name}")
+            save_qr_png(
+                self.web_url(extra, auto=True),
+                os.path.join(
+                    os.getcwd(), f"lemoGamePad-web-guest-qr-{extra_safe}.png"
+                ),
+            )
 
     def _announce_network_change(self) -> None:
         """
@@ -2692,6 +2867,7 @@ class Server:
         """
         while self.running:
             try:
+                self._refresh_active_rumble()
                 self._drain_logs()
                 if time.time() - self._ip_cache_at >= 10.0:
                     if self._refresh_offer_addresses():
@@ -2703,17 +2879,17 @@ class Server:
             time.sleep(self.STATUS_INTERVAL)
 
     def _status(self) -> None:
-        line = self._status_text()
-
         if not self._tty:
-            # Log files and pipes: emit a line at most every 15 seconds.
+            # Log files and pipes: emit a line at most every 15 seconds. Check
+            # before building the line so the other 29 ticks stay cheap.
             now = time.time()
             if now - self._last_plain_status < 15.0:
                 return
             self._last_plain_status = now
-            print(line.strip())
+            print(self._status_text().strip())
             return
 
+        line = self._status_text()
         width = 110
         try:
             width = max(40, os.get_terminal_size().columns - 1)
@@ -3303,6 +3479,56 @@ def _install_console_close_handler(on_close):
         return None
 
 
+def valid_web_key(key: str) -> bool:
+    """True for a key that is safe to embed in a URL query string."""
+    return (
+        8 <= len(key) <= 64
+        and all(char.isalnum() or char in "-_" for char in key)
+    )
+
+
+def load_or_create_web_key(path: str) -> str:
+    """Load a persistent browser key, creating one on first use.
+
+    An iPhone Home Screen shortcut keeps its original ``?k=`` URL. A key that
+    changes on every server run therefore breaks that shortcut. ``--web-key-file``
+    stores the generated key and reuses it on later runs. An explicit
+    ``--web-key`` still wins, and an unreadable file degrades to a random key
+    rather than stopping the server.
+    """
+    if not path:
+        return ""
+    try:
+        with open(path, "r", encoding="ascii") as handle:
+            key = handle.read().strip()
+        if valid_web_key(key):
+            return key
+        print(f"Ignoring invalid browser key in {path}; generating a new one.")
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        print(f"Could not read browser key file {path}: {exc}")
+        return ""
+
+    key = secrets.token_urlsafe(6)
+    try:
+        directory = os.path.dirname(os.path.abspath(path))
+        os.makedirs(directory, exist_ok=True)
+        # 0600: the key grants access to the local gamepad page.
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="ascii") as handle:
+            handle.write(key + "\n")
+    except OSError as exc:
+        print(f"Could not save browser key file {path}: {exc}")
+        return ""
+    return key
+
+
+def resolve_web_key(explicit: str, path: str) -> str:
+    """Explicit ``--web-key`` wins; otherwise reuse/create the saved key."""
+    return explicit or load_or_create_web_key(path)
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(
         description="lemoGamePad ultimate - virtual gamepad server (by Alam showkat)"
@@ -3344,6 +3570,15 @@ def main(argv=None) -> int:
         default="",
         help="fixed browser pairing key (default: random for each run)",
     )
+    ap.add_argument(
+        "--web-key-file",
+        default="",
+        metavar="PATH",
+        help=(
+            "store/reuse the browser key in PATH, so Home Screen and bookmarked "
+            "URLs keep working after a restart (ignored when --web-key is set)"
+        ),
+    )
     ap.add_argument("--video-fps", type=int, default=60, help="screen stream frame rate, capped at 60 (default 60)")
     ap.add_argument("--video-width", type=int, default=480, help="balanced-profile stream width in pixels (default 480)")
     ap.add_argument("--video-quality", type=int, default=42, help="balanced-profile JPEG quality 20-90 (default 42)")
@@ -3355,6 +3590,9 @@ def main(argv=None) -> int:
     )
     ap.add_argument("--list-ip", action="store_true", help="print local IPs and exit")
     args = ap.parse_args(argv)
+
+    if args.web_key and args.web_key_file:
+        print("Both --web-key and --web-key-file given; using --web-key.")
 
     # Validate before --list-ip so a bad configuration is never silently
     # accepted for that invocation.
@@ -3393,6 +3631,10 @@ def main(argv=None) -> int:
             print(ip)
         return 0
 
+    # An explicit key always wins; the file is only a fallback for installs
+    # that want a stable Home Screen URL on an iPhone.
+    web_key = resolve_web_key(args.web_key, args.web_key_file)
+
     if not sys.stdout.isatty():
         try:
             sys.stdout.reconfigure(line_buffering=True)
@@ -3421,7 +3663,7 @@ def main(argv=None) -> int:
             max_phones=args.max_phones,
             web_port=web_port,
             web_enabled=not args.no_web,
-            web_key=args.web_key,
+            web_key=web_key,
         )
     except OSError as exc:
         print(f"Could not listen on UDP {args.port}: {exc}")

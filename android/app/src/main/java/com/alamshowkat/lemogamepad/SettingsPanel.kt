@@ -1,6 +1,8 @@
 package com.alamshowkat.lemogamepad
 
 import android.app.Activity
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
@@ -35,21 +37,21 @@ private val CARD_HELP: Map<String, Pair<String, String>> = mapOf(
     "status" to ("CONNECTION STATUS" to
         "The pill on the pad opens this panel. CONNECTED means the PC is answering pings; LINKING means an address is set but no reply has arrived yet. The graph and stats below show RTT, jitter, loss and video FPS. Battery saver pauses those live stats while connection state and the buttons keep working."),
     "connection" to ("CONNECTION" to
-        "Wi-Fi and USB both use the same port 9876 for input and 9877 for video. Transport AUTO probes all available paths. Use SCAN or the QR code to pair a PC; nothing is saved until you connect."),
+        "Wi-Fi and USB both use the same port 9876 for input and 9877 for video; the browser pad uses TCP 9878. Transport AUTO probes all available paths. Use SCAN or the QR code to pair a PC. Connection Doctor now runs a live port check as well as showing interface state."),
     "bluetooth" to ("BLUETOOTH GAMEPAD" to
-        "This is a server-less HID gamepad for a phone or TV. You must start it and pick a host explicitly; the app never auto-connects, registers, calls, or changes audio profiles. The report stays the original 9 bytes."),
+        "This is a server-less HID gamepad for a phone or TV. You must start it and pick a host explicitly; the app never auto-connects, registers, calls, or changes audio profiles. Android may connect audio to the bonded host by itself — while connected, use HOST AUDIO SETTINGS to switch Media audio and Phone audio off for that device. The report stays the original 9 bytes."),
     "motion" to ("MOTION & AIM" to
         "Gyro adds aim movement on top of touch. Revert left/right or up/down flips one axis if aim drifts the wrong way. Run AIM CALIBRATION and apply the suggested values to tune sensitivity."),
     "appearance" to ("APPEARANCE" to
         "Theme changes are instant and persist. LOW/BALANCED/HIGH only change video sharpness; smoothness is always prioritised at 60 fps. Adaptive quality is off unless you enable it and can auto-adjust sharpness."),
     "controls" to ("CONTROLS" to
-        "Deadzone and curve shape the analog sticks. Haptic strength scales rumble from the PC. Face spacing changes the four face buttons together until you move one individually in the layout editor."),
+        "Deadzone and curve shape the analog sticks. Haptic strength scales touch and game vibration; vibration from games can be switched off separately. Face spacing changes the four face buttons together until you move one individually in the layout editor."),
     "studio" to ("CUSTOMIZATION STUDIO" to
         "Edit layout unlocks drag, pinch resize, long-press hide, snap/grid, alignment guides, multi-select, copy/paste, lock and mirror. Undo/redo works during the edit session; save a named layout to keep it."),
     "layouts" to ("LAYOUTS" to
-        "Named layouts are manual quick-switches. Import/export and game profiles share the same compact layout text, so an old saved layout still loads. Safe-area guides show notch and system-bar margins while editing."),
+        "Named layouts are manual quick-switches. SHARE QR / SCAN QR hand a layout to another phone; EXPORT / IMPORT and game profiles use the same compact text, so an old saved layout still loads. Safe-area guides show notch and system-bar margins while editing."),
     "profiles" to ("GAME PROFILES" to
-        "Profiles store your whole control setup as a snapshot. They never detect which game is running — save, name, and apply them yourself. Applying a profile also restores its layout."),
+        "Profiles store your control feel as a snapshot: aim, motion, haptics, rate, face labels and layout. They never detect which game is running — save, name, and apply them yourself. COPY duplicates a profile; EXPORT copies a JSON backup to the clipboard and IMPORT merges profiles whose names are not already used. Connections are never included."),
     "screen" to ("PC SCREEN" to
         "The small window streams TCP video on port 9877. Dragging moves it; the close button only hides it, it does not disconnect input. Smoothness is prioritised over sharpness."),
 )
@@ -62,6 +64,7 @@ internal object PrefsKeys {
     const val DEADZONE = "deadzone"
     const val STICK_CURVE = "stick_curve"
     const val HAPTICS = "haptics"
+    const val GAME_RUMBLE = "game_rumble"
     const val HAPTIC_STRENGTH = "haptic_strength"
     const val INPUT_RATE = "input_rate"
     const val PLAYER_SLOT = "player_slot"
@@ -69,6 +72,9 @@ internal object PrefsKeys {
     const val WIFI_GUIDE_SEEN = "wifi_guide_seen"
     const val CONNECTION_DOCTOR_SEEN = "connection_doctor_seen_v1"
     const val BATTERY_SAVER = "battery_saver_live_stats"
+    const val SETTINGS_SECTION = "settings_section"
+    const val SETTINGS_DENSE = "settings_dense"
+    const val BT_LAST_HOST = "bt_last_host"
     const val LAST_WHATSNEW_CODE = "last_whatsnew_code"
     const val THEME = "theme"
     const val FACES = "faces"
@@ -139,6 +145,7 @@ class SettingsPanel(
 
     interface Callbacks {
         fun onScanQr()
+        fun onScanLayoutQr()
         fun onEditLayout()
         fun onLayoutSaved()
         fun onAimTrainer()
@@ -152,16 +159,22 @@ class SettingsPanel(
         fun onScreenQuality(quality: ScreenQuality)
         fun onAdaptiveQuality(enabled: Boolean)
         fun onHapticsChanged(strength: Float)
+        fun onGameRumbleChanged(enabled: Boolean)
         fun attachScreenStream()
         fun streamFps(): Int
         fun streamConnected(): Boolean
         fun onOpenConnectionDoctor()
+        fun onOpenSetupGuide()
+        fun onOpenHelp()
         fun onClosed()
         fun toast(message: String)
         fun bluetoothPermissionsMissing(): Boolean
+        fun bluetoothSupported(): Boolean
+        fun bluetoothEnabled(): Boolean
         fun requestBluetoothPermissions()
         fun onBluetoothPair()
         fun onBluetoothDiscoverable()
+        fun onBluetoothHostAudioSettings()
         fun bluetoothHosts(): List<BluetoothHost>
         fun onBluetoothConnect(address: String)
         fun onBluetoothDisconnect()
@@ -170,6 +183,17 @@ class SettingsPanel(
         fun bluetoothGamepadName(): String
         fun bluetoothGamepadStatus(): String
     }
+
+    private data class SectionViews(
+        val body: View,
+        val rail: View,
+    )
+
+    private data class Section(
+        val title: String,
+        val subtitle: String,
+        val cards: List<View>,
+    )
 
     val view = FrameLayout(activity)
     val isShowing: Boolean get() = showing
@@ -181,11 +205,23 @@ class SettingsPanel(
     private val transportViews = ArrayList<Pair<Transport, TextView>>()
     private val slotViews = ArrayList<Pair<Int, TextView>>()
     private var lastSlotSignature = Int.MIN_VALUE
-    private var batterySaver = prefs.getBoolean(PrefsKeys.BATTERY_SAVER, false)
+    private var batterySaver = SettingsGuard.bool(prefs, PrefsKeys.BATTERY_SAVER, false)
     private val handler = Handler(Looper.getMainLooper())
+
+    /** One open category at a time; -1 collapses them all. */
+    private val sections = ArrayList<SectionViews>()
+    private var openSection = SettingsGuard.int(prefs, PrefsKeys.SETTINGS_SECTION, 0).coerceIn(-1, 4)
+    private var sectionStyleSignature = Int.MIN_VALUE
+    /** Scroll offsets are per category so a jump never loses your place. */
+    private val scrollMemory = IntArray(5)
+    private var landscape = false
+    private var dense = SettingsGuard.bool(prefs, PrefsKeys.SETTINGS_DENSE, false)
 
     private lateinit var scrim: View
     private lateinit var sheet: LinearLayout
+    private lateinit var scroll: ScrollView
+    private lateinit var jumpRail: LinearLayout
+    private lateinit var densityTile: TextView
     private lateinit var statusDot: TextView
     private lateinit var statusTitle: TextView
     private lateinit var statusSub: TextView
@@ -199,6 +235,7 @@ class SettingsPanel(
     private lateinit var hostEdit: EditText
     private lateinit var portEdit: EditText
     private lateinit var slotLine: TextView
+    private lateinit var partyLockBtn: TextView
     private lateinit var tetherBtn: TextView
     private lateinit var scanLine: TextView
     /** Set when a scan only succeeded on a link the user did not pick. */
@@ -209,6 +246,7 @@ class SettingsPanel(
     private lateinit var btDisconnectBtn: TextView
     private lateinit var btPairBtn: TextView
     private lateinit var btDiscoverBtn: TextView
+    private lateinit var btAudioHint: TextView
 
     private lateinit var sensorLine: TextView
     private var touchpadHint: TextView? = null
@@ -243,7 +281,7 @@ class SettingsPanel(
     // ------------------------------------------------------------------ shell
     private fun build() {
         val metrics = activity.resources.displayMetrics
-        val landscape = metrics.widthPixels >= metrics.heightPixels
+        landscape = metrics.widthPixels >= metrics.heightPixels
         val sheetWidth = if (landscape) {
             min(px(460), (metrics.widthPixels * 0.47f).toInt())
         } else {
@@ -276,19 +314,26 @@ class SettingsPanel(
         addTinter {
             val t = pad.selectedTheme
             scrim.setBackgroundColor(withAlpha(0x000000, if (t.dark) 175 else 100))
-            sheet.background = GradientDrawable().apply {
+            sheet.background = GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(
+                    withAlpha(t.surface, if (t.dark) 252 else 254),
+                    withAlpha(t.surfaceAlt, if (t.dark) 246 else 250),
+                ),
+            ).apply {
+                val corner = px(24).toFloat()
                 cornerRadii = floatArrayOf(
-                    px(24).toFloat(), px(24).toFloat(),
+                    corner, corner,
                     0f, 0f,
                     0f, 0f,
-                    px(24).toFloat(), px(24).toFloat(),
+                    corner, corner,
                 )
-                setColor(withAlpha(t.surface, if (t.dark) 252 else 254))
             }
         }
 
         sheet.addView(buildHeader())
         sheet.addView(buildDivider())
+        sheet.addView(buildJumpRail())
         sheet.addView(
             buildScroll(),
             LinearLayout.LayoutParams(
@@ -297,6 +342,7 @@ class SettingsPanel(
                 1f,
             ),
         )
+        applyDensity()
 
         refreshTints()
     }
@@ -304,7 +350,7 @@ class SettingsPanel(
     private fun buildHeader(): LinearLayout {
         val header = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(px(18), px(16), px(14), px(10))
+            setPadding(px(16), px(10), px(12), px(6))
         }
         val row = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -314,53 +360,51 @@ class SettingsPanel(
 
         val eyebrow = TextView(activity).apply {
             text = "CONTROL CENTRE"
-            textSize = 10f
-            letterSpacing = 0.2f
+            textSize = 9f
+            letterSpacing = 0.18f
             typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-        }
-        eyebrow.setTextColor(pad.selectedTheme.accent)
-        val title = TextView(activity).apply {
-            text = Brand.NAME
-            textSize = 17f
-            letterSpacing = 0.01f
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-            setPadding(0, px(2), 0, px(1))
+            isSingleLine = true
         }
         val author = TextView(activity).apply {
-            text = "${Brand.AUTHOR.uppercase()}  ·  v${Brand.VERSION}"
-            textSize = 10f
-            letterSpacing = 0.14f
+            text = "${Brand.NAME}  ·  v${Brand.VERSION}"
+            textSize = 9f
+            letterSpacing = 0.08f
+            isSingleLine = true
+            ellipsize = TextUtils.TruncateAt.END
         }
         titles.addView(eyebrow)
-        titles.addView(title)
         titles.addView(author)
         row.addView(titles, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
 
-        val close = TextView(activity).apply {
-            text = "✕"
-            textSize = 14f
-            gravity = Gravity.CENTER
-            isClickable = true
-            isFocusable = true
-            contentDescription = "Close settings"
-            setOnClickListener { dismiss() }
+        val setup = headerAction("SETUP", "Replay first-time setup guide") {
+            dismiss()
+            callbacks.onOpenSetupGuide()
         }
-        row.addView(
-            close,
-            LinearLayout.LayoutParams(px(36), px(36)).apply { marginStart = px(8) },
-        )
+        val help = headerAction("?", "Help and guides") { callbacks.onOpenHelp() }
+        val close = headerAction("✕", "Close settings") { dismiss() }
+
+        for (button in listOf(setup, help, close)) {
+            row.addView(
+                button,
+                LinearLayout.LayoutParams(
+                    if (button === setup) px(38) else px(28),
+                    px(32),
+                ).apply { marginStart = px(4) },
+            )
+        }
 
         header.addView(row)
         addTinter {
             val t = pad.selectedTheme
             eyebrow.setTextColor(t.accent)
-            title.setTextColor(t.text)
             author.setTextColor(t.muted)
-            close.setTextColor(t.textDim)
-            close.background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(withAlpha(t.text, 16))
-                setStroke(px(1), withAlpha(t.text, 42))
+            for (button in listOf(setup, help, close)) {
+                button.setTextColor(t.textDim)
+                button.background = GradientDrawable().apply {
+                    cornerRadius = px(10).toFloat()
+                    setColor(withAlpha(t.text, 16))
+                    setStroke(px(1), withAlpha(t.text, 42))
+                }
             }
         }
         header.alpha = 0f
@@ -368,6 +412,20 @@ class SettingsPanel(
         header.animate().alpha(1f).translationY(0f).setDuration(280L).start()
         return header
     }
+
+    private fun headerAction(label: String, description: String, onClick: () -> Unit): TextView =
+        TextView(activity).apply {
+            text = label
+            textSize = if (label.length > 2) 8.5f else 12f
+            letterSpacing = 0.05f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            isSingleLine = true
+            isClickable = true
+            isFocusable = true
+            contentDescription = description
+            setOnClickListener { onClick() }
+        }
 
     private fun buildDivider(): View {
         val line = View(activity)
@@ -384,8 +442,76 @@ class SettingsPanel(
         return line
     }
 
+    // ----------------------------------------------------------- navigation
+    /** One tab row replaces the old dock and the per-section headers. */
+    private fun buildJumpRail(): LinearLayout {
+        jumpRail = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(px(12), px(8), px(12), px(10))
+        }
+        listOf("LINK", "PAD", "BT", "STYLE", "GAMES", "DENSE").forEachIndexed { index, label ->
+            val chip = TextView(activity).apply {
+                text = label
+                textSize = 9f
+                letterSpacing = 0.08f
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+                isSingleLine = true
+                isClickable = true
+                isFocusable = true
+                minHeight = px(36)
+                setPadding(px(2), px(5), px(2), px(5))
+                setOnClickListener {
+                    if (index == 5) toggleDense() else selectSection(index)
+                }
+                pressable(this, 0.94f)
+            }
+            if (index == 5) densityTile = chip
+            jumpRail.addView(
+                chip,
+                LinearLayout.LayoutParams(0, px(36), 1f).apply {
+                    if (index > 0) marginStart = px(5)
+                },
+            )
+        }
+        return jumpRail
+    }
+
+    private fun toggleDense() {
+        dense = !dense
+        prefs.edit().putBoolean(PrefsKeys.SETTINGS_DENSE, dense).apply()
+        applyDensity()
+        styleSections(force = true)
+    }
+
+    private fun applyDensity() {
+        if (!::densityTile.isInitialized) return
+        densityTile.text = if (dense) "FULL" else "DENSE"
+        for (section in sections) applyDensityTo(section.body)
+    }
+
+    private fun applyDensityTo(view: View) {
+        when (view.tag) {
+            "hint" -> view.visibility = if (dense) View.GONE else View.VISIBLE
+            "density-card" -> view.setPadding(
+                px(if (dense) 10 else 14),
+                px(if (dense) 10 else 13),
+                px(if (dense) 10 else 14),
+                px(if (dense) 11 else 14),
+            )
+        }
+        if (view is ViewGroup) {
+            for (index in 0 until view.childCount) applyDensityTo(view.getChildAt(index))
+        }
+    }
+
+    /**
+     * Control Centre keeps one scroll per category. Landscape packs independent
+     * cards side by side, portrait keeps them full width. All cards are built
+     * once and just hidden, so live callbacks and the RTT graph stay intact.
+     */
     private fun buildScroll(): ScrollView {
-        val scroll = ScrollView(activity).apply {
+        scroll = ScrollView(activity).apply {
             isFillViewport = true
             overScrollMode = View.OVER_SCROLL_NEVER
             isVerticalScrollBarEnabled = false
@@ -393,20 +519,66 @@ class SettingsPanel(
         }
         val content = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(px(14), px(12), px(14), px(40))
+            setPadding(px(14), px(10), px(14), px(40))
         }
 
-        content.addView(statusCard(), cardParams())
-        content.addView(connectionCard(), cardParams())
-        content.addView(bluetoothGamepadCard(), cardParams())
-        content.addView(motionCard(), cardParams())
-        content.addView(appearanceCard(), cardParams())
-        content.addView(controlsCard(), cardParams())
-        content.addView(studioCard(), cardParams())
-        content.addView(layoutsCard(), cardParams())
-        content.addView(gameProfilesCard(), cardParams())
-        content.addView(screenCard(), cardParams())
+        val groups = listOf(
+            Section(
+                "LINK",
+                "Status · transports · doctor",
+                listOf(statusCard(), connectionCard()),
+            ),
+            Section(
+                "PAD",
+                "Motion, aim and stick feel",
+                listOf(motionCard(), controlsCard()),
+            ),
+            Section(
+                "BLUETOOTH",
+                "Server-less HID gamepad",
+                listOf(bluetoothGamepadCard()),
+            ),
+            Section(
+                "STYLE",
+                "Theme, layouts and editor",
+                listOf(appearanceCard(), studioCard(), layoutsCard()),
+            ),
+            Section(
+                "GAMES",
+                "Profiles and PC screen",
+                listOf(gameProfilesCard(), screenCard()),
+            ),
+        )
+
+        groups.forEach { group ->
+            val rail = View(activity)
+            // No per-section header: the tab row already names the category.
+            // Just one quiet caption, then the cards, starting near the top.
+            val body = LinearLayout(activity).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(px(6), px(2), 0, px(4))
+            }
+            val caption = TextView(activity).apply {
+                text = group.subtitle
+                textSize = 10f
+                letterSpacing = 0.08f
+                isSingleLine = true
+                setPadding(px(2), 0, 0, px(8))
+            }
+            addTinter { caption.setTextColor(pad.selectedTheme.muted) }
+            body.addView(caption)
+            group.cards.forEach { item -> body.addView(item, cardParams()) }
+            val bodyWrap = LinearLayout(activity).apply {
+                orientation = LinearLayout.HORIZONTAL
+            }
+            bodyWrap.addView(rail, LinearLayout.LayoutParams(px(3), ViewGroup.LayoutParams.MATCH_PARENT))
+            bodyWrap.addView(body, weightParams(1f))
+            content.addView(bodyWrap)
+            sections += SectionViews(bodyWrap, rail)
+        }
         content.addView(footer())
+        addTinter { styleSections() }
+        selectSection(openSection)
 
         scroll.addView(content)
         scroll.alpha = 0f
@@ -414,18 +586,75 @@ class SettingsPanel(
         return scroll
     }
 
+    private fun selectSection(index: Int) {
+        if (::scroll.isInitialized && openSection in scrollMemory.indices) {
+            scrollMemory[openSection] = scroll.scrollY
+        }
+        openSection = index.coerceIn(-1, (sections.size - 1).coerceAtLeast(0))
+        for (i in sections.indices) {
+            sections[i].body.visibility = if (i == openSection) View.VISIBLE else View.GONE
+        }
+        if (::scroll.isInitialized && openSection in sections.indices) {
+            sections[openSection].body.apply {
+                alpha = 0.55f
+                translationY = px(7).toFloat()
+                animate().alpha(1f).translationY(0f)
+                    .setDuration(190L)
+                    .setInterpolator(DecelerateInterpolator())
+                    .start()
+            }
+        }
+        styleSections()
+        prefs.edit().putInt(PrefsKeys.SETTINGS_SECTION, openSection).apply()
+        if (::scroll.isInitialized && openSection in scrollMemory.indices) {
+            scroll.post { scroll.scrollTo(0, scrollMemory[openSection]) }
+        }
+    }
+
+    private fun styleSections(force: Boolean = false) {
+        val t = pad.selectedTheme
+        val signature = t.accent xor t.text xor openSection xor (if (dense) 1 else 0)
+        if (!force && signature == sectionStyleSignature) return
+        sectionStyleSignature = signature
+
+        for (i in sections.indices) {
+            sections[i].rail.background = GradientDrawable().apply {
+                cornerRadius = px(2).toFloat()
+                setColor(withAlpha(t.accent, if (i == openSection) 220 else 0))
+            }
+        }
+        if (::jumpRail.isInitialized) {
+            for (i in 0 until jumpRail.childCount) {
+                val chip = jumpRail.getChildAt(i) as TextView
+                val on = if (i == 5) dense else i == openSection
+                chip.setTextColor(if (on) t.accent else t.textDim)
+                chip.background = GradientDrawable().apply {
+                    cornerRadius = px(10).toFloat()
+                    setColor(withAlpha(if (on) t.accent else t.text, if (on) 36 else 10))
+                    setStroke(px(1), withAlpha(if (on) t.accent else t.text, if (on) 130 else 24))
+                }
+            }
+        }
+    }
+
     // ------------------------------------------------------------------ cards
     private fun card(): LinearLayout {
         val card = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(px(14), px(13), px(14), px(14))
+            setPadding(px(16), px(14), px(16), px(16))
+            tag = "density-card"
         }
         addTinter {
             val t = pad.selectedTheme
-            card.background = GradientDrawable().apply {
-                cornerRadius = px(16).toFloat()
-                setColor(withAlpha(t.surfaceAlt, if (t.dark) 200 else 238))
-                setStroke(px(1), withAlpha(t.accent, if (t.dark) 24 else 34))
+            card.background = GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(
+                    withAlpha(t.surfaceAlt, if (t.dark) 214 else 244),
+                    withAlpha(t.surface, if (t.dark) 188 else 236),
+                ),
+            ).apply {
+                cornerRadius = px(17).toFloat()
+                setStroke(px(1), withAlpha(t.accent, if (t.dark) 34 else 44))
             }
         }
         return card
@@ -435,7 +664,7 @@ class SettingsPanel(
         LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT,
-        ).apply { bottomMargin = px(10) }
+        ).apply { bottomMargin = px(12) }
 
     private fun statusCard(): LinearLayout {
         val card = card()
@@ -521,7 +750,7 @@ class SettingsPanel(
         )
         card.addView(utilities)
         card.addView(
-            tiny(
+            hint(
                 "Battery saver pauses the live graph; connection state and buttons keep working.",
                 top = px(2),
                 bottom = px(2),
@@ -625,6 +854,16 @@ class SettingsPanel(
         }
         card.addView(slotLine)
 
+        // Host-only seat lock. Guests can still claim a free pad (so a late
+        // arrival joins correctly) but cannot move or swap occupied pads.
+        partyLockBtn = action("LOCK PARTY", primary = false) {
+            // PONG carries the confirmed lock bit; refreshLink() is called from
+            // onPartyState so the label cannot claim a state the PC rejected.
+            link.setPartyLock(!link.partyLocked)
+        }
+        partyLockBtn.visibility = View.GONE
+        card.addView(partyLockBtn, topParams(px(6)))
+
         val scanRow = row()
         scanBtn = action("SCAN NETWORK", primary = false) { scan(autoConnect = true) }
         val qrBtn = action("SCAN QR", primary = false) { callbacks.onScanQr() }
@@ -656,7 +895,7 @@ class SettingsPanel(
         val card = card()
         card.addView(sectionTitle("BLUETOOTH GAMEPAD", "bluetooth"))
         card.addView(
-            tiny(
+            hint(
                 "Pair “Lemo GamePad” once from your PC or Android host. Opening this app never " +
                     "connects by itself — use SELECT HOST to choose one bonded computer or phone. " +
                     "It appears as a standard gamepad, with no app, driver or tethering on the host.",
@@ -684,11 +923,19 @@ class SettingsPanel(
         val setup = row().apply { setPadding(0, px(6), 0, 0) }
         btPairBtn = action("BLUETOOTH SETTINGS", primary = false) { callbacks.onBluetoothPair() }
         btDiscoverBtn = action("MAKE DISCOVERABLE", primary = false) {
-            callbacks.onBluetoothDiscoverable()
+            if (callbacks.bluetoothGamepadConnected()) {
+                callbacks.onBluetoothHostAudioSettings()
+            } else {
+                callbacks.onBluetoothDiscoverable()
+            }
         }
         setup.addView(btPairBtn, weightParams(1f, end = px(5)))
         setup.addView(btDiscoverBtn, weightParams(1f))
         card.addView(setup)
+
+        btAudioHint = tiny("", top = px(4))
+        btAudioHint.visibility = View.GONE
+        card.addView(btAudioHint)
 
         btGrantBtn = action("ALLOW NEARBY DEVICES", primary = true) {
             callbacks.requestBluetoothPermissions()
@@ -747,7 +994,7 @@ class SettingsPanel(
             topParams(px(8)),
         )
         card.addView(
-            tiny(
+            hint(
                 "Tilt steers racing games on left X. Level is straight ahead; the left stick still works at centre.",
                 top = px(2),
             ),
@@ -775,7 +1022,7 @@ class SettingsPanel(
             topParams(px(8)),
         )
         card.addView(
-            tiny("Sit in your driving position, then calibrate so level means straight ahead.", top = px(2)),
+            hint("Sit in your driving position, then calibrate so level means straight ahead.", top = px(2)),
         )
 
         card.addView(
@@ -786,7 +1033,7 @@ class SettingsPanel(
             topParams(px(8)),
         )
         card.addView(
-            tiny(
+            hint(
                 "Rotating the phone moves right-stick aim in shooters. Works with or without the swipe pad.",
                 top = px(2),
             ),
@@ -806,7 +1053,7 @@ class SettingsPanel(
             topParams(px(2)),
         )
         card.addView(
-            tiny("Each revert flips only that gyro axis. Turn on both to reverse both directions.", top = px(2)),
+            hint("Each revert flips only that gyro axis. Turn on both to reverse both directions.", top = px(2)),
         )
         card.addView(
             seekRow("GYRO AIM SENSITIVITY", 0, 100, PrefsKeys.AIM_SENS, (pad.aimSensitivity * 100f).roundToInt()) {
@@ -818,7 +1065,7 @@ class SettingsPanel(
             topParams(px(8)),
         )
         card.addView(
-            tiny("Ten-target drill for touch and gyro aim. Drag to move the reticle, then tap to fire. Controller output stays neutral while the overlay is open.", top = px(2)),
+            hint("Ten-target drill for touch and gyro aim. Drag to move the reticle, then tap to fire. Controller output stays neutral while the overlay is open.", top = px(2)),
         )
         return card
     }
@@ -864,7 +1111,7 @@ class SettingsPanel(
             },
         )
         card.addView(
-            tiny("EDIT LAYOUT lets you drag, pinch-resize and hide controls. The swipe pad resizes like the sticks.", top = px(2)),
+            hint("EDIT LAYOUT lets you drag, pinch-resize and hide controls. The swipe pad resizes like the sticks.", top = px(2)),
         )
         card.addView(
             action("EDIT LAYOUT", primary = true) { callbacks.onEditLayout() },
@@ -1201,7 +1448,7 @@ class SettingsPanel(
             },
             topParams(px(8)),
         )
-        card.addView(tiny("Each theme has its own press ripple on the pad.", top = px(2)))
+        card.addView(hint("Each theme has its own press ripple on the pad.", top = px(2)))
 
         return card
     }
@@ -1276,7 +1523,7 @@ class SettingsPanel(
             curveBar.progressBackgroundTintList = ColorStateList.valueOf(withAlpha(t.text, 30))
         }
         card.addView(curveBar)
-        card.addView(tiny("0% is linear · higher values calm small stick corrections", top = px(2)))
+        card.addView(hint("0% is linear · higher values calm small stick corrections", top = px(2)))
 
         card.addView(
             toggle("Vibration feedback", prefs.getBoolean(PrefsKeys.HAPTICS, true)) { on ->
@@ -1284,6 +1531,16 @@ class SettingsPanel(
                 prefs.edit().putBoolean(PrefsKeys.HAPTICS, on).apply()
             },
             topParams(px(8)),
+        )
+        card.addView(
+            toggle("Vibration from games", prefs.getBoolean(PrefsKeys.GAME_RUMBLE, true)) { on ->
+                prefs.edit().putBoolean(PrefsKeys.GAME_RUMBLE, on).apply()
+                callbacks.onGameRumbleChanged(on)
+            },
+            topParams(px(4)),
+        )
+        card.addView(
+            hint("Keeps button clicks; only silences force feedback sent by the game.", top = px(2)),
         )
 
         var strength = prefs.getInt(PrefsKeys.HAPTIC_STRENGTH, 100).coerceIn(0, 100)
@@ -1318,7 +1575,7 @@ class SettingsPanel(
         card.addView(tiny("INPUT RATE", top = px(12), bottom = px(5)))
         val rateRow = row()
         val rateChips = LinkedHashMap<InputRate, TextView>()
-        val rateHint = tiny(link.inputRate.hint, top = px(5))
+        val rateHint = hint(link.inputRate.hint, top = px(5))
 
         fun refreshRateChips() {
             val t = pad.selectedTheme
@@ -1347,6 +1604,7 @@ class SettingsPanel(
         card.addView(rateHint)
         addTinter { refreshRateChips() }
         refreshRateChips()
+
         return card
     }
 
@@ -1533,10 +1791,32 @@ class SettingsPanel(
         )
         card.addView(share, topParams(px(6)))
 
+        val qr = row()
+        qr.addView(
+            action("SHARE QR", primary = false) {
+                val name = layoutStore().activeName() ?: "SHARED"
+                val data = layoutStore().activeData()?.takeIf { it.isNotBlank() }
+                    ?: pad.layoutSnapshot()
+                LayoutDialogs.showQr(
+                    activity,
+                    pad.selectedTheme,
+                    "LAYOUT QR",
+                    LayoutQr.encode(name, data),
+                )
+            },
+            weightParams(1f, end = px(6)),
+        )
+        qr.addView(
+            action("SCAN QR", primary = false) { callbacks.onScanLayoutQr() },
+            weightParams(1f),
+        )
+        card.addView(qr, topParams(px(6)))
+
         card.addView(
-            tiny(
+            hint(
                 "Every control's position, size and visibility is remembered. " +
-                    "Tap a saved layout to switch.",
+                    "Tap a saved layout to switch. SHARE QR / SCAN QR move a layout " +
+                    "between phones; the browser pad uses the same code as text.",
                 top = px(6),
             ),
         )
@@ -1613,7 +1893,28 @@ class SettingsPanel(
                     }
                 }
                 styleChip(nameView, entry.name == active)
-                line.addView(nameView, weightParams(1f, end = px(6)))
+                line.addView(nameView, weightParams(1f, end = px(5)))
+
+                val duplicate = TextView(activity).apply {
+                    text = "COPY"
+                    textSize = 9.5f
+                    letterSpacing = 0.09f
+                    gravity = Gravity.CENTER
+                    setPadding(px(10), px(8), px(10), px(8))
+                    isClickable = true
+                    isFocusable = true
+                    contentDescription = "Duplicate profile ${entry.name}"
+                    setOnClickListener {
+                        val copyName = profileStore().duplicate(entry.name)
+                        refresh()
+                        callbacks.toast(
+                            if (copyName == null) "Could not copy that profile" else "Copied to \"$copyName\"",
+                        )
+                    }
+                    pressable(this)
+                }
+                styleDelete(duplicate)
+                line.addView(duplicate, wrapParams().apply { marginEnd = px(5) })
 
                 val delete = TextView(activity).apply {
                     text = "DELETE"
@@ -1680,10 +1981,53 @@ class SettingsPanel(
             weightParams(1f),
         )
         card.addView(actions)
+
+        val backup = row()
+        backup.addView(
+            action("EXPORT", primary = false) {
+                val json = profileStore().exportAll()
+                if (json == "[]") {
+                    callbacks.toast("No profiles to export")
+                } else {
+                    val clipboard = activity.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                    if (clipboard == null) {
+                        callbacks.toast("Clipboard unavailable")
+                    } else {
+                        clipboard.setPrimaryClip(ClipData.newPlainText("Game profiles", json))
+                        callbacks.toast("Profile backup copied")
+                    }
+                }
+            },
+            weightParams(1f, end = px(6)),
+        )
+        backup.addView(
+            action("IMPORT", primary = false) {
+                LayoutDialogs.promptText(
+                    activity,
+                    pad.selectedTheme,
+                    title = "IMPORT PROFILES",
+                    message = "Paste a profile backup. Names already in use are skipped, so current profiles are never replaced.",
+                    positiveLabel = "IMPORT",
+                ) { raw ->
+                    val result = profileStore().import(raw)
+                    refresh()
+                    callbacks.toast(
+                        if (result.added == 0) {
+                            "No new profiles (${result.skipped} skipped)"
+                        } else {
+                            "Imported ${result.added} profile${if (result.added == 1) "" else "s"}" +
+                                if (result.skipped > 0) " · ${result.skipped} skipped" else ""
+                        },
+                    )
+                }
+            },
+            weightParams(1f),
+        )
+        card.addView(backup, topParams(px(6)))
         card.addView(
-            tiny(
+            hint(
                 "A profile saves aim, motion, haptics, input rate, face labels and the current layout. " +
-                    "Switch only by tapping a name.",
+                    "Switch only by tapping a name; COPY, EXPORT and IMPORT never change the link.",
                 top = px(6),
             ),
         )
@@ -1795,7 +2139,7 @@ class SettingsPanel(
         card.addView(tiny("STREAM QUALITY", top = px(10), bottom = px(5)))
         card.addView(qualityRow)
         card.addView(
-            tiny("LOW sends less data · HIGH is sharper · live FPS appears on the preview", top = px(5)),
+            hint("LOW sends less data · HIGH is sharper · live FPS appears on the preview", top = px(5)),
         )
         card.addView(
             toggle("Adaptive quality", adaptive) { on ->
@@ -1806,7 +2150,7 @@ class SettingsPanel(
             topParams(px(8)),
         )
         card.addView(
-            tiny(
+            hint(
                 "Off by default. When on, sharpness drops after sustained stutter and recovers " +
                     "only when the stream stays smooth. Tapping LOW / BALANCED / HIGH pauses auto for 45 s.",
                 top = px(2),
@@ -1902,17 +2246,22 @@ class SettingsPanel(
             this.text = text
             textSize = 10f
             letterSpacing = 0.11f
+            setLineSpacing(px(2).toFloat(), 1f)
             setPadding(px(2), top, 0, bottom)
         }
         addTinter { label.setTextColor(pad.selectedTheme.muted) }
         return label
     }
 
+    /** Explanatory prose that DENSE mode can hide without touching labels. */
+    private fun hint(text: String, top: Int = 0, bottom: Int = px(6)): TextView =
+        tiny(text, top, bottom).apply { tag = "hint" }
+
     private fun action(label: String, primary: Boolean, onClick: () -> Unit): TextView {
         val button = TextView(activity).apply {
             text = label
-            textSize = 11f
-            letterSpacing = 0.07f
+            textSize = 11.5f
+            letterSpacing = 0.08f
             gravity = Gravity.CENTER
             setPadding(px(8), px(10), px(8), px(10))
             minHeight = px(44)
@@ -2058,6 +2407,12 @@ class SettingsPanel(
     // ------------------------------------------------------------- player slot
     private fun chooseSlot(slot: Int) {
         val wanted = slot.coerceIn(0, Proto.MAX_PLAYERS)
+        if (link.connected && link.partyLocked && !link.isHost) {
+            callbacks.toast("Party locked by the host")
+            lastSlotSignature = Int.MIN_VALUE
+            refreshSlotChips()
+            return
+        }
         // Moving onto another player's pad needs their consent. Do not change
         // the preference yet: a decline must leave this phone exactly where it
         // was, and the server only swaps after the other player accepts. A new
@@ -2092,17 +2447,27 @@ class SettingsPanel(
         val want = link.wantSlot
         val assigned = link.assignedSlot
         val pending = link.pendingSwapTarget()
+        val lockedForGuest = link.partyLocked && !link.isHost
         var signature = ((want + 1) * 37 + (assigned + 1)) * 31 + t.accent
         signature = signature * 31 + t.ok
         signature = signature * 31 + (pending + 1)
+        signature = signature * 31 + if (lockedForGuest) 1 else 0
+        if (::partyLockBtn.isInitialized) {
+            partyLockBtn.visibility =
+                if (link.connected && link.isHost) View.VISIBLE else View.GONE
+            partyLockBtn.text = if (link.partyLocked) "UNLOCK PARTY" else "LOCK PARTY"
+        }
         if (signature != lastSlotSignature) {
             lastSlotSignature = signature
             for ((slot, chipView) in slotViews) {
                 val selected = slot == want
                 val isAssigned = slot != 0 && slot == assigned
                 val isPending = slot != 0 && slot == pending
-                chipView.alpha =
-                    if (!selected && want != 0 && !isAssigned && !isPending) 0.72f else 1f
+                chipView.alpha = when {
+                    lockedForGuest -> 0.45f
+                    !selected && want != 0 && !isAssigned && !isPending -> 0.72f
+                    else -> 1f
+                }
                 chipView.setTextColor(
                     when {
                         selected -> onColor(t.accent)
@@ -2138,7 +2503,9 @@ class SettingsPanel(
         slotLine.text = when {
             link.host == null -> "AUTO takes the next free pad."
             !link.connected -> "Waiting for the PC…"
+            lockedForGuest -> "Party locked — your seat is frozen."
             assigned <= 0 -> "Waiting for the PC to assign a pad…"
+            link.partyLocked && link.isHost -> "Party locked — you can still change seats."
             pending > 0 -> "Asked P$pending — waiting for their answer…"
             want == 0 -> "Using P$assigned (AUTO)."
             want == assigned -> "Using P$assigned."
@@ -2285,7 +2652,7 @@ class SettingsPanel(
     }
 
     // ------------------------------------------------------------------- state
-    private fun refreshLink() {
+    fun refreshLink() {
         link.refreshConnectionState()
         val t = pad.selectedTheme
         val host = link.host
@@ -2315,7 +2682,6 @@ class SettingsPanel(
             if (connected && !batterySaver && link.rttMs >= 0) append("  ·  ${link.rttMs} ms")
             if (host != null) append("  ·  $host")
         }
-
         val interfaceList = link.localSummary()
         detailLine.text = buildString {
             append(link.serverName.ifBlank { if (host == null) "No PC paired yet" else host })
@@ -2387,6 +2753,7 @@ class SettingsPanel(
             View.GONE
         }
         updateHint(readiness[selectedTransport] == true, connected)
+        styleSections()
     }
 
     private fun refreshTransportChips(readiness: Map<Transport, Boolean>) {
@@ -2464,25 +2831,46 @@ class SettingsPanel(
     /** Live state of the manually selected HID gamepad. Cheap: no probing. */
     fun refreshBluetoothGamepad() {
         val t = pad.selectedTheme
+        val supported = callbacks.bluetoothSupported()
+        val enabled = callbacks.bluetoothEnabled()
         val missing = callbacks.bluetoothPermissionsMissing()
         val connected = callbacks.bluetoothGamepadConnected()
         val running = callbacks.bluetoothGamepadRunning()
         val name = callbacks.bluetoothGamepadName()
+        val canPick = supported && enabled && !missing
         btStatus.text = when {
+            !supported -> "No Bluetooth adapter on this phone"
+            !enabled -> "Turn on Bluetooth, then pick a host"
             missing -> "Nearby devices access is off — grant it, then pick a host."
             connected -> "● Connected — ${name.ifBlank { "host" }} is receiving input"
             running -> "○ Gamepad ready — tap SELECT HOST to choose a computer"
             else -> callbacks.bluetoothGamepadStatus()
                 .ifBlank { "Bluetooth gamepad is off — tap SELECT HOST to connect" }
         }
-        btStatus.setTextColor(if (connected) t.ok else if (running) t.warn else t.muted)
+        btStatus.setTextColor(
+            when {
+                connected -> t.ok
+                !supported || !enabled || missing || running -> t.warn
+                else -> t.muted
+            },
+        )
         btGrantBtn.visibility = if (missing) View.VISIBLE else View.GONE
-        btHostBtn.isEnabled = !missing
-        btHostBtn.alpha = if (missing) 0.45f else 1f
+        btHostBtn.isEnabled = canPick
+        btHostBtn.alpha = if (canPick) 1f else 0.45f
         btDisconnectBtn.isEnabled = connected
         btDisconnectBtn.alpha = if (connected) 1f else 0.45f
-        btPairBtn.alpha = if (missing) 0.45f else 1f
-        btDiscoverBtn.alpha = if (missing) 0.45f else 1f
+        // Pairing stays available so the user can turn Bluetooth on from here.
+        btPairBtn.alpha = if (supported && !missing) 1f else 0.45f
+        // While a host is linked, Android may also connect its audio profiles.
+        // Swap the pairing shortcut for the one place the user can turn those
+        // switches off, without growing the card.
+        btDiscoverBtn.text = if (connected) "HOST AUDIO SETTINGS" else "MAKE DISCOVERABLE"
+        btDiscoverBtn.isEnabled = canPick
+        btDiscoverBtn.alpha = if (canPick) 1f else 0.45f
+        btAudioHint.visibility = if (connected) View.VISIBLE else View.GONE
+        btAudioHint.text = "Android may also connect Media audio or Phone audio to a bonded host. " +
+            "Use HOST AUDIO SETTINGS to switch those off for this device."
+        styleSections()
     }
 
     /**
@@ -2520,11 +2908,15 @@ class SettingsPanel(
             setTextColor(t.accent)
         })
 
-        val hosts = callbacks.bluetoothHosts()
+        val lastHost = SettingsGuard.string(prefs, PrefsKeys.BT_LAST_HOST, "")
+        val hosts = callbacks.bluetoothHosts().sortedWith(
+            compareByDescending<BluetoothHost> { it.address == lastHost }
+                .thenBy { it.name.lowercase() },
+        )
         val connectedName = callbacks.bluetoothGamepadName()
         if (hosts.isEmpty()) {
             box.addView(
-                tiny(
+                hint(
                     "No bonded computer or phone yet. Pair “Lemo GamePad” from your PC, " +
                         "then come back and select it here.",
                     top = px(12),
@@ -2546,6 +2938,7 @@ class SettingsPanel(
                     append(host.name)
                     append("  ·  ")
                     append(host.address.takeLast(5))
+                    if (host.address == lastHost) append("  ·  LAST USED")
                     if (isConnected) append("  ·  CONNECTED")
                 }
                 val button = action(label, primary = isConnected) {

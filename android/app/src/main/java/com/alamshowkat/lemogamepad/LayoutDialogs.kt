@@ -18,7 +18,9 @@ import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import kotlin.math.min
 
@@ -214,6 +216,193 @@ internal object LayoutDialogs {
             wrapParams(),
         )
         card.addView(actions)
+        show(activity, root, card)
+    }
+
+    /** One local, offline help topic. */
+    internal data class HelpTopic(val title: String, val body: String)
+
+    /**
+     * Scrollable topic picker for the global help centre. Each topic opens a
+     * read-only card with text bundled in the app, so help works offline.
+     */
+    fun help(activity: Activity, theme: PadTheme, topics: List<HelpTopic>) {
+        val root = overlay(activity, theme) ?: return
+        val card = card(activity, theme)
+        card.addView(eyebrow(activity, theme, "HELP & GUIDES"))
+        card.addView(copy(activity, "Pick a topic. Everything here is stored in the app.", 11.5f, theme.textDim, top = px(activity, 7)))
+
+        val list = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+        for (topic in topics) {
+            list.addView(
+                button(activity, theme, topic.title, primary = false, color = theme.accent) {
+                    remove(activity, root)
+                    info(activity, theme, topic.title, topic.body)
+                },
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ).apply { topMargin = px(activity, 7) },
+            )
+        }
+        val scrollHeight = min(
+            px(activity, 430),
+            (activity.resources.displayMetrics.heightPixels * 0.58f).toInt(),
+        )
+        card.addView(
+            ScrollView(activity).apply {
+                overScrollMode = View.OVER_SCROLL_NEVER
+                isVerticalScrollBarEnabled = false
+                addView(list)
+            },
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                scrollHeight,
+            ).apply { topMargin = px(activity, 10) },
+        )
+
+        val actions = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.END or Gravity.CENTER_VERTICAL
+            setPadding(0, px(activity, 14), 0, 0)
+        }
+        actions.addView(
+            button(activity, theme, "CLOSE", primary = true, color = theme.accent) {
+                remove(activity, root)
+            },
+            wrapParams(),
+        )
+        card.addView(actions)
+        show(activity, root, card)
+    }
+
+    /**
+     * Multi-line text input used for importing profile backups. Kept here so
+     * the dialog has exactly the same look as the other settings dialogs.
+     */
+    fun promptText(
+        activity: Activity,
+        theme: PadTheme,
+        title: String,
+        message: String,
+        positiveLabel: String,
+        onDone: (String) -> Unit,
+    ) {
+        val root = overlay(activity, theme) ?: return
+        val card = card(activity, theme)
+        card.addView(eyebrow(activity, theme, title))
+        card.addView(copy(activity, message, 11.5f, theme.textDim, top = px(activity, 7)))
+
+        val edit = EditText(activity).apply {
+            hint = "Paste profile JSON here"
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
+            gravity = Gravity.TOP or Gravity.START
+            minLines = 4
+            maxLines = 9
+            isVerticalScrollBarEnabled = true
+            textSize = 11f
+            typeface = Typeface.MONOSPACE
+            filters = arrayOf(InputFilter.LengthFilter(200_000))
+            setPadding(px(activity, 12), px(activity, 10), px(activity, 12), px(activity, 10))
+        }
+        styleField(activity, theme, edit)
+        card.addView(
+            edit,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply { topMargin = px(activity, 12) },
+        )
+
+        fun dismiss() = remove(activity, root)
+        val actions = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.END or Gravity.CENTER_VERTICAL
+            setPadding(0, px(activity, 14), 0, 0)
+        }
+        actions.addView(
+            button(activity, theme, "CANCEL", primary = false, color = theme.accent) { dismiss() },
+            wrapParams(),
+        )
+        actions.addView(
+            button(activity, theme, positiveLabel, primary = true, color = theme.accent) {
+                val text = edit.text.toString()
+                dismiss()
+                onDone(text)
+            },
+            wrapParams().apply { marginStart = px(activity, 8) },
+        )
+        card.addView(actions)
+        show(activity, root, card)
+        edit.requestFocus()
+        edit.postDelayed({
+            val imm = activity.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+            imm?.showSoftInput(edit, InputMethodManager.SHOW_IMPLICIT)
+        }, 120L)
+    }
+
+    /**
+     * Shows a layout QR large enough to scan from a second phone. The card is
+     * themed like the other layout dialogs; the QR itself stays black on white
+     * so the camera decoder has maximum contrast.
+     */
+    fun showQr(activity: Activity, theme: PadTheme, title: String, payload: String) {
+        val bitmap = LayoutQr.bitmap(payload)
+        if (bitmap == null) return
+        val root = overlay(activity, theme) ?: return
+        val card = card(activity, theme)
+
+        card.addView(eyebrow(activity, theme, title))
+        card.addView(
+            copy(
+                activity,
+                "Scan with another phone, or use the same code in the browser pad.",
+                11.5f,
+                theme.textDim,
+                top = px(activity, 7),
+            ),
+        )
+
+        val image = ImageView(activity).apply {
+            setImageBitmap(bitmap)
+            adjustViewBounds = true
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            setBackgroundColor(Color.WHITE)
+            setPadding(px(activity, 12), px(activity, 12), px(activity, 12), px(activity, 12))
+        }
+        card.addView(
+            image,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                px(activity, 300),
+            ).apply { topMargin = px(activity, 14) },
+        )
+
+        val done = TextView(activity).apply {
+            text = "DONE"
+            textSize = 11f
+            letterSpacing = 0.12f
+            setTextColor(onColor(theme.accent))
+            gravity = Gravity.CENTER
+            setPadding(px(activity, 14), px(activity, 9), px(activity, 14), px(activity, 9))
+            background = GradientDrawable().apply {
+                cornerRadius = px(activity, 10).toFloat()
+                setColor(theme.accent)
+            }
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { remove(activity, root) }
+        }
+        card.addView(
+            done,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply {
+                gravity = Gravity.END
+                topMargin = px(activity, 12)
+            },
+        )
         show(activity, root, card)
     }
 

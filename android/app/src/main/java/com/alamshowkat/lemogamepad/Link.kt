@@ -111,6 +111,13 @@ class Link(private val state: PadState, context: Context? = null) {
     /** Pad the PC actually assigned, reported in PONG. 0 = not assigned yet. */
     @Volatile var assignedSlot: Int = 0
 
+    /** Host-only seat lock and this phone's role, both reported in PONG. */
+    @Volatile var partyLocked: Boolean = false
+    @Volatile var isHost: Boolean = false
+
+    /** Called when the host or lock state changes, on the receiver thread. */
+    var onPartyState: ((locked: Boolean, host: Boolean) -> Unit)? = null
+
     /** A player is asking to swap pads; the UI shows a small Accept/Decline card. */
     var onSlotAsk: ((SlotAsk) -> Unit)? = null
 
@@ -128,6 +135,9 @@ class Link(private val state: PadState, context: Context? = null) {
 
     /** Votes queued by the UI; the sender thread writes them to the socket. */
     private val pendingVotes = ConcurrentLinkedQueue<Pair<Int, Boolean>>()
+
+    /** Party-lock toggles queued by the host; newest value wins. */
+    private val pendingLocks = ConcurrentLinkedQueue<Boolean>()
 
     /** Sender policy; changing it wakes the sender so the new rate applies now. */
     @Volatile var inputRate: InputRate = InputRate.STANDARD
@@ -177,6 +187,10 @@ class Link(private val state: PadState, context: Context? = null) {
 
     private val sendBuffer = ByteArray(64)
     private val bb = ByteBuffer.wrap(sendBuffer).order(ByteOrder.LITTLE_ENDIAN)
+    private val magicInt = ByteBuffer
+        .wrap(Proto.MAGIC.toByteArray(Charsets.US_ASCII))
+        .order(ByteOrder.LITTLE_ENDIAN)
+        .int
     private var seq = 0
 
     private var cachedHost: String? = null
@@ -282,6 +296,13 @@ class Link(private val state: PadState, context: Context? = null) {
         wakeSender()
     }
 
+    /** Toggle the host-only seat lock; safe to call from the UI thread. */
+    fun setPartyLock(enabled: Boolean) {
+        pendingLocks.clear()
+        pendingLocks.add(enabled)
+        wakeSender()
+    }
+
     /** True while this phone is waiting for the other player's answer. */
     fun swapPending(): Boolean = swapTarget != 0
 
@@ -297,9 +318,12 @@ class Link(private val state: PadState, context: Context? = null) {
         cachedTransport = null
         serverName = ""
         assignedSlot = 0
+        partyLocked = false
+        isHost = false
         swapTarget = 0
         swapCancelPending = false
         pendingVotes.clear()
+        pendingLocks.clear()
         resetStats()
     }
 
@@ -484,6 +508,15 @@ class Link(private val state: PadState, context: Context? = null) {
     }
 
     // ------------------------------------------------------------------ sender
+    private fun sendFrame(
+        s: DatagramSocket, packet: DatagramPacket, length: Int, addr: InetAddress,
+    ) {
+        packet.length = length
+        packet.address = addr
+        packet.port = port
+        s.send(packet)
+    }
+
     private fun sendLoop(gen: Int) {
         raisePriority()
         var lastVersion = -1L
@@ -491,6 +524,8 @@ class Link(private val state: PadState, context: Context? = null) {
         var lastInputAt = 0L
         var lastPingAt = 0L
         var nextFrameAt = 0L
+        // Reuse one datagram wrapper; TURBO sends hundreds of these per second.
+        val outPacket = DatagramPacket(sendBuffer, 0)
 
         while (running && generation == gen) {
             val s = sock
@@ -518,7 +553,7 @@ class Link(private val state: PadState, context: Context? = null) {
                         val keepalive = now - lastInputAt >= keepaliveMs(rate)
                         if (changed || due || keepalive) {
                             val n = buildInput()
-                            s.send(DatagramPacket(sendBuffer, n, addr, port))
+                            sendFrame(s, outPacket, n, addr)
                             lastVersion = v
                             lastWantSlot = want
                             lastInputAt = now
@@ -526,7 +561,7 @@ class Link(private val state: PadState, context: Context? = null) {
                         }
                         if (now - lastPingAt > PING_INTERVAL_MS) {
                             val n = buildPing(now)
-                            s.send(DatagramPacket(sendBuffer, n, addr, port))
+                            sendFrame(s, outPacket, n, addr)
                             lastPingAt = now
                         }
 
@@ -538,7 +573,14 @@ class Link(private val state: PadState, context: Context? = null) {
                             val vote = pendingVotes.poll() ?: break
                             val n = buildSlotVote(vote.first, vote.second)
                             repeat(3) {
-                                s.send(DatagramPacket(sendBuffer, n, addr, port))
+                                sendFrame(s, outPacket, n, addr)
+                            }
+                        }
+                        while (true) {
+                            val enabled = pendingLocks.poll() ?: break
+                            val n = buildPartyLock(enabled)
+                            repeat(3) {
+                                sendFrame(s, outPacket, n, addr)
                             }
                         }
 
@@ -549,7 +591,7 @@ class Link(private val state: PadState, context: Context? = null) {
                             swapCancelPending = false
                             val n = buildSwapRequest(0)
                             repeat(3) {
-                                s.send(DatagramPacket(sendBuffer, n, addr, port))
+                                sendFrame(s, outPacket, n, addr)
                             }
                         }
 
@@ -565,7 +607,7 @@ class Link(private val state: PadState, context: Context? = null) {
                                 )
                             } else if (now >= swapNextSendAt) {
                                 val n = buildSwapRequest(target)
-                                s.send(DatagramPacket(sendBuffer, n, addr, port))
+                                sendFrame(s, outPacket, n, addr)
                                 swapNextSendAt = now + SWAP_REQUEST_INTERVAL_MS
                             }
                         }
@@ -678,10 +720,18 @@ class Link(private val state: PadState, context: Context? = null) {
         return Proto.HEADER_SIZE + 5
     }
 
+    private fun buildPartyLock(enabled: Boolean): Int {
+        val b = begin(Proto.MSG_PARTY_LOCK)
+        b.put(if (enabled) 1 else 0)
+        return Proto.HEADER_SIZE + 1
+    }
+
     // ---------------------------------------------------------------- receiver
     private fun receiveLoop(gen: Int) {
         raisePriority()
         val buf = ByteArray(512)
+        val packet = DatagramPacket(buf, buf.size)
+        val b = ByteBuffer.wrap(buf).order(ByteOrder.LITTLE_ENDIAN)
         var lastResultId = 0
         var lastAskId = 0
 
@@ -691,7 +741,6 @@ class Link(private val state: PadState, context: Context? = null) {
                 SystemClock.sleep(40)
                 continue
             }
-            val packet = DatagramPacket(buf, buf.size)
             try {
                 s.receive(packet)
             } catch (_: Exception) {
@@ -704,10 +753,9 @@ class Link(private val state: PadState, context: Context? = null) {
             val len = packet.length
             if (len < Proto.HEADER_SIZE) continue
 
-            val b = ByteBuffer.wrap(buf, 0, len).order(ByteOrder.LITTLE_ENDIAN)
-            val magic = ByteArray(4)
-            b.get(magic)
-            if (String(magic, Charsets.US_ASCII) != Proto.MAGIC) continue
+            b.clear()
+            b.limit(len)
+            if (b.int != magicInt) continue
             b.get() // version
             val type = b.get().toInt()
             b.position(b.position() + 2) // seq
@@ -733,6 +781,15 @@ class Link(private val state: PadState, context: Context? = null) {
                             // the requested one may have been busy.
                             val slot = b.get().toInt() and 0xFF
                             assignedSlot = if (slot in 1..Proto.MAX_PLAYERS) slot else 0
+                        }
+                        if (len >= Proto.PONG_WITH_PARTY_SIZE) {
+                            val newLocked = (b.get().toInt() and 0xFF) == 1
+                            val newHost = (b.get().toInt() and 0xFF) == 1
+                            if (newLocked != partyLocked || newHost != isHost) {
+                                partyLocked = newLocked
+                                isHost = newHost
+                                onPartyState?.invoke(newLocked, newHost)
+                            }
                         }
                         recordRtt(sample)
                     }

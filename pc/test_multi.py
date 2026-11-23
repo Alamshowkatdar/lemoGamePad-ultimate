@@ -119,6 +119,14 @@ class Phone:
         self.sock.sendto(packet, self.addr)
         self.seq += 1
 
+    def set_party_lock(self, enabled: bool):
+        packet = HEADER.pack(
+            MAGIC, srv.VERSION, srv.MSG_PARTY_LOCK, self.seq & 0xFFFF,
+            self.token,
+        ) + bytes([1 if enabled else 0])
+        self.sock.sendto(packet, self.addr)
+        self.seq += 1
+
     def drain(self, timeout=0.35):
         packets = []
         old = self.sock.gettimeout()
@@ -331,13 +339,43 @@ def test_rumble(server, phones):
     first.drain(0.1)
     second.drain(0.1)
 
-    server._slot_rumble(server.slots[first_peer.slot], 40, 90)
-    packets = first.rumbles(0.5)
-    assert len(packets) == 1, f"expected one rumble packet, got {len(packets)}"
-    _magic, _ver, mtype, _seq, token = HEADER.unpack_from(packets[0])
-    assert mtype == srv.MSG_RUMBLE
-    assert token == first.token, "rumble must carry the target phone's token"
-    assert packets[0][HEADER.size :] == bytes([40, 90])
+    slot = server.slots[first_peer.slot]
+    server._slot_rumble(slot, 40, 90)
+    packets = first.rumbles(0.9)
+    assert packets, "no rumble packet reached the phone"
+    for packet in packets:
+        _magic, _ver, mtype, _seq, token = HEADER.unpack_from(packet)
+        assert mtype == srv.MSG_RUMBLE
+        assert token == first.token, "rumble must carry the target phone's token"
+        assert packet[HEADER.size :] == bytes([40, 90]), packet.hex()
+
+    # An unchanged live level is re-sent by the refresh loop so the phone can
+    # keep a long effect alive without mistaking packet loss for "stop".
+    first.drain(0.1)
+    server._refresh_active_rumble()
+    refreshed = [
+        packet for packet in first.rumbles(0.25)
+        if packet[HEADER.size :] == bytes([40, 90])
+    ]
+    assert refreshed, "a live rumble level was not refreshed"
+
+    # A game-level stop must be forwarded immediately, not treated as stale.
+    server._slot_rumble(slot, 0, 0)
+    stops = [
+        packet for packet in first.rumbles(0.3)
+        if packet[HEADER.size :] == bytes([0, 0])
+    ]
+    assert stops, "the stop transition was not sent"
+
+    # A refresh that runs after the stop must not resurrect the old level. This
+    # used to happen when the refresh snapshot held a stale non-zero value.
+    first.drain(0.1)
+    server._refresh_active_rumble()
+    resurrected = [
+        packet for packet in first.rumbles(0.25)
+        if packet[HEADER.size :] == bytes([40, 90])
+    ]
+    assert not resurrected, "a stale refresh overrode the game's stop"
 
     other = second.rumbles(0.4)
     if other:
@@ -769,6 +807,115 @@ def test_free_slot_request():
         stop_phones(server, thread, first, second)
 
 
+def test_party_lock_blocks_guests():
+    """The host's lock freezes other players' seats but never their input."""
+    server, port, thread, first, second = two_phone_server()
+    try:
+        first.set_party_lock(True)
+        wait_for(lambda: server.locked, message="host lock was not applied")
+        assert server.host_token == first.token
+
+        # A locked guest cannot move, even to a free pad.
+        second.input(want_slot=3)
+        time.sleep(0.3)
+        assert server.peers[second.token].slot == 1, "locked guest moved seats"
+
+        # A locked guest cannot swap either; the PC answers UNAVAILABLE so the
+        # pending card closes immediately instead of waiting for a timeout.
+        second.drain(0.15)
+        second.request_slot(1)
+        results = second.swap_packets(0.8)
+        assert any(
+            kind == "result" and code == srv.SLOT_UNAVAILABLE
+            for kind, _id, code, _slot in results
+        ), results
+        assert not server._swaps, "a swap was queued while locked"
+
+        # Locking input, on the other hand, would be a bug: both pads still
+        # receive button state throughout.
+        first.input(buttons=1 << CROSS, want_slot=1)
+        second.input(buttons=1 << CIRCLE, want_slot=2)
+        wait_for(
+            lambda: pad_buttons(server, server.peers[first.token]) == 1 << CROSS,
+            message="host input stopped while locked",
+        )
+        wait_for(
+            lambda: pad_buttons(server, server.peers[second.token]) == 1 << CIRCLE,
+            message="guest input stopped while locked",
+        )
+        print("  party lock blocks guest seat changes but keeps input flowing")
+    finally:
+        stop_phones(server, thread, first, second)
+
+
+def test_party_lock_host_and_join():
+    """The host may still move while locked, and new guests may claim a free pad."""
+    server, port, thread, first, second = two_phone_server()
+    third = Phone(port)
+    try:
+        first.set_party_lock(True)
+        wait_for(lambda: server.locked, message="host lock was not applied")
+
+        first.input(want_slot=3)
+        wait_for(
+            lambda: server.peers[first.token].slot == 2,
+            message="locked host could not move to a free pad",
+        )
+        wait_for(lambda: server.slots[2].pad is not None, timeout=20.0,
+                 message="host's new pad was never created")
+
+        # This is the server half of guest QR join: the code puts the phone in
+        # AUTO (want_slot=0) and the PC fills the lowest free pad.
+        third.token = third.discover(0)[0]
+        with Keepalive([first, second, third]):
+            third.input(want_slot=0)
+            wait_for(lambda: third.token in server.peers, timeout=10.0,
+                     message="guest did not register while locked")
+            assert server.peers[third.token].slot == 0, (
+                "guest did not take the remaining free pad"
+            )
+            wait_for(lambda: server.slots[0].pad is not None, timeout=20.0,
+                     message="guest's pad was never created")
+
+            # PONG carries lock + role after the slot byte for the phone UI.
+            third.ping()
+            party = None
+            for data, _ in third.drain(0.6):
+                magic, _ver, mtype, _seq, _tok = HEADER.unpack_from(data)
+                if magic == MAGIC and mtype == srv.MSG_PONG:
+                    if len(data) >= HEADER.size + 9:
+                        party = (data[HEADER.size + 7], data[HEADER.size + 8])
+            assert party == (1, 0), f"guest PONG party state {party}"
+
+        assert "a=1" in srv.qr_payload("127.0.0.1", port, "PC", auto=True)
+        assert "a=1" not in srv.qr_payload("127.0.0.1", port, "PC")
+        assert "&auto=1" in server.web_url("127.0.0.1", auto=True)
+        print("  locked host can move; guest join still takes a free pad")
+    finally:
+        third.close()
+        stop_phones(server, thread, first, second)
+
+
+def test_host_leave_unlocks():
+    """A host that disconnects must not leave the party locked forever."""
+    server, port, thread, first, second = two_phone_server()
+    first.set_party_lock(True)
+    wait_for(lambda: server.locked, message="host lock was not applied")
+    server.PEER_TIMEOUT = 1.5
+    first.close()
+    try:
+        with Keepalive([second]):
+            wait_for(lambda: not server.locked, timeout=6.0,
+                     message="party stayed locked after the host left")
+            assert server.host_token == second.token
+        print("  host disconnect releases the lock")
+    finally:
+        second.close()
+        server.running = False
+        server._wake_loop()
+        thread.join(timeout=3.0)
+
+
 def two_phone_server(max_phones=4):
     server, port, thread = start_isolated_server(max_phones=max_phones)
     first = Phone(port)
@@ -837,6 +984,9 @@ def main() -> int:
         test_swap_cancel()
         test_swap_timeout()
         test_free_slot_request()
+        test_party_lock_blocks_guests()
+        test_party_lock_host_and_join()
+        test_host_leave_unlocks()
         test_discovery(server, port)
         phones = list(test_two_pads(server, port))
         phones = test_slot_limit(server, port, phones)

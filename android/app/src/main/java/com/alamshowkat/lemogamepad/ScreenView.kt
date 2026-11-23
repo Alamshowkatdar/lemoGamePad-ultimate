@@ -71,6 +71,8 @@ class ScreenView(context: Context) : View(context) {
     @Volatile private var activeSocket: Socket? = null
     @Volatile private var streamGeneration = 0
 
+    /** Growable receive buffer reused across frames on the stream thread. */
+    private var frameBuffer = ByteArray(0)
     /** Decoded bitmaps waiting to be reused by the receive thread. */
     private val bitmapPool = ArrayDeque<Bitmap>()
     /** The bitmap the last draw actually consumed; safe to recycle when replaced. */
@@ -237,8 +239,9 @@ class ScreenView(context: Context) : View(context) {
                     var len = nextLength ?: input.readInt()
                     nextLength = null
                     if (len <= 0 || len > MAX_FRAME_BYTES) break
-                    var bytes = ByteArray(len)
-                    input.readFully(bytes)
+                    if (frameBuffer.size < len) frameBuffer = ByteArray(len)
+                    var bytes = frameBuffer
+                    input.readFully(bytes, 0, len)
 
                     // TCP can deliver older images in a burst after a brief stall.
                     // Drain every complete queued frame and decode only the newest,
@@ -255,8 +258,9 @@ class ScreenView(context: Context) : View(context) {
                             break
                         }
                         len = queuedLength
-                        bytes = ByteArray(len)
-                        input.readFully(bytes)
+                        if (frameBuffer.size < len) frameBuffer = ByteArray(len)
+                        bytes = frameBuffer
+                        input.readFully(bytes, 0, len)
                     }
                     if (len <= 0 || len > MAX_FRAME_BYTES) break
                     val decoded = decodeFrame(bytes, len)

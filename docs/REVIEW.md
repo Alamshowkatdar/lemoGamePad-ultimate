@@ -1,4 +1,4 @@
-# Review notes — 1.3.6 / 1.3.7 / 1.4.0 / 1.5.0 / 1.6.0 / 1.6.1 / 1.6.2 / 1.6.3 / 1.6.4 / 1.6.5 / 1.6.6 / 1.6.7 / 1.6.8 / 1.6.9 / 1.6.10 / 1.6.11 / 1.6.12 / 1.6.13 / 1.7.0 / 2.0.0 / 2.0.1 / 2.0.2 / 2.0.3
+# Review notes — 1.3.6 / 1.3.7 / 1.4.0 / 1.5.0 / 1.6.0 / 1.6.1 / 1.6.2 / 1.6.3 / 1.6.4 / 1.6.5 / 1.6.6 / 1.6.7 / 1.6.8 / 1.6.9 / 1.6.10 / 1.6.11 / 1.6.12 / 1.6.13 / 1.7.0 / 2.0.0 / 2.0.1 / 2.0.2 / 2.0.3 / 2.1.0
 
 A pass over the whole app (Kotlin sources, manifest, Gradle files, CI) focused on
 bugs, UI smoothness, and making the phone-to-phone Bluetooth gamepad honest.
@@ -1326,3 +1326,297 @@ monochrome drawable and launcher background color were removed.
 
 Verified on `RZCX10EAECJ`: Settings → App info and the app drawer show the blue
 icon instead of the tinted silhouette. No gamepad behavior changed.
+
+## iPhone browser pad (2.1.0)
+
+The browser pad was originally added so an iPhone without the APK could join,
+but the supported surface was mostly implicit. iOS-specific handling stopped at
+a full-screen `N/A` hint and skipping vibration, while the docs recommended
+Home Screen without declaring it.
+
+The pad page now declares `apple-mobile-web-app-capable` so **Add to Home
+Screen** really launches a standalone app. The canvas is inset by the CSS safe
+-area variables, which keeps both the drawn controls and the status pill out of
+the notch and home indicator; the screen preview uses the same insets when it
+is clamped. A coarse-pointer media query raises tap targets to 44 px and the
+dialog input to 16 px, which avoids iOS focus zoom. `-webkit-touch-callout`
+stops the long-press edit gesture from becoming a native callout, and a
+`pointercancel` (common when iOS interrupts a touch) no longer opens CONTROL
+CENTRE. Safari releases without Pointer Events still get a touch-event fallback
+for the pad, and the preview's `blob:` image fallback is now allowed by CSP.
+
+Gyro aim and tilt steering stay Android-only. iOS gates motion sensors behind a
+tap-to-grant permission and a secure context, but this page is deliberately
+served over plain LAN HTTP so it can open the server's local `ws://` socket;
+adding a TLS mode would break that design. The documentation now states the
+iOS version floor, the unsupported features and the Home Screen workflow.
+
+Verified with `pc/test_web.py` and the full PC suite; no actual iPhone was
+available in this environment, so on-device Safari behavior remains untested.
+
+## General app polish (2.1.0)
+
+Setup was the biggest source of support guesses: a fresh install showed a Wi-Fi
+card, then Connection Doctor, then nothing explained USB, Bluetooth HID or the
+browser pad. The new first-run guide asks which path the user wants once and
+shows only those steps. Finishing it marks onboarding complete, so it does not
+stack three overlays on a new install; **SETUP** in the settings header replays
+it. Nothing is auto-selected or auto-connected — forcing a transport or opening
+the QR scanner remains an explicit tap.
+
+Connection Doctor previously displayed cached readiness and link state. It now
+also has **RUN CHECK**, a short background probe of the paired host's TCP video
+and web ports using the same bound local interface as the UDP link. The result
+is information rather than a gate: the web port is optional and UDP input can
+work while a TCP probe fails under a strict firewall. The one **OPEN WEBSITE**
+button and its safe `ACTION_VIEW` intent are unchanged.
+
+Profiles already had a manual save/apply/delete flow. **COPY** duplicates a
+named snapshot under a free name, **EXPORT** copies a JSON array to the
+clipboard and **IMPORT** merges entries whose names do not already exist. That
+makes backups possible without introducing game detection, auto-switching or
+host/port settings in a profile. Import validates every entry through the same
+codec used for saved profiles and skips malformed, out-of-range or duplicate
+items.
+
+There was no settings schema version. A wrong-typed value in the `vpad`
+preferences file could throw inside `getBoolean`/`getInt` during `onCreate` and
+leave a blank app. `SettingsGuard` now normalises every preference on launch:
+booleans, clamped numeric ranges, canonical theme/face/transport/rate ids and
+profile JSON are repaired in place, while the identity token, layouts, valid
+preferences and profiles are preserved. It is deliberately conservative — no
+wipe, no reset of motion defaults for existing installs.
+
+The per-card `?` help already explained each settings card. A bundled Help
+centre adds local, offline topic cards reachable from the settings header and
+Connection Doctor, covering the paths that are not a settings card (first-run
+setup, Web pad on iPhone, Bluetooth HID safety and the live check). New buttons
+also carry `contentDescription` for screen readers. No help content fetches
+from the website.
+
+A five-tab Control Centre was tried first and rejected during on-device review
+because the tiny tab row looked cramped on a landscape phone. It was replaced
+with five collapsible category headers in the same single scroll. All cards are
+still created once when the panel opens — only their bodies are hidden — so
+live sliders, the RTT graph and callbacks keep working. One category is open at
+a time, tapping the open header collapses everything, and the choice is stored
+as a clamped `settings_section` preference. This keeps the search cost low
+without changing any settings behavior.
+
+The same review preferred a calmer look over more controls. Category rows now
+share a fixed height and carry only two extra signals: a live `LINK UP` badge on
+LINK and `HID` / `READY` on BLUETOOTH, plus a thin accent rail on the open
+group. Card copy and action buttons gained a little line spacing and size; no
+cards moved between sections and no tab row returned. Section restyling is
+signature-guarded so the 500 ms link ticker does not rebuild drawables on every
+frame.
+
+The Bluetooth picker had a real gap: the help promised PCs *or TVs*, but the
+bonded-device filter only accepted the COMPUTER and PHONE major classes. AUDIO_VIDEO
+devices are now accepted unless their specific class is a headset, headphones,
+speaker, microphone or car audio, so a TV or monitor can be a host without
+headsets cluttering the list. The address of a host that actually reaches
+`STATE_CONNECTED` is stored only to sort the manual picker and print `LAST USED`;
+nothing reads it on launch and there is no reconnect attempt. Adapter and
+permission state are surfaced in the card before a pick is attempted, and
+`onVirtualCableUnplug` plus HID unregistration now clear pending state and say
+what happened. The 9-byte report, report descriptor, explicit host choice and
+server-less HID-only design are unchanged.
+
+A bonded classic Bluetooth link is shared by all the profiles that device
+supports, so an audio-capable PC/TV can bring A2DP/HFP up when the HID link
+comes up. That is Android's connection policy, not this app requesting audio:
+`BluetoothA2dp`/`BluetoothHeadset` expose no public connect, disconnect or
+policy setter to a normal app, and the hidden `setConnectionPolicy` APIs are
+privileged and blocked by modern non-SDK restrictions. Reflection would be a
+fragile, high-risk way to touch an unrelated profile. The honest fix is a user
+action in Android's own device settings, so the connected state now swaps
+**MAKE DISCOVERABLE** for **HOST AUDIO SETTINGS** and prints a short reminder.
+`BluetoothHidSupport.openHostSettings()` tries the standard AOSP device-details
+deep link with the connected address and falls back to the normal Bluetooth
+page for skins that do not publish that screen. No profile is toggled by the
+app, no new preference is written, and the HID-only design stays intact.
+
+All Kotlin sources compile for debug and release, lint and unit-test gates
+pass, and both APKs pass archive integrity checks. The rebuilt debug APK was
+installed on a connected phone; the collapsible headers, live badges and
+Bluetooth card render without a crash.
+
+## iPhone follow-ups (2.1.0)
+
+The Home Screen pass declared standalone mode and fixed the layout, but left two
+practical problems. A shortcut keeps its original URL, including the per-run
+browser key, so it became a `401` the next time the PC server started. And the
+page treated the missing Vibration API as "no feedback at all" on iOS.
+
+`--web-key-file PATH` now creates a key on first use and reuses it on later
+runs. It is opt-in: the default stays a fresh random key for each run, and an
+explicit `--web-key` still takes precedence. The file is created with 0600
+permissions where POSIX allows it, because the key is the whole access control
+for the local page. A missing, unreadable or malformed file warns and falls back
+to a random key rather than taking the server down; a corrupt file is replaced.
+`--list-ip` exits before touching the file, so a diagnostic call has no side
+effect. `pc/test_web.py` covers creation, reuse, repair and that early exit.
+
+Rumble now has a **SOUND CUE FALLBACK** toggle next to the existing haptics
+settings. It only runs where `navigator.vibrate` is absent, so Android browsers
+still use the real motor and nobody gets both. The Web Audio context is created
+on the first tap or key press (Safari's autoplay rule), and the tone's length,
+pitch and gain follow the scaled rumble strength with the same 80 ms throttle
+as vibration. It is a quiet cue, not a ringtone, and defaults on.
+
+iOS also freezes WebSockets when a phone sleeps without always delivering a
+`close` event. The page already reset held inputs on `visibilitychange`; it now
+also watches `pageshow` and `online`, and forces a fresh socket if the last
+ping reply is more than 12 seconds old. A still-open but dead socket no longer
+leaves the pad stuck at CONNECTING.
+
+No wire format, pad backend or server transport changed. All settings remain
+per-browser `localStorage` entries with sensible defaults, so older saved
+prefs and older servers still work. `pc/test_web.py` passes in full; no
+physical iPhone was available here, so on-device Safari behaviour remains a
+manual check.
+
+## Control Centre redesign (2.1.0)
+
+The previous pass solved *finding* a setting with collapsible categories. It did
+not solve *distance*: changing slot, then stick feel, then theme still meant
+collapse, reopen, and scroll back up. The category hint ate vertical space and
+every card carried the same explanatory paragraph.
+
+The browser pad keeps a pinned six-tile command dock and a five-button category
+rail. The tiles are shortcuts, not clones: `CONNECT` performs the existing
+connect button's click, and the others select the owning group then scroll to
+its card. Every real control still exists once, so the live callbacks, RTT
+graph and profile logic are untouched. Scroll offsets are kept per group in
+memory (and in `localStorage` on the web), so switching away and back returns
+to the same row instead of the top.
+
+Android went further after on-device feedback. A separate dock, a section
+header stack and a two-column card grid still used more than half the landscape
+screen before any setting appeared. The final Android sheet has only a compact
+header (title plus SETUP, help and close), then one six-chip tab row:
+LINK, PAD, BT, STYLE, GAMES and DENSE. There are no per-section headers and no
+dock; the tab row already names the category, so the body starts with one quiet
+caption and then the cards. Cards use a single roomy column. Wide browser
+windows still get two columns because they have the space.
+
+**DENSE** hides views tagged `hint` on Android and `.note` paragraphs on the
+web, and tightens card padding. On Android it is the last chip in the tab row,
+highlighted when active; CONNECT is left in the status card where the real
+connection buttons live. Labels, sliders, chips and buttons stay visible.
+
+`PrefsKeys.SETTINGS_DENSE` and `SettingsGuard` are additive: an absent key is
+false, and a wrong-typed value is repaired like every other boolean. Older
+saved section selections still work. `pc/test_web.py` now asserts the dock,
+rail, grouping and dense markers in all three web assets.
+
+The same pass also refreshed the theme layer. `Motions` durations and spread
+were tuned on both platforms, then each press motif got a second gesture:
+a soft inner ring on pulse, counter-rotating arcs on wave and halo, rotating
+spokes on shock and burst, angular ticks on void and a mirrored underline on
+line. On Android the sheet and cards use subtle vertical theme gradients, the
+active section rail is rounded, tab chips compress on touch and a newly
+selected section fades in. On the web the sheet picks up the theme gradient and
+accent sheen, active tabs glow, theme swatches breathe with a moving highlight,
+and a group entrance animation restarts only on the visible wrapper so mounted
+controls and scroll memory survive. Web keyframes now read their duration from
+the same `MOTIONS` table as the canvas, so the two stay in step. OFF still
+removes every flourish on both platforms.
+
+During the device pass, the first `GridLayout` dock spec threw
+`IllegalArgumentException: row indices (start + span) mustn't exceed the row
+count` on Android 17 when the sheet opened. The dock and the landscape card
+grid were removed completely in favour of weighted `LinearLayout` rows, which
+also fixed the cramped phone layout.
+
+Verification: `pc/test_web.py`, `test_multi.py`, `test_latency.py` and
+`test_capture.py` pass, all PC Python files compile, and `node --check` accepts
+`app.js`. A writable SDK was installed at `/home/meigo/android-sdk`, and
+`:app:assembleDebug` now succeeds; the debug APK was installed and launched on
+a connected SM-S928B, with the Control Centre open and no crash in logcat.
+
+## Party slots (2.1.0)
+
+The slot system already had the right primitive for guests: a new peer that
+arrives with `want_slot=0` takes the first free `PadSlot`. Guest QR join therefore
+adds no new input wire format. `qr_payload(..., auto=True)` appends `a=1`, the
+scanner returns that flag, and `MainActivity` forces AUTO before retargeting the
+link. The browser variant uses `&auto=1` and only overrides the in-memory pref,
+so a shared Home Screen tab does not silently lose its usual slot. An accepted
+swap updates only the live seat in that tab; it deliberately skips the preference
+write so the guest code stays temporary.
+
+Party lock is the complement: it stops *moving* players, not *joining* or
+*playing*. The first registered peer is designated host without a new handshake;
+type 12 carries the host's lock bit over UDP, and the browser uses
+`{"t":"lock","on":...}`. Enforcement sits at the three existing seat-change
+choke points — the live `want_slot` move branch, `_begin_swap` and `_resolve_swap`
+— so no pad-update path was touched. A locked guest gets `SLOT_UNAVAILABLE`
+immediately, which also clears any pending swap card instead of waiting for a
+timeout. The two extra PONG bytes report lock/role to older apps harmlessly
+because they stop reading after the slot byte. `_begin_swap` re-checks the lock
+inside the section that actually inserts the swap, so a host lock landing
+between the first check and insertion cannot slip a seat change through. Locking
+also cancels the target's Accept prompt, not just the requester's pending card.
+
+Host loss cannot be allowed to strand the party behind a lock, so `_drop_peer`
+clears the lock and promotes the lowest remaining token. Browser tabs learn that
+through `ps`; phones learn it through PONG. `pc/test_multi.py` covers blocked
+guest moves and swaps, continued input, locked host moves, free-slot joins while
+locked, PONG party bits, QR flags and host-loss recovery. `pc/test_web.py` also
+drives the browser lock message and checks the `ps` role broadcast.
+
+Rumble was the one place where the app still substituted its own rhythm for the
+game's. A phone has one actuator while XInput exposes a light and a heavy motor,
+so the old `max(small, large)` plus a 130 ms pulse every 160 ms threw away both
+the second motor and the game's timing. The phone now combines the two levels
+(`max + min/2`, capped at 255) and plays one repeating waveform at that amplitude.
+A zero level cancels immediately; the old 250 ms "stale stop" guard could swallow
+a genuine quick release.
+
+That creates one new risk: a sustained effect would run forever if its stop
+packet were lost, so the status thread re-sends every non-zero slot level every
+500 ms. Game-driven duplicates are still deduplicated; only these refreshes
+repeat. A per-slot lock covers the state change and the outgoing packet, so a
+stop that lands during a refresh cannot be overwritten by the older level. The
+phone treats refreshes as watchdog resets without restarting the waveform, so
+the buzz stays smooth. The 1.6 s fallback timeout
+remains for older servers that do not refresh. Browser rumble uses the same
+combined level and a longer one-shot duration that the refresh extends, with a
+changed-level check so the iOS audio cue does not beep twice a second.
+
+Because a game can now buzz continuously, game force feedback also has its own
+`game_rumble` / `lmgb.gameRumble` switch. The existing haptics toggle still
+covers button clicks, which are useful feedback when the screen is busy; the new
+switch stops incoming rumble without taking those clicks away. Both platforms
+check it before starting a vibration, cancel an active one when it is switched
+off, and include it in Android game profiles so a quiet profile stays quiet.
+This is a local setting only — no protocol change, and the server still sends
+the game's levels to the phone for the app to accept or ignore.
+
+The same review trimmed a few hot-path allocations without changing behaviour:
+the Android sender reuses one `DatagramPacket`, the screen stream reuses a
+growable frame buffer, the layout QR fills one pixel array instead of calling
+`setPixel()` half a million times, and the browser unmask path XORs each small
+WebSocket frame with one big integer. None of these touch the wire format.
+
+Layout QR sharing deliberately avoids a new wire protocol. A saved layout is
+already a compact colon/comma string of key, position, scale, visibility and
+lock bits; prefixing that with a three-line envelope gives one payload both
+Android and the browser can parse. Android renders it with the ZXing core jar
+that was already bundled for pairing, and reuses the camera scanner with a
+`layout_mode` extra so no second Activity is needed. The browser copies and
+pastes the same text, and accepts it in a URL hash for chat/message sharing.
+
+The format is not a secret and carries no host, key, token or connection state,
+so it needs no server route or authentication. The existing `applyLayout` path
+already ignores unknown keys and clamps values, which keeps a bad QR from
+changing unrelated controls. Imports replace a same-named saved layout rather
+than silently creating duplicates; `LayoutStore.save()` reports that case so
+the toast can say "updated" instead of "imported".
+
+The Android peek/height control was removed in the same pass. It duplicated
+normal scrolling, and its `sheetExpanded` / `toggleSheetHeight()` state had no
+surviving UI after the tabs-only redesign; keeping it would only leave a dead
+code path behind.

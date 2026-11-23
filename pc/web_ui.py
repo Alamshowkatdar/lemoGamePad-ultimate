@@ -35,7 +35,7 @@ CSP = (
     "default-src 'self'; "
     "script-src 'self'; "
     "style-src 'self'; "
-    "img-src 'self' data:; "
+    "img-src 'self' data: blob:; "
     "connect-src 'self' ws: wss:; "
     "base-uri 'none'; "
     "form-action 'none'; "
@@ -99,6 +99,8 @@ class WebGamepadServer:
         screen_info: Optional[Callable[[], Optional[dict]]] = None,
         on_swap: Optional[Callable] = None,
         on_vote: Optional[Callable] = None,
+        on_lock: Optional[Callable] = None,
+        party_state: Optional[Callable] = None,
     ):
         self.port = port
         self.key = key
@@ -108,6 +110,8 @@ class WebGamepadServer:
         self.on_token = on_token
         self.on_swap = on_swap
         self.on_vote = on_vote
+        self.on_lock = on_lock
+        self.party_state = party_state
         self.log = log or print
         self.server_name = server_name or "lemoGamePad"
         self.max_players = max(1, int(max_players))
@@ -217,6 +221,31 @@ class WebGamepadServer:
             self.on_vote(connection.token, int(request_id), bool(accept))
         except Exception as exc:
             self.log(f"browser swap vote failed: {exc}")
+
+    def lock(self, connection: "_Connection", enabled: bool) -> None:
+        if self.on_lock is None:
+            return
+        try:
+            self.on_lock(connection.token, bool(enabled))
+        except Exception as exc:
+            self.log(f"browser party lock failed: {exc}")
+
+    def broadcast_party(self, state) -> None:
+        """Push the host/lock flags to every pad tab with the right host bit."""
+        locked, host_token = state if state else (False, None)
+        with self._connections_lock:
+            connections = [c for c in self._connections if c.mode == "pad"]
+        for connection in connections:
+            try:
+                connection.send_json(
+                    {
+                        "t": "ps",
+                        "on": bool(locked),
+                        "host": connection.token == host_token,
+                    }
+                )
+            except Exception:
+                pass
 
     def submit(self, connection: "_Connection", state: dict, want_slot: int) -> int:
         try:
@@ -472,8 +501,12 @@ class _Connection:
             raise ValueError("browser frame is not masked")
         mask = self._recv(4)
         body = self._recv(length)
-        payload = bytes(byte ^ mask[index % 4] for index, byte in enumerate(body))
-        return fin, opcode, payload
+        # Browser frames are small JSON messages at up to ~60/s per pad. XOR the
+        # whole body with one big integer instead of allocating a generator and
+        # rebuilding bytes one element at a time on every input tick.
+        repeated = (mask * ((length + 3) // 4))[:length]
+        value = int.from_bytes(body, "big") ^ int.from_bytes(repeated, "big")
+        return fin, opcode, value.to_bytes(length, "big")
 
     def _send(self, opcode: int, payload: bytes) -> None:
         header = bytearray([0x80 | opcode])
@@ -527,7 +560,17 @@ class _Connection:
             if slot != self.slot:
                 self.slot = slot
                 self.send_json({"t": "s", "n": slot})
-            self.send_json({"t": "q", "c": message.get("c"), "n": slot})
+            state = self.web.party_state() if self.web.party_state else (False, None)
+            locked, host_token = state if state else (False, None)
+            self.send_json(
+                {
+                    "t": "q",
+                    "c": message.get("c"),
+                    "n": slot,
+                    "lock": bool(locked),
+                    "host": self.token == host_token,
+                }
+            )
             return
 
         if kind == "swap":
@@ -538,6 +581,10 @@ class _Connection:
             request_id = _clamp(message.get("id"), 0, 0xFFFFFFFF)
             accept = bool(_clamp(message.get("ok"), 0, 1))
             self.web.vote(self, request_id, accept)
+            return
+
+        if kind == "lock":
+            self.web.lock(self, bool(_clamp(message.get("on"), 0, 1)))
             return
 
         # Anything else is controller state. Unknown fields are ignored, so an
@@ -600,12 +647,16 @@ class _Connection:
         else:
             self.web.log(f"browser connected: {self.ip}")
             self.web._bind_token(self)
+            state = self.web.party_state() if self.web.party_state else (False, None)
+            locked, host_token = state if state else (False, None)
             self.send_json(
                 {
                     "t": "h",
                     "n": self.web.server_name,
                     "max": self.web.max_players,
                     "screen": self.web.screen_endpoint() is not None,
+                    "locked": bool(locked),
+                    "host": self.token == host_token,
                 }
             )
         try:

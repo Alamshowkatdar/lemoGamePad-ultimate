@@ -2,9 +2,14 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, user-scalable=no">
   <meta name="theme-color" content="#0f1a14">
   <meta name="color-scheme" content="dark">
+  <!-- Add to Home Screen opens the pad as a standalone app instead of a Safari tab. -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="lemoGamePad">
   <title>lemoGamePad &mdash; browser pad</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="style.css">
@@ -54,118 +59,165 @@
       </header>
       <div class="sheet-divider"></div>
 
+      <div class="command-dock" aria-label="Quick controls">
+        <button type="button" data-quick="connect">CONNECT</button>
+        <button type="button" data-quick="slot">SLOT</button>
+        <button type="button" data-quick="stick">STICK</button>
+        <button type="button" data-quick="theme">THEME</button>
+        <button type="button" data-quick="screen">SCREEN</button>
+        <button id="density-toggle" type="button" aria-pressed="false">DENSE</button>
+      </div>
+
+      <nav id="sheet-jump" class="jump-rail" aria-label="Control centre sections">
+        <button type="button" data-group="0">LINK</button>
+        <button type="button" data-group="1">PAD</button>
+        <button type="button" data-group="2">STYLE</button>
+        <button type="button" data-group="3">LAYOUTS</button>
+        <button type="button" data-group="4">SCREEN</button>
+      </nav>
+
       <div class="sheet-body">
-        <section class="card">
-          <div class="row status-top">
-            <span id="sheet-dot" class="dot" aria-hidden="true"></span>
-            <b id="sheet-status-title">NOT PAIRED</b>
-            <span id="sheet-status-sub" class="status-sub"></span>
-          </div>
-          <p id="sheet-detail" class="detail"></p>
-          <canvas id="latency-graph" class="latency" height="44" hidden></canvas>
-          <p id="latency-stats" class="latency-stats" hidden></p>
-          <div class="row actions">
-            <button id="connect-btn" class="action primary" type="button">CONNECT</button>
-            <button id="reconnect-btn" class="action" type="button">RECONNECT</button>
-            <button id="disconnect-btn" class="action" type="button">DISCONNECT</button>
-          </div>
-        </section>
+        <div class="sheet-group" data-group="0">
+          <section id="card-status" class="card">
+            <div class="row status-top">
+              <span id="sheet-dot" class="dot" aria-hidden="true"></span>
+              <b id="sheet-status-title">NOT PAIRED</b>
+              <span id="sheet-status-sub" class="status-sub"></span>
+            </div>
+            <p id="sheet-detail" class="detail"></p>
+            <canvas id="latency-graph" class="latency" height="44" hidden></canvas>
+            <p id="latency-stats" class="latency-stats" hidden></p>
+            <div class="row actions">
+              <button id="connect-btn" class="action primary" type="button">CONNECT</button>
+              <button id="reconnect-btn" class="action" type="button">RECONNECT</button>
+              <button id="disconnect-btn" class="action" type="button">DISCONNECT</button>
+            </div>
+          </section>
 
-        <section class="card">
-          <h3 class="section-title">CONNECTION</h3>
-          <p id="server-line" class="tiny"></p>
-          <p class="tiny label">PLAYER SLOT</p>
-          <div id="slot-row" class="chip-row"></div>
-          <p id="slot-line" class="tiny note"></p>
-          <div class="row actions gap">
-            <button id="copy-link" class="action" type="button">COPY PAGE LINK</button>
-            <button id="key-help" class="action" type="button">KEYBOARD MAP</button>
-          </div>
-          <p class="tiny note">
-            This page is served by the PC, so no network scan is needed.
-            Open the URL printed in the server window on any device on the same Wi-Fi.
-          </p>
-        </section>
+          <section id="card-connection" class="card">
+            <h3 class="section-title">CONNECTION</h3>
+            <p id="server-line" class="tiny"></p>
+            <p class="tiny label">PLAYER SLOT</p>
+            <div id="slot-row" class="chip-row"></div>
+            <p id="slot-line" class="tiny note"></p>
+            <div class="row actions gap">
+              <button id="party-lock-btn" class="action" type="button" hidden>LOCK PARTY</button>
+              <button id="copy-link" class="action" type="button">COPY PAGE LINK</button>
+              <button id="key-help" class="action" type="button">KEYBOARD MAP</button>
+            </div>
+            <p class="tiny note">
+              This page is served by the PC, so no network scan is needed.
+              Open the URL printed in the server window on any device on the same Wi-Fi.
+            </p>
+          </section>
+        </div>
 
-        <section class="card">
-          <h3 class="section-title">APPEARANCE</h3>
-          <p class="tiny label">THEME &middot; TAP A PALETTE TO CROSS-FADE THE PAD</p>
-          <div id="theme-grid" class="theme-grid"></div>
-          <p class="tiny label spaced">FACE BUTTON LABELS</p>
-          <div class="row gap">
-            <button class="chip wide" type="button" data-faces="ps">PLAYSTATION</button>
-            <button class="chip wide" type="button" data-faces="xbox">XBOX</button>
-          </div>
-          <div class="row between spaced">
-            <span class="tiny">Animated buttons</span>
-            <button id="motion-toggle" class="toggle" type="button" aria-pressed="true">ON</button>
-          </div>
-          <p class="tiny note">Every theme has its own press ripple. On by default unless your device asks for reduced motion.</p>
-          <div class="row between spaced">
-            <span class="tiny">Full screen</span>
-            <button id="fullscreen-toggle" class="toggle" type="button" aria-pressed="false">OFF</button>
-          </div>
-          <p id="fullscreen-hint" class="tiny note"></p>
-        </section>
+        <div class="sheet-group" data-group="1" hidden>
+          <section id="card-controls" class="card">
+            <h3 class="section-title">CONTROLS</h3>
+            <p id="deadzone-label" class="tiny label">STICK DEADZONE &middot; 12%</p>
+            <input id="deadzone" class="slider" type="range" min="0" max="40" step="1" value="12" aria-label="Stick deadzone">
+            <p id="curve-label" class="tiny label spaced">STICK CURVE &middot; 0%</p>
+            <input id="curve" class="slider" type="range" min="0" max="100" step="1" value="0" aria-label="Stick curve">
+            <p class="tiny note">0% is linear &middot; higher values calm small stick corrections</p>
 
-        <section class="card">
-          <h3 class="section-title">CONTROLS</h3>
-          <p id="deadzone-label" class="tiny label">STICK DEADZONE &middot; 12%</p>
-          <input id="deadzone" class="slider" type="range" min="0" max="40" step="1" value="12" aria-label="Stick deadzone">
-          <p id="curve-label" class="tiny label spaced">STICK CURVE &middot; 0%</p>
-          <input id="curve" class="slider" type="range" min="0" max="100" step="1" value="0" aria-label="Stick curve">
-          <p class="tiny note">0% is linear &middot; higher values calm small stick corrections</p>
+            <div class="row between spaced">
+              <span class="tiny">Vibration feedback</span>
+              <button id="haptics-toggle" class="toggle" type="button" aria-pressed="true">ON</button>
+            </div>
+            <div class="row between spaced">
+              <span class="tiny">Vibration from games</span>
+              <button id="game-rumble-toggle" class="toggle" type="button" aria-pressed="true">ON</button>
+            </div>
+            <p class="tiny note">Keeps button clicks; silences force feedback from the game.</p>
+            <p id="strength-label" class="tiny label spaced">VIBRATION STRENGTH &middot; 100%</p>
+            <input id="strength" class="slider" type="range" min="0" max="100" step="1" value="100" aria-label="Vibration strength">
 
-          <div class="row between spaced">
-            <span class="tiny">Vibration feedback</span>
-            <button id="haptics-toggle" class="toggle" type="button" aria-pressed="true">ON</button>
-          </div>
-          <p id="strength-label" class="tiny label spaced">VIBRATION STRENGTH &middot; 100%</p>
-          <input id="strength" class="slider" type="range" min="0" max="100" step="1" value="100" aria-label="Vibration strength">
+            <div class="row between spaced">
+              <span class="tiny">Sound cue fallback</span>
+              <button id="sound-cue-toggle" class="toggle" type="button" aria-pressed="true">ON</button>
+            </div>
+            <p id="sound-cue-hint" class="tiny note">
+              Where vibration is unavailable (iPhone Safari), play a quiet tone instead.
+            </p>
 
-          <p class="tiny label spaced">INPUT RATE</p>
-          <div class="row gap" id="rate-row">
-            <button class="chip wide" type="button" data-rate="eco">ECO</button>
-            <button class="chip wide" type="button" data-rate="standard">STANDARD</button>
-            <button class="chip wide" type="button" data-rate="turbo">TURBO</button>
-          </div>
-          <p id="rate-hint" class="tiny note"></p>
-        </section>
+            <p class="tiny label spaced">INPUT RATE</p>
+            <div class="row gap" id="rate-row">
+              <button class="chip wide" type="button" data-rate="eco">ECO</button>
+              <button class="chip wide" type="button" data-rate="standard">STANDARD</button>
+              <button class="chip wide" type="button" data-rate="turbo">TURBO</button>
+            </div>
+            <p id="rate-hint" class="tiny note"></p>
 
-        <section class="card">
-          <h3 class="section-title">LAYOUTS</h3>
-          <div class="row gap">
-            <button id="edit-layout" class="action" type="button">CUSTOMIZE</button>
-            <button id="save-layout" class="action primary" type="button">SAVE AS&hellip;</button>
-          </div>
-          <p class="tiny note">
-            Every control's position, size and visibility is remembered.
-            Tap a saved layout to switch.
-          </p>
-          <div id="layout-list" class="layout-list"></div>
-          <p id="layout-summary" class="tiny note"></p>
-        </section>
+          </section>
+        </div>
 
-        <section class="card">
-          <h3 class="section-title">PC SCREEN</h3>
-          <div class="row between">
-            <span class="tiny">Screen preview window</span>
-            <button id="screen-toggle" class="toggle" type="button" aria-pressed="false">OFF</button>
-          </div>
-          <p class="tiny label spaced">PREVIEW SIZE</p>
-          <div class="row gap" id="screen-size">
-            <button class="chip wide" type="button" data-size="small">SMALL</button>
-            <button class="chip wide" type="button" data-size="large">LARGE</button>
-          </div>
-          <p class="tiny label spaced">STREAM QUALITY</p>
-          <div class="row gap" id="screen-quality">
-            <button class="chip wide" type="button" data-quality="0">LOW</button>
-            <button class="chip wide" type="button" data-quality="1">BALANCED</button>
-            <button class="chip wide" type="button" data-quality="2">HIGH</button>
-          </div>
-          <p id="screen-hint" class="tiny note"></p>
-          <p class="tiny note">LOW sends less data &middot; HIGH is sharper &middot; live FPS appears on the preview</p>
-        </section>
+        <div class="sheet-group" data-group="2" hidden>
+          <section id="card-appearance" class="card">
+            <h3 class="section-title">APPEARANCE</h3>
+            <p class="tiny label">THEME &middot; TAP A PALETTE TO CROSS-FADE THE PAD</p>
+            <div id="theme-grid" class="theme-grid"></div>
+            <p class="tiny label spaced">FACE BUTTON LABELS</p>
+            <div class="row gap">
+              <button class="chip wide" type="button" data-faces="ps">PLAYSTATION</button>
+              <button class="chip wide" type="button" data-faces="xbox">XBOX</button>
+            </div>
+            <div class="row between spaced">
+              <span class="tiny">Animated buttons</span>
+              <button id="motion-toggle" class="toggle" type="button" aria-pressed="true">ON</button>
+            </div>
+            <p class="tiny note">Every theme has its own press ripple. On by default unless your device asks for reduced motion.</p>
+            <div class="row between spaced">
+              <span class="tiny">Full screen</span>
+              <button id="fullscreen-toggle" class="toggle" type="button" aria-pressed="false">OFF</button>
+            </div>
+            <p id="fullscreen-hint" class="tiny note"></p>
+          </section>
+        </div>
+
+        <div class="sheet-group" data-group="3" hidden>
+          <section id="card-layouts" class="card">
+            <h3 class="section-title">LAYOUTS</h3>
+            <div class="row gap">
+              <button id="edit-layout" class="action" type="button">CUSTOMIZE</button>
+              <button id="save-layout" class="action primary" type="button">SAVE AS&hellip;</button>
+            </div>
+            <div class="row gap">
+              <button id="share-layout-code" class="action" type="button">SHARE CODE</button>
+              <button id="import-layout-code" class="action" type="button">IMPORT CODE</button>
+            </div>
+            <p class="tiny note">
+              Every control's position, size and visibility is remembered.
+              Tap a saved layout to switch. SHARE CODE gives Android the same
+              text it turns into a QR.
+            </p>
+            <div id="layout-list" class="layout-list"></div>
+            <p id="layout-summary" class="tiny note"></p>
+          </section>
+        </div>
+
+        <div class="sheet-group" data-group="4" hidden>
+          <section id="card-screen" class="card">
+            <h3 class="section-title">PC SCREEN</h3>
+            <div class="row between">
+              <span class="tiny">Screen preview window</span>
+              <button id="screen-toggle" class="toggle" type="button" aria-pressed="false">OFF</button>
+            </div>
+            <p class="tiny label spaced">PREVIEW SIZE</p>
+            <div class="row gap" id="screen-size">
+              <button class="chip wide" type="button" data-size="small">SMALL</button>
+              <button class="chip wide" type="button" data-size="large">LARGE</button>
+            </div>
+            <p class="tiny label spaced">STREAM QUALITY</p>
+            <div class="row gap" id="screen-quality">
+              <button class="chip wide" type="button" data-quality="0">LOW</button>
+              <button class="chip wide" type="button" data-quality="1">BALANCED</button>
+              <button class="chip wide" type="button" data-quality="2">HIGH</button>
+            </div>
+            <p id="screen-hint" class="tiny note"></p>
+            <p class="tiny note">LOW sends less data &middot; HIGH is sharper &middot; live FPS appears on the preview</p>
+          </section>
+        </div>
 
         <p class="footer">lemoGamePad ultimate&trade;<br>by Alam showkat &middot; <span id="footer-version">v1.7.0</span></p>
       </div>
@@ -177,7 +229,7 @@
       <p class="eyebrow" id="dialog-eyebrow">LAYOUT</p>
       <h3 id="dialog-title">SAVE LAYOUT</h3>
       <p id="dialog-message"></p>
-      <input id="dialog-input" maxlength="28" autocomplete="off" spellcheck="false" hidden>
+      <textarea id="dialog-input" rows="4" autocomplete="off" spellcheck="false" hidden></textarea>
       <div class="row gap">
         <button id="dialog-cancel" class="action" type="button">CANCEL</button>
         <button id="dialog-ok" class="action primary" type="button">SAVE</button>

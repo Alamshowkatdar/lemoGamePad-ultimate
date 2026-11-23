@@ -14,12 +14,14 @@ import os
 import socket
 import struct
 import sys
+import tempfile
 import threading
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import vpad_server as srv  # noqa: E402
+import web_ui  # noqa: E402
 
 KEY = "test-pairing-key"
 
@@ -291,7 +293,10 @@ def test_page_and_key(server, port):
         "data-faces",
         "motion-toggle",
         "fullscreen-toggle",
+        "sound-cue-toggle",
         "dialog-scrim",
+        "share-layout-code",
+        "import-layout-code",
     ):
         assert marker in body, f"page is missing {marker}"
 
@@ -314,6 +319,82 @@ def test_page_and_key(server, port):
     # The sheet opens on the pad's pointerup, so its backdrop must not close on
     # the compatibility click that follows the same tap.
     assert 'scrim.addEventListener("pointerdown"' in script
+
+    # iPhone / Safari compatibility. Home Screen mode must be declared by the
+    # page, the canvas must avoid the safe area, iOS focus zoom must be avoided,
+    # and an interrupted touch must never open the settings sheet.
+    for marker in (
+        'name="apple-mobile-web-app-capable" content="yes"',
+        'name="apple-mobile-web-app-title"',
+        "maximum-scale=1",
+    ):
+        assert marker in body, f"page is missing iPhone marker {marker}"
+    for marker in (
+        "-webkit-touch-callout: none",
+        "inset: var(--safe-top)",
+        "@media (pointer: coarse)",
+        "font-size: 16px",
+    ):
+        assert marker in css, f"CSS is missing iPhone marker {marker}"
+    for marker in (
+        'window.PointerEvent',
+        'addEventListener("touchcancel"',
+        "function safeInsets()",
+        'event.type === "pointercancel"',
+    ):
+        assert marker in script, f"app.js is missing iPhone marker {marker}"
+    # iOS has no vibration API: rumble falls back to a quiet audio cue, and a
+    # frozen socket after the phone sleeps is detected on wake.
+    for marker in (
+        "lmgb.soundCue",
+        "function playRumbleCue",
+        "webkitAudioContext",
+        "function wakeSocket",
+        'window.addEventListener("pageshow"',
+    ):
+        assert marker in script, f"app.js is missing iOS feedback marker {marker}"
+    # Control Centre redesign: a pinned dock and jump rail keep the controls
+    # people touch every session within one tap, and the sheet groups cards so
+    # a short phone screen does not become a long scroll.
+    for marker in (
+        'id="density-toggle"',
+        'id="sheet-jump"',
+        'data-quick="connect"',
+        'class="sheet-group"',
+    ):
+        assert marker in body, f"page is missing navigation marker {marker}"
+    for marker in (
+        ".command-dock",
+        ".sheet-body.dense",
+        "@media (min-width: 900px)",
+    ):
+        assert marker in css, f"CSS is missing navigation marker {marker}"
+    for marker in (
+        "function selectSheetGroup",
+        "function quickJump",
+        "lmgb.sheetScroll",
+    ):
+        assert marker in script, f"app.js is missing navigation marker {marker}"
+    for marker in (
+        "LMGB-LAYOUT-1",
+        "function buildLayoutShare",
+        "function parseLayoutShare",
+        "function importSharedLayout",
+        "function consumeLayoutLink",
+    ):
+        assert marker in script, f"app.js is missing layout share marker {marker}"
+    for marker in (
+        "Math.floor(Math.min(s, l) / 2)",
+        "navigator.vibrate(Math.max(120, Math.round(level * 700)))",
+        "lmgb.gameRumble",
+        "function cancelRumble",
+    ):
+        assert marker in script, f"app.js is missing rumble marker {marker}"
+    for marker in ('id="game-rumble-toggle"',):
+        assert marker in body, f"page is missing rumble marker {marker}"
+    # Older Safari builds without createImageBitmap use a blob: image URL.
+    assert "blob:" in web_ui.CSP, "screen preview blob fallback is blocked by CSP"
+
     status, icon = http_get(port, "/favicon.svg")
     assert status == 200 and "<svg" in icon, status
     print("  page/key ok: page needs the key, relative assets load")
@@ -347,10 +428,24 @@ def test_input_ping_and_rumble(server, port):
         client.send({"t": "p", "c": 123456})
         pong = client.recv()
         assert pong["t"] == "q" and pong["c"] == 123456 and pong["n"] == 1, pong
+        assert pong.get("host") is True and pong.get("lock") is False, pong
 
         server._slot_rumble(server.slots[0], 10, 200)
         rumble = client.recv()
         assert rumble == {"t": "r", "s": 10, "l": 200}, rumble
+
+        server._slot_rumble(server.slots[0], 0, 0)
+        deadline = time.monotonic() + 1.0
+        stop = None
+        while time.monotonic() < deadline:
+            try:
+                message = client.recv(timeout=0.25)
+            except socket.timeout:
+                continue
+            if message == {"t": "r", "s": 0, "l": 0}:
+                stop = message
+                break
+        assert stop is not None, "the browser never received a rumble stop"
         print("  websocket ok: input, slot, ping and rumble")
     finally:
         client.close()
@@ -473,6 +568,47 @@ def test_swap(server, port):
         first.close()
         second.close()
         wait_for(lambda: not server.peers, message="swap tabs were not released")
+
+
+def test_party_lock(server, port):
+    """The browser host can freeze seats, and the guest gets a clear refusal."""
+    wait_for(lambda: not server.peers, message="previous tabs did not release")
+    first = WebSocket(port, f"/ws?k={KEY}")
+    second = WebSocket(port, f"/ws?k={KEY}")
+    try:
+        assert first.recv()["t"] == "h"
+        assert second.recv()["t"] == "h"
+        for client in (first, second):
+            client.send({"t": "i", "b": 0, "lx": 0, "ly": 0, "rx": 0,
+                         "ry": 0, "l2": 0, "r2": 0})
+        wait_for(lambda: len(server.peers) == 2, message="tabs did not register")
+        recv_until(first, "s")
+        recv_until(second, "s")
+        first_peer, second_peer = list(server.peers.values())
+        assert server.host_token == first_peer.token
+
+        first.send({"t": "lock", "on": 1})
+        host_state = recv_until(first, "ps")
+        guest_state = recv_until(second, "ps")
+        assert host_state["on"] is True and host_state["host"] is True, host_state
+        assert guest_state["on"] is True and guest_state["host"] is False, guest_state
+        assert server.locked
+
+        # A locked guest cannot swap; UNAVAILABLE closes its pending card at once.
+        second.send({"t": "swap", "w": 1})
+        refused = recv_until(second, "sr")
+        assert refused["c"] == srv.SLOT_UNAVAILABLE, refused
+        assert first_peer.slot == 0 and second_peer.slot == 1
+
+        first.send({"t": "lock", "on": 0})
+        unlocked = recv_until(second, "ps")
+        assert unlocked["on"] is False, unlocked
+        assert not server.locked
+        print("  party lock ok: browser host freezes seats and unlocks")
+    finally:
+        first.close()
+        second.close()
+        wait_for(lambda: not server.peers, message="lock tabs were not released")
 
 
 def test_screen_unavailable(server, port):
@@ -602,7 +738,29 @@ def test_browser_input_wakes_loop():
         thread.join(timeout=3.0)
 
 
+def test_web_key_file():
+    """A saved key keeps an iPhone Home Screen URL valid across restarts."""
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "web.key")
+        first = srv.load_or_create_web_key(path)
+        assert srv.valid_web_key(first), first
+        assert srv.load_or_create_web_key(path) == first
+        assert srv.resolve_web_key("", path) == first
+        assert srv.resolve_web_key("explicit-key", path) == "explicit-key"
+        with open(path, "w", encoding="ascii") as handle:
+            handle.write("short\n")
+        repaired = srv.load_or_create_web_key(path)
+        assert srv.valid_web_key(repaired) and repaired != "short", repaired
+
+        # A diagnostic run must not leave a key file behind.
+        list_only = os.path.join(tmp, "no-key-here")
+        srv.main(["--list-ip", "--web-key-file", list_only])
+        assert not os.path.exists(list_only)
+    print("  web key file ok: stable across runs and repaired when invalid")
+
+
 def main() -> int:
+    test_web_key_file()
     server, port = start_server()
     try:
         test_page_and_key(server, port)
@@ -611,6 +769,7 @@ def main() -> int:
         test_wrong_key_and_origin(server, port)
         test_want_slot(server, port)
         test_swap(server, port)
+        test_party_lock(server, port)
         test_screen_unavailable(server, port)
         test_screen_auth(server, port)
     finally:

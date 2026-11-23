@@ -959,12 +959,13 @@ class GamepadView(context: Context) : View(context) {
         }
 
         for (n in nodes) {
+            val s = n.scale
             when (n.kind) {
-                K_DPAD -> n.r = H * 0.145f * a * n.scale
+                K_DPAD -> n.r = H * 0.145f * a * s
                 K_STICK_L, K_STICK_R ->
-                    n.r = H * (if (n.bw > 0f) n.bw else 0.14f) * a * n.scale
+                    n.r = H * (if (n.bw > 0f) n.bw else 0.14f) * a * s
                 K_FACE -> {
-                    n.r = H * 0.058f * a * n.scale
+                    n.r = H * 0.058f * a * s
                     if (!n.customized) {
                         n.fx = (baseX + n.homeDx * H * a * faceSpacing) / W
                         n.fy = (baseY + n.homeDy * H * a * faceSpacing) / H
@@ -973,23 +974,23 @@ class GamepadView(context: Context) : View(context) {
                     }
                 }
                 K_PILL -> {
-                    n.hw = H * n.bw * n.scale
-                    n.hh = H * n.bh * n.scale
+                    n.hw = H * n.bw * s
+                    n.hh = H * n.bh * s
                 }
                 K_PS -> {
-                    n.r = H * n.bw * n.scale
+                    n.r = H * n.bw * s
                     n.hw = n.r
                     n.hh = n.r
                 }
                 K_SHOULDER -> {
-                    n.hw = W * 0.0975f * n.scale
-                    n.hh = H * 0.0625f * n.scale
+                    n.hw = W * 0.0975f * s
+                    n.hh = H * 0.0625f * s
                 }
                 K_PEDAL, K_STEER, K_TOUCHPAD -> {
-                    n.hw = H * n.bw * n.scale * a
-                    n.hh = H * n.bh * n.scale * a
+                    n.hw = H * n.bw * s * a
+                    n.hh = H * n.bh * s * a
                 }
-                K_ACTION -> n.r = H * n.bw * n.scale * a
+                K_ACTION -> n.r = H * n.bw * s * a
             }
 
             // Keep every control fully on screen, even after a custom drag.
@@ -1264,20 +1265,25 @@ class GamepadView(context: Context) : View(context) {
 
         when (m.style) {
             "pulse" -> {
-                strokePaint.color = withAlpha(accent, (140 * fade).toInt())
-                strokePaint.strokeWidth = dp(1.2f + 2.4f * fade)
+                // A soft inner ring plus the leading edge feels like a breath.
+                strokePaint.color = withAlpha(accent, (62 * fade).toInt())
+                strokePaint.strokeWidth = dp(1f + 5f * fade)
+                canvas.drawCircle(cx, cy, radius + (reach - radius) * 0.55f, strokePaint)
+                strokePaint.color = withAlpha(accent, (168 * fade).toInt())
+                strokePaint.strokeWidth = dp(1.2f + 2.2f * fade)
                 canvas.drawCircle(cx, cy, reach, strokePaint)
             }
             "wave" -> {
-                strokePaint.color = withAlpha(accent, (128 * fade).toInt())
+                val spin = 360f * ease
+                strokePaint.color = withAlpha(accent, (138 * fade).toInt())
                 strokePaint.strokeWidth = dp(1.2f + 2f * fade)
                 rect.set(cx - reach, cy - reach, cx + reach, cy + reach)
-                canvas.drawArc(rect, -63f, 270f, false, strokePaint)
-                strokePaint.color = withAlpha(accent, (72 * fade).toInt())
-                strokePaint.strokeWidth = dp(1.4f)
-                val r2 = reach * 0.8f
+                canvas.drawArc(rect, -63f + spin, 240f, false, strokePaint)
+                strokePaint.color = withAlpha(accent, (84 * fade).toInt())
+                strokePaint.strokeWidth = dp(1.5f)
+                val r2 = reach * 0.82f
                 rect.set(cx - r2, cy - r2, cx + r2, cy + r2)
-                canvas.drawArc(rect, 27f, 270f, false, strokePaint)
+                canvas.drawArc(rect, 63f - spin, 220f, false, strokePaint)
             }
             "halo" -> {
                 glowPaint.shader = RadialGradient(
@@ -1295,6 +1301,15 @@ class GamepadView(context: Context) : View(context) {
                 strokePaint.color = withAlpha(accent, (87 * fade).toInt())
                 strokePaint.strokeWidth = dp(1.4f)
                 canvas.drawCircle(cx, cy, reach * 0.94f, strokePaint)
+                val spin = 420f * ease
+                strokePaint.color = withAlpha(theme.accent2, (112 * fade).toInt())
+                strokePaint.strokeWidth = dp(1.8f)
+                rect.set(
+                    cx - reach * 1.06f, cy - reach * 1.06f,
+                    cx + reach * 1.06f, cy + reach * 1.06f,
+                )
+                canvas.drawArc(rect, spin, 58f, false, strokePaint)
+                canvas.drawArc(rect, spin + 180f, 58f, false, strokePaint)
             }
             "shock" -> {
                 strokePaint.color = withAlpha(accent, (158 * fade).toInt())
@@ -1304,8 +1319,9 @@ class GamepadView(context: Context) : View(context) {
                 strokePaint.strokeWidth = dp(1.4f)
                 canvas.drawCircle(cx, cy, reach * 0.74f, strokePaint)
                 strokePaint.color = withAlpha(accent, (56 * fade).toInt())
+                val spin = 0.55 * ease
                 for (i in 0 until 4) {
-                    val a = Math.PI / 4.0 + i * Math.PI / 2.0
+                    val a = Math.PI / 4.0 + spin + i * Math.PI / 2.0
                     val c = cos(a).toFloat()
                     val sn = sin(a).toFloat()
                     canvas.drawLine(
@@ -1319,8 +1335,9 @@ class GamepadView(context: Context) : View(context) {
                 strokePaint.color = withAlpha(accent, (133 * fade).toInt())
                 strokePaint.strokeWidth = dp(1.6f)
                 val inner = radius * (0.72f + 0.16f * ease)
+                val spin = 0.38 * ease
                 for (i in 0 until 8) {
-                    val a = i * Math.PI / 4.0
+                    val a = spin + i * Math.PI / 4.0
                     val c = cos(a).toFloat()
                     val sn = sin(a).toFloat()
                     canvas.drawLine(
@@ -1359,6 +1376,17 @@ class GamepadView(context: Context) : View(context) {
                 strokePaint.color = withAlpha(theme.text, (51 * fade).toInt())
                 strokePaint.strokeWidth = dp(1f)
                 canvas.drawCircle(cx, cy, reach + dp(2.6f), strokePaint)
+                strokePaint.color = withAlpha(accent, (96 * fade).toInt())
+                for (i in 0 until 4) {
+                    val a = i * Math.PI / 2.0
+                    val c = cos(a).toFloat()
+                    val sn = sin(a).toFloat()
+                    canvas.drawLine(
+                        cx + c * (reach + dp(4f)), cy + sn * (reach + dp(4f)),
+                        cx + c * (reach + dp(8f)), cy + sn * (reach + dp(8f)),
+                        strokePaint,
+                    )
+                }
             }
             else -> {
                 val y = cy + radius * 0.86f
@@ -1366,6 +1394,10 @@ class GamepadView(context: Context) : View(context) {
                 strokePaint.color = withAlpha(accent, (158 * fade).toInt())
                 strokePaint.strokeWidth = dp(2f)
                 canvas.drawLine(cx - half, y, cx + half, y, strokePaint)
+                strokePaint.color = withAlpha(theme.accent2, (92 * fade).toInt())
+                strokePaint.strokeWidth = dp(1.4f)
+                val top = cy - radius * 0.86f
+                canvas.drawLine(cx - half * 0.7f, top, cx + half * 0.7f, top, strokePaint)
                 fillPaint.color = withAlpha(accent, (168 * fade).toInt())
                 canvas.drawCircle(cx - half, y, dp(1.6f), fillPaint)
                 canvas.drawCircle(cx + half, y, dp(1.6f), fillPaint)

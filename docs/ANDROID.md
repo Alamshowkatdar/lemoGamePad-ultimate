@@ -96,10 +96,13 @@ Other ways:
   **Connect**.
 
 The server saves a PNG copy of the QR code (`lemoGamePad-qr-<ip>.png`) in the
-folder you launched it from, in case you want to show it on another screen.
+folder you launched it from, in case you want to show it on another screen. It
+also prints a **guest** QR (`lemoGamePad-guest-qr-<ip>.png`) with an `a=1` flag:
+scanning that one switches the phone to AUTO and the PC assigns the next free
+pad, so extra players can join without picking a slot.
 
-The QR payload is `vpad://connect?h=<ip>&p=<port>&n=<hostname>`; plain
-`1.2.3.4:9876` text is accepted too.
+The QR payload is `vpad://connect?h=<ip>&p=<port>&n=<hostname>` (guest codes add
+`&a=1`); plain `1.2.3.4:9876` text is accepted too.
 
 ---
 
@@ -114,6 +117,12 @@ Install the APK on the other phones and pair them the same way.
   using sends that player a small **Accept / Decline** card instead of taking
   the pad; the requester sees a pending slot and line until the answer arrives.
   The status pill and the slot line show the pad the PC actually assigned.
+- **Party lock** — the first connected controller is the host. In the LINK card
+  the host gets **LOCK PARTY** / **UNLOCK PARTY**. While the party is locked,
+  other phones cannot move or swap seats; their buttons, sticks and triggers
+  keep working, and a new guest can still claim a free pad. The host can still
+  change seats, and the lock clears if the host disconnects. Non-hosts see their
+  slot chips dimmed and a short "Party locked" line.
 - **Swaps ask first** — the other player's card sits at the top of the pad with
   no backdrop, and play continues on both phones while they decide. **Accept**
   trades both pads; **Decline**, no answer within 10 s, or a player leaving
@@ -273,7 +282,10 @@ Every change applies immediately.
 - **Face button labels** — PlayStation symbols or Xbox letters.
 - **Layouts** — save several named arrangements of the single Gamepad layout,
   switch between them, delete one, or restore the default. Enabling or disabling
-  the swipe pad keeps the previous right-side placement.
+  the swipe pad keeps the previous right-side placement. **SHARE QR** renders the
+  active layout as a scannable code; **SCAN QR** imports a layout from another
+  phone or from the browser pad's **SHARE CODE**. Importing an existing name
+  replaces that saved layout.
 - **Game profiles** — save a named snapshot of aim/motion settings, haptics,
   input rate, face labels and the current layout, then switch by tapping a name.
   No foreground-game detection is involved.
@@ -282,7 +294,12 @@ Every change applies immediately.
 - **Stick curve** — 0–100 %, linear at 0; higher values keep small corrections
   near the centre.
 - **Vibration feedback** — touch clicks plus game rumble, with a 0–100 %
-  strength slider.
+  strength slider. Game rumble is now a continuous vibration that follows both
+  motor levels; it stops as soon as the game stops, and a 500 ms refresh keeps
+  long effects alive if a packet is lost.
+- **Vibration from games** — separate on/off switch in the same card. Turn it
+  off to silence force feedback while keeping touch clicks. Game profiles
+  remember this choice.
 - **Input rate** — ECO (battery), STANDARD (default, send on change) or TURBO
   (continuous 250 Hz).
 - **PC screen** — on/off toggle, **SMALL / LARGE** size, per-phone **LOW / BALANCED / HIGH** stream quality, and an optional **Adaptive quality** switch.

@@ -14,12 +14,15 @@
   --warn: #ffc46b;
   --on-accent: #030504;
   --surface-sheet: rgba(14, 23, 18, 0.98);
+  --surface-alt-sheet: rgba(22, 37, 29, 0.96);
   --card-bg: rgba(22, 37, 29, 0.82);
   --card-line: rgba(62, 240, 140, 0.16);
   --line: rgba(233, 251, 241, 0.14);
   --line-strong: rgba(233, 251, 241, 0.24);
   --text-soft: rgba(233, 251, 241, 0.14);
   --accent-soft: rgba(62, 240, 140, 0.18);
+  --accent-2-soft: rgba(46, 217, 195, 0.14);
+  --accent-sheen: rgba(62, 240, 140, 0.10);
   --accent-line: rgba(62, 240, 140, 0.55);
   --scrim: rgba(0, 0, 0, 0.66);
   --safe-top: env(safe-area-inset-top, 0px);
@@ -49,6 +52,7 @@ body {
 body {
   user-select: none;
   -webkit-user-select: none;
+  -webkit-touch-callout: none;
   touch-action: none;
 }
 
@@ -58,11 +62,16 @@ body {
   overflow: hidden;
 }
 
+/* Keep the pad itself clear of the notch, rounded corners and home indicator.
+   The overlay controls use their own safe-area padding. */
 #pad-canvas {
+  position: absolute;
+  inset: var(--safe-top) var(--safe-right) var(--safe-bottom) var(--safe-left);
   display: block;
-  width: 100%;
-  height: 100%;
+  width: auto;
+  height: auto;
   touch-action: none;
+  -webkit-touch-callout: none;
   outline: none;
 }
 
@@ -164,6 +173,12 @@ button:focus-visible {
   color: var(--accent);
 }
 
+/* Seat chips are dimmed while the host has frozen the party. */
+.chip.locked {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .chip.wide {
   flex: 1 1 0;
 }
@@ -241,7 +256,9 @@ button:focus-visible {
   width: min(460px, 94vw);
   max-width: 100%;
   height: 100%;
-  background: var(--surface-sheet);
+  background:
+    radial-gradient(125% 70% at 100% -10%, var(--accent-sheen), transparent 60%),
+    linear-gradient(180deg, var(--surface-sheet), var(--surface-alt-sheet));
   border-left: 1px solid var(--line);
   border-radius: 24px 0 0 24px;
   box-shadow: -18px 0 50px rgba(0, 0, 0, 0.34);
@@ -298,22 +315,120 @@ button:focus-visible {
   flex: 0 0 auto;
 }
 
+/* Pinned command dock + jump rail: the controls people touch every session
+   stay one tap away, instead of a long scroll through every card. */
+.command-dock {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 4px;
+  flex: 0 0 auto;
+  padding: 6px 12px 2px;
+}
+
+.command-dock button,
+.jump-rail button {
+  min-width: 0;
+  min-height: 34px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--card-bg);
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 9px;
+  font-weight: 650;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.command-dock button {
+  min-height: 42px;
+  padding: 0 1px;
+  color: var(--accent);
+  border-color: var(--line-strong);
+  background: color-mix(in srgb, var(--accent) 12%, var(--card-bg));
+  font-size: 8.5px;
+  letter-spacing: 0.05em;
+}
+
+.command-dock button.on,
+.jump-rail button.on {
+  color: var(--on-accent);
+  background: var(--accent);
+  border-color: var(--accent);
+  box-shadow:
+    0 0 0 3px var(--accent-soft),
+    0 6px 18px var(--accent-2-soft);
+}
+
+.jump-rail {
+  display: flex;
+  gap: 4px;
+  flex: 0 0 auto;
+  padding: 2px 12px 8px;
+}
+
+.jump-rail button {
+  flex: 1 1 0;
+  min-height: 34px;
+  padding: 0 2px;
+  font-size: 8.5px;
+  letter-spacing: 0.05em;
+}
+
 .sheet-body {
   flex: 1;
   overflow-y: auto;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
-  padding: 12px 14px calc(40px + var(--safe-bottom));
+  padding: 10px 14px calc(40px + var(--safe-bottom));
   scrollbar-width: thin;
   scrollbar-color: var(--line-strong) transparent;
 }
 
+.sheet-group {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+  align-content: start;
+}
+
+.sheet-group[hidden],
+.card[hidden] {
+  display: none !important;
+}
+
+/* DENSE hides explanatory prose and tightens cards; labels and controls stay. */
+.sheet-body.dense .note {
+  display: none;
+}
+
+.sheet-body.dense .card {
+  padding: 9px 11px 10px;
+  margin: 0;
+}
+
+.sheet-body.dense .row.spaced,
+.sheet-body.dense .tiny.spaced {
+  margin-top: 7px;
+}
+
 .card {
-  padding: 13px 14px 14px;
-  margin: 0 0 10px;
+  padding: 15px 16px 16px;
+  margin: 0 0 12px;
   border: 1px solid var(--card-line);
   border-radius: 16px;
-  background: var(--card-bg);
+  background: linear-gradient(
+    180deg,
+    var(--card-bg),
+    color-mix(in srgb, var(--surface) 52%, var(--card-bg))
+  );
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
+  transition: border-color 0.2s ease;
+}
+
+.sheet-group.enter {
+  animation: group-in 240ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 
 .section-title {
@@ -442,6 +557,7 @@ button:focus-visible {
 }
 
 .swatch {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 5px;
@@ -451,12 +567,31 @@ button:focus-visible {
   background: var(--card-bg);
   cursor: pointer;
   text-align: left;
+  overflow: hidden;
 }
 
 .swatch.on {
   border: 2px solid var(--accent);
   background: var(--accent-soft);
   padding: 6px;
+  box-shadow: 0 0 0 3px var(--accent-2-soft), 0 8px 22px var(--accent-soft);
+  animation: swatch-breathe 2.6s ease-in-out infinite;
+}
+
+.swatch.on::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: 11px;
+  background: linear-gradient(
+    115deg,
+    transparent 32%,
+    var(--accent-sheen) 50%,
+    transparent 68%
+  );
+  transform: translateX(-110%);
+  animation: swatch-sheen 3.2s ease-in-out infinite;
 }
 
 .swatch-preview {
@@ -630,6 +765,7 @@ button:focus-visible {
   font: inherit;
   font-size: 13px;
   outline: none;
+  resize: vertical;
 }
 
 #dialog-input:focus {
@@ -848,6 +984,40 @@ button:focus-visible {
   cursor: pointer;
 }
 
+/* iPhone and other touch devices: iOS zooms any input whose font is under
+   16px, and 44px is the minimum comfortable tap target. Mouse users keep the
+   denser layout. */
+@media (pointer: coarse) {
+  .action,
+  .chip,
+  .toggle {
+    min-height: 44px;
+    font-size: 12px;
+  }
+
+  .round {
+    width: 44px;
+    height: 44px;
+  }
+
+  #dialog-input {
+    font-size: 16px;
+  }
+
+  #pip-close {
+    top: 8px;
+    right: 8px;
+    width: 36px;
+    height: 36px;
+  }
+
+  button,
+  .chip,
+  .toggle {
+    touch-action: manipulation;
+  }
+}
+
 @media (max-width: 560px) {
   #settings {
     width: 94vw;
@@ -870,7 +1040,8 @@ button:focus-visible {
 }
 
 /* ------------------------------------------------------- animated buttons */
-/* Each palette sets one motion name; the pad uses the same eight motifs. */
+/* Each palette owns a motion motif. The duration comes from the JS theme, so
+   the canvas ripple and the DOM press animation stay in step. */
 :root {
   --press-anim: ui-pulse;
   --press-ease: cubic-bezier(0.2, 0.8, 0.3, 1);
@@ -881,7 +1052,7 @@ button:focus-visible {
 :root[data-motion="halo"] { --press-anim: ui-halo; }
 :root[data-motion="shock"] { --press-anim: ui-shock; }
 :root[data-motion="burst"] { --press-anim: ui-burst; }
-:root[data-motion="step"] { --press-anim: ui-step; --press-ease: steps(4, end); }
+:root[data-motion="step"] { --press-anim: ui-step; --press-ease: steps(5, end); }
 :root[data-motion="ripple"] { --press-anim: ui-ripple; }
 :root[data-motion="line"] { --press-anim: ui-line; }
 :root[data-motion="void"] { --press-anim: ui-void; }
@@ -892,64 +1063,85 @@ button:focus-visible {
 .round.press-anim,
 .swatch.press-anim,
 .pip-close.press-anim {
-  animation: var(--press-anim) var(--press-ms, 420ms) var(--press-ease) both;
+  animation: var(--press-anim) var(--press-ms, 460ms) var(--press-ease) both;
 }
 
 @keyframes ui-pulse {
-  0% { transform: scale(1); box-shadow: 0 0 0 0 var(--accent-soft); }
-  30% { transform: scale(0.955); box-shadow: 0 0 0 3px var(--accent-soft); }
-  100% { transform: scale(1); box-shadow: 0 0 0 10px transparent; }
+  0% { transform: scale(1); box-shadow: 0 0 0 0 var(--accent-soft), 0 0 0 0 var(--accent-2-soft); }
+  28% { transform: scale(0.945); box-shadow: 0 0 0 2px var(--accent-soft), 0 0 0 8px var(--accent-2-soft); }
+  100% { transform: scale(1); box-shadow: 0 0 0 12px transparent, 0 0 0 18px transparent; }
 }
 
 @keyframes ui-wave {
-  0% { transform: translateY(0) scale(1); box-shadow: 0 -2px 0 0 var(--accent-soft); }
-  40% { transform: translateY(-1px) scale(0.97); box-shadow: 0 4px 0 0 var(--accent-soft); }
-  100% { transform: translateY(0) scale(1); box-shadow: 0 9px 0 0 transparent; }
+  0% { transform: translateY(0) scale(1) rotate(0deg); box-shadow: 0 -2px 0 0 var(--accent-soft); }
+  38% { transform: translateY(-2px) scale(0.965) rotate(-1deg); box-shadow: 0 5px 0 0 var(--accent-soft), 0 0 0 7px var(--accent-2-soft); }
+  70% { transform: translateY(1px) scale(0.985) rotate(1deg); box-shadow: 0 -3px 0 0 var(--accent-2-soft); }
+  100% { transform: translateY(0) scale(1) rotate(0deg); box-shadow: 0 0 0 0 transparent, 0 0 0 12px transparent; }
 }
 
 @keyframes ui-halo {
-  0% { box-shadow: 0 0 0 0 var(--accent-soft), 0 0 0 0 transparent; }
-  35% { box-shadow: 0 0 0 2px var(--accent-soft), 0 0 20px 3px var(--accent-soft); }
-  100% { box-shadow: 0 0 0 0 transparent, 0 0 30px 0 transparent; }
+  0% { transform: scale(1); box-shadow: 0 0 0 0 var(--accent-soft), 0 0 0 0 var(--accent-2-soft), 0 0 0 0 transparent; }
+  35% { transform: scale(0.975); box-shadow: 0 0 0 2px var(--accent-soft), 0 0 0 7px var(--accent-2-soft), 0 0 24px 5px var(--accent-soft); }
+  100% { transform: scale(1); box-shadow: 0 0 0 0 transparent, 0 0 0 12px transparent, 0 0 34px 0 transparent; }
 }
 
 @keyframes ui-shock {
   0% { transform: translateX(0) scale(1); box-shadow: 0 0 0 0 var(--accent-soft); }
-  22% { transform: translateX(-1.6px) scale(0.965); box-shadow: 0 0 0 2px var(--accent-soft); }
-  55% { transform: translateX(1.6px) scale(0.985); box-shadow: 0 0 0 5px transparent; }
+  20% { transform: translateX(-2.2px) scale(0.95); box-shadow: 0 0 0 2px var(--accent-soft); }
+  44% { transform: translateX(2px) scale(0.98); box-shadow: 0 0 0 5px var(--accent-2-soft); }
+  64% { transform: translateX(-1px) scale(0.99); box-shadow: 0 0 0 8px transparent; }
   100% { transform: translateX(0) scale(1); box-shadow: 0 0 0 0 transparent; }
 }
 
 @keyframes ui-burst {
-  0% { transform: scale(1); box-shadow: 0 0 0 0 var(--accent-soft); }
-  25% { transform: scale(0.95); box-shadow: 0 0 14px 4px var(--accent-soft); }
-  100% { transform: scale(1); box-shadow: 0 0 30px 12px transparent; }
+  0% { transform: scale(1); box-shadow: 0 0 0 0 var(--accent-soft), 0 0 0 0 transparent; }
+  24% { transform: scale(0.94); box-shadow: 0 0 16px 3px var(--accent-soft), 0 0 0 6px var(--accent-2-soft); }
+  56% { transform: scale(1.015); box-shadow: 0 0 26px 8px var(--accent-2-soft), 0 0 0 11px transparent; }
+  100% { transform: scale(1); box-shadow: 0 0 34px 12px transparent, 0 0 0 16px transparent; }
 }
 
 @keyframes ui-step {
-  0% { transform: scale(1); }
-  25% { transform: scale(0.94); }
-  50% { transform: scale(0.975); }
-  75% { transform: scale(0.945); }
-  100% { transform: scale(1); }
+  0% { transform: scale(1); box-shadow: inset 0 0 0 0 var(--accent-line); }
+  20% { transform: scale(0.93); box-shadow: inset 0 0 0 2px var(--accent-line); }
+  40% { transform: scale(0.98); box-shadow: inset 0 0 0 3px var(--accent-soft); }
+  60% { transform: scale(0.95); box-shadow: inset 0 0 0 2px var(--accent-line); }
+  80% { transform: scale(1.01); box-shadow: inset 0 0 0 1px var(--accent-soft); }
+  100% { transform: scale(1); box-shadow: inset 0 0 0 0 transparent; }
 }
 
 @keyframes ui-ripple {
-  0% { box-shadow: 0 0 0 0 var(--accent-soft), 0 0 0 0 transparent; }
-  40% { box-shadow: 0 0 0 3px var(--accent-soft), 0 0 0 8px transparent; }
-  100% { box-shadow: 0 0 0 9px transparent, 0 0 0 16px transparent; }
+  0% { box-shadow: 0 0 0 0 var(--accent-soft), 0 0 0 0 transparent, 0 0 0 0 var(--accent-2-soft); }
+  32% { box-shadow: 0 0 0 3px var(--accent-soft), 0 0 0 8px transparent, 0 0 0 0 var(--accent-2-soft); }
+  62% { box-shadow: 0 0 0 6px transparent, 0 0 0 12px var(--accent-2-soft), 0 0 0 16px transparent; }
+  100% { box-shadow: 0 0 0 10px transparent, 0 0 0 18px transparent, 0 0 0 24px transparent; }
 }
 
 @keyframes ui-line {
-  0% { transform: scale(1); box-shadow: inset 0 0 0 0 transparent; }
-  30% { transform: scale(0.97); box-shadow: inset 0 -2px 0 0 var(--accent); }
-  100% { transform: scale(1); box-shadow: inset 0 -2px 0 0 transparent; }
+  0% { transform: scale(1); box-shadow: inset 0 0 0 0 transparent, 0 0 0 0 var(--accent-soft); }
+  30% { transform: scale(0.965); box-shadow: inset 0 -2px 0 0 var(--accent), 0 4px 0 0 var(--accent-soft); }
+  70% { transform: scale(0.99); box-shadow: inset 0 -1px 0 0 var(--accent-2), 0 8px 0 0 transparent; }
+  100% { transform: scale(1); box-shadow: inset 0 0 0 0 transparent, 0 0 0 0 transparent; }
 }
 
 @keyframes ui-void {
-  0% { transform: scale(1); box-shadow: 0 0 0 1px var(--accent-line); }
-  18% { transform: scale(0.992); box-shadow: 0 0 0 1px var(--accent-line); }
-  100% { transform: scale(1); box-shadow: 0 0 0 7px transparent; }
+  0% { transform: scale(1); box-shadow: 0 0 0 1px var(--accent-line), 0 0 0 0 var(--accent-soft); }
+  16% { transform: scale(0.985); box-shadow: 0 0 0 1px var(--accent-line), 0 0 0 2px var(--accent-soft); }
+  100% { transform: scale(1); box-shadow: 0 0 0 8px transparent, 0 0 0 12px transparent; }
+}
+
+@keyframes group-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes swatch-breathe {
+  0%, 100% { box-shadow: 0 0 0 3px var(--accent-2-soft), 0 8px 22px var(--accent-soft); }
+  50% { box-shadow: 0 0 0 5px var(--accent-2-soft), 0 10px 28px var(--accent-soft); }
+}
+
+@keyframes swatch-sheen {
+  0%, 35% { transform: translateX(-110%); }
+  70%, 100% { transform: translateX(110%); }
 }
 
 .no-motion .press-anim,
@@ -958,7 +1150,27 @@ button:focus-visible {
 .no-motion .toggle,
 .no-motion .round,
 .no-motion .swatch,
-.no-motion .pip-close {
+.no-motion .swatch.on,
+.no-motion .swatch.on::after,
+.no-motion .sheet-group.enter,
+.no-motion .pip-close,
+.no-motion .card {
   animation: none !important;
   transition: none !important;
+}
+
+/* On a laptop the sheet becomes a two-column dashboard instead of a long
+   phone-width scroll. Portrait phones keep the single-column layout. */
+@media (min-width: 900px) {
+  #settings {
+    width: min(760px, 88vw);
+  }
+
+  .command-dock {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+
+  .sheet-group {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }

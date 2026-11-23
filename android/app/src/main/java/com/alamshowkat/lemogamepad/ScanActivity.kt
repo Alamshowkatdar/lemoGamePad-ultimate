@@ -43,6 +43,13 @@ import kotlin.math.min
  * bundled ZXing core decoder, so the app keeps working without AndroidX or
  * Google Play Services.
  */
+data class QrTarget(
+    val host: String,
+    val port: Int,
+    val name: String,
+    val auto: Boolean = false,
+)
+
 class ScanActivity : Activity() {
 
     private lateinit var root: FrameLayout
@@ -50,16 +57,18 @@ class ScanActivity : Activity() {
     private var overlay: ScanOverlay? = null
     private var hint: TextView? = null
     private var handled = false
+    private var layoutMode = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        layoutMode = intent.getBooleanExtra(EXTRA_LAYOUT_MODE, false)
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
         root = FrameLayout(this)
         root.setBackgroundColor(Color.BLACK)
 
         val title = TextView(this).apply {
-            text = "SCAN PAIRING CODE"
+            text = if (layoutMode) "SCAN LAYOUT QR" else "SCAN PAIRING CODE"
             setTextColor(Color.WHITE)
             textSize = 13f
             letterSpacing = 0.18f
@@ -94,7 +103,11 @@ class ScanActivity : Activity() {
         )
 
         hint = TextView(this).apply {
-            text = "Point the camera at the QR code in the lemoGamePad-server window"
+            text = if (layoutMode) {
+                "Point the camera at a layout QR from another phone or the browser pad"
+            } else {
+                "Point the camera at the QR code in the lemoGamePad-server window"
+            }
             setTextColor(Color.argb(210, 230, 240, 235))
             textSize = 12f
             gravity = Gravity.CENTER
@@ -121,7 +134,18 @@ class ScanActivity : Activity() {
         if (scanner != null) return
         val sv = QrScannerView(this)
         sv.onResult = { raw -> handleCode(raw) }
-        sv.onFailure = { message -> hint?.text = message }
+        // The decoder reports its own miss/unavailable strings. Swap them for
+        // layout wording in layout mode so the hint never tells a guest to scan
+        // the PC's pairing QR here.
+        sv.onFailure = { message ->
+            hint?.text = if (!layoutMode) message else when {
+                message.startsWith("Point the camera") ->
+                    "Point the camera at a layout QR from another phone or the browser pad"
+                message.startsWith("Camera unavailable") ->
+                    "Camera unavailable. Paste the layout code in Settings instead."
+                else -> message
+            }
+        }
         scanner = sv
         root.addView(sv, 0, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         val dim = ScanOverlay(this)
@@ -131,6 +155,17 @@ class ScanActivity : Activity() {
 
     private fun handleCode(raw: String) {
         if (handled) return
+        if (layoutMode) {
+            if (LayoutQr.decode(raw) == null) {
+                Toast.makeText(this, "Not a lemoGamePad layout QR", Toast.LENGTH_SHORT).show()
+                scanner?.resumeAfterMiss()
+                return
+            }
+            handled = true
+            setResult(RESULT_OK, Intent().putExtra(EXTRA_LAYOUT_PAYLOAD, raw))
+            finish()
+            return
+        }
         val parsed = parse(raw)
         if (parsed == null) {
             Toast.makeText(this, "Not a lemoGamePad pairing code", Toast.LENGTH_SHORT).show()
@@ -138,10 +173,13 @@ class ScanActivity : Activity() {
             return
         }
         handled = true
-        val (host, port, name) = parsed
         setResult(
             RESULT_OK,
-            Intent().putExtra(EXTRA_HOST, host).putExtra(EXTRA_PORT, port).putExtra(EXTRA_NAME, name),
+            Intent()
+                .putExtra(EXTRA_HOST, parsed.host)
+                .putExtra(EXTRA_PORT, parsed.port)
+                .putExtra(EXTRA_NAME, parsed.name)
+                .putExtra(EXTRA_AUTO, parsed.auto),
         )
         finish()
     }
@@ -152,7 +190,11 @@ class ScanActivity : Activity() {
         if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
             attachScanner()
         } else {
-            hint?.text = "Camera permission is needed to scan. Enter the PC address manually in Settings."
+            hint?.text = if (layoutMode) {
+                "Camera permission is needed to scan. Paste the layout code in Settings instead."
+            } else {
+                "Camera permission is needed to scan. Enter the PC address manually in Settings."
+            }
         }
     }
 
@@ -188,13 +230,17 @@ class ScanActivity : Activity() {
         const val EXTRA_HOST = "host"
         const val EXTRA_PORT = "port"
         const val EXTRA_NAME = "name"
+        const val EXTRA_AUTO = "auto"
+        // Layout sharing reuses the camera scanner with a different payload.
+        const val EXTRA_LAYOUT_MODE = "layout_mode"
+        const val EXTRA_LAYOUT_PAYLOAD = "layout_payload"
         private const val REQ_CAMERA = 91
 
         /**
          * Accepts "vpad://connect?h=1.2.3.4&p=9876&n=PC", "h=...&p=..."
          * and plain "1.2.3.4:9876".
          */
-        fun parse(text: String): Triple<String, Int, String>? {
+        fun parse(text: String): QrTarget? {
             var s = text.trim()
             if (s.isEmpty()) return null
             for (prefix in listOf("vpad://", "lemogamepad://", "lemogamepad-ultimate://")) {
@@ -215,14 +261,15 @@ class ScanActivity : Activity() {
                 val host = values["h"] ?: values["host"] ?: return null
                 val port = values["p"]?.toIntOrNull() ?: values["port"]?.toIntOrNull() ?: Proto.PORT
                 val name = values["n"] ?: values["name"] ?: ""
+                val auto = values["a"] == "1" || values["auto"] == "1"
                 if (host.isBlank()) return null
-                return Triple(host, port.coerceIn(1, 65534), name)
+                return QrTarget(host, port.coerceIn(1, 65534), name, auto)
             }
 
             val bits = s.split(':')
             if (bits.size == 2 && bits[0].isNotBlank()) {
                 val port = bits[1].toIntOrNull() ?: return null
-                return Triple(bits[0], port.coerceIn(1, 65534), "")
+                return QrTarget(bits[0], port.coerceIn(1, 65534), "")
             }
             return null
         }

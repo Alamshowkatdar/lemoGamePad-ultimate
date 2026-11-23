@@ -28,6 +28,8 @@ object Proto {
     const val MSG_SLOT_ASK = 9
     const val MSG_SLOT_VOTE = 10
     const val MSG_SLOT_RESULT = 11
+    // Host-only party lock: header + one byte (1 = lock, 0 = unlock).
+    const val MSG_PARTY_LOCK = 12
 
     const val SLOT_ACCEPTED = 1
     const val SLOT_DECLINED = 2
@@ -47,6 +49,9 @@ object Proto {
 
     /** PONG length when the server also reports the pad it assigned. */
     const val PONG_WITH_SLOT_SIZE = HEADER_SIZE + 7
+
+    /** Newer servers append party-lock and host flags after the slot byte. */
+    const val PONG_WITH_PARTY_SIZE = HEADER_SIZE + 9
 
     /** The PC screen stream listens TCP on the control UDP port + 1 (9877). */
     const val VIDEO_PORT_OFFSET = 1

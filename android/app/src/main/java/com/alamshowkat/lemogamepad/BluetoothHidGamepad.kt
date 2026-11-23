@@ -22,7 +22,37 @@ import kotlin.math.roundToInt
 /** A bonded host the user can pick from the settings card. */
 data class BluetoothHost(val name: String, val address: String)
 
-/** Bonded computers/phones only; headsets and keyboards are not gamepad hosts. */
+/** Audio-only gadgets that must never appear as gamepad hosts. */
+private val AUDIO_ONLY_CLASSES = setOf(
+    BluetoothClass.Device.AUDIO_VIDEO_HEADPHONES,
+    BluetoothClass.Device.AUDIO_VIDEO_HIFI_AUDIO,
+    BluetoothClass.Device.AUDIO_VIDEO_LOUDSPEAKER,
+    BluetoothClass.Device.AUDIO_VIDEO_MICROPHONE,
+    BluetoothClass.Device.AUDIO_VIDEO_WEARABLE_HEADSET,
+    BluetoothClass.Device.AUDIO_VIDEO_CAR_AUDIO,
+)
+
+/**
+ * Bonded computers, phones, TVs and monitors are valid HID hosts. Headsets and
+ * speakers are not, even though they share the AUDIO_VIDEO major class.
+ */
+private fun isGamepadHost(device: BluetoothDevice): Boolean = try {
+    val cls = device.bluetoothClass ?: return false
+    when (cls.majorDeviceClass) {
+        BluetoothClass.Device.Major.COMPUTER,
+        BluetoothClass.Device.Major.PHONE,
+        -> true
+        BluetoothClass.Device.Major.AUDIO_VIDEO ->
+            cls.deviceClass !in AUDIO_ONLY_CLASSES
+        else -> false
+    }
+} catch (_: SecurityException) {
+    false
+} catch (_: Exception) {
+    false
+}
+
+/** Bonded host devices only; headsets and keyboards are not gamepad hosts. */
 internal fun bondedBluetoothDevices(context: Context): List<BluetoothDevice> {
     // Lint (and Android 12+) require an explicit check before touching the
     // bonded-device list; callers handle a denied result by asking for access.
@@ -37,20 +67,7 @@ internal fun bondedBluetoothDevices(context: Context): List<BluetoothDevice> {
     } catch (_: Exception) {
         null
     }
-    return adapter?.bondedDevices.orEmpty().filter { device ->
-        try {
-            when (device.bluetoothClass?.majorDeviceClass) {
-                BluetoothClass.Device.Major.COMPUTER,
-                BluetoothClass.Device.Major.PHONE,
-                -> true
-                else -> false
-            }
-        } catch (_: SecurityException) {
-            false
-        } catch (_: Exception) {
-            false
-        }
-    }
+    return adapter?.bondedDevices.orEmpty().filter(::isGamepadHost)
 }
 
 internal fun BluetoothDevice.safeDisplayName(): String = try {
@@ -102,6 +119,9 @@ internal class BluetoothHidGamepad(
     val isConnected: Boolean get() = api?.isConnected == true
 
     val connectedName: String? get() = api?.connectedName
+
+    /** Address of the bonded host currently receiving reports, if any. */
+    val connectedAddress: String? get() = api?.connectedAddress
 
     /**
      * Registers the HID profile. Returns false when this phone cannot act as a
@@ -193,8 +213,13 @@ internal class BluetoothHidGamepad(
                 return target.safeDisplayName()
             }
 
+        val connectedAddress: String? get() = device?.address
+
         /** Address the user picked, applied once the HID profile is registered. */
         @Volatile private var pendingAddress: String? = null
+
+        /** Set when this app initiated the drop, so callbacks don't double-report. */
+        @Volatile private var localDisconnect = false
 
         private val callback = object : BluetoothHidDevice.Callback() {
             override fun onAppStatusChanged(pluggedDevice: BluetoothDevice?, registered: Boolean) {
@@ -202,6 +227,8 @@ internal class BluetoothHidGamepad(
                 if (!registered) {
                     device = null
                     isConnected = false
+                    pendingAddress = null
+                    localDisconnect = false
                     onStatus("Bluetooth gamepad stopped")
                     return
                 }
@@ -231,7 +258,10 @@ internal class BluetoothHidGamepad(
                         } catch (_: Exception) {
                             lastAddress
                         }
-                        onStatus("Bluetooth gamepad disconnected — pick a host to reconnect")
+                        if (!localDisconnect) {
+                            onStatus("Bluetooth gamepad disconnected — pick a host to reconnect")
+                        }
+                        localDisconnect = false
                     }
                 }
             }
@@ -259,6 +289,10 @@ internal class BluetoothHidGamepad(
                 if (this@Api28.device?.address == device.address) {
                     this@Api28.device = null
                     isConnected = false
+                    pendingAddress = null
+                    if (!localDisconnect) {
+                        onStatus("Bluetooth gamepad unplugged by host — pick a host to reconnect")
+                    }
                 }
             }
         }
@@ -391,6 +425,7 @@ internal class BluetoothHidGamepad(
             }
             if (accepted) {
                 pendingAddress = null
+                localDisconnect = false
                 onStatus("Connecting to ${target.safeDisplayName()}…")
             } else {
                 onStatus("!Could not connect — make sure the host is on with Lemo GamePad selected")
@@ -401,6 +436,7 @@ internal class BluetoothHidGamepad(
         /** Drops the current host; the profile stays registered for another pick. */
         fun disconnect() {
             pendingAddress = null
+            localDisconnect = true
             val target = device ?: return
             try {
                 hid?.disconnect(target)

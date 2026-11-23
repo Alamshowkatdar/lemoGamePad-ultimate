@@ -9,9 +9,10 @@
   the internet.
 - The browser pad is served over plain HTTP with a per-run key, and its rumble
   reaches the page only where the browser supports the Vibration API (Android
-  yes, iOS Safari no). Its themes, layouts and screen-preview position are
-  per-browser `localStorage` state, not shared with the Android app or other
-  devices. The PC screen preview still depends on the server's screen stream
+  yes, iOS Safari no). Its themes and screen-preview position are per-browser
+  `localStorage` state. Layouts are also local until you explicitly copy a share
+  code, open a `#layout=` link or scan it on Android. The PC screen preview still
+  depends on the server's screen stream
   (`--no-video` disables it), and only a few viewers can share that stream.
 - Up to **8 phones per PC** (one virtual pad each; `--max-phones`, default 8).
   Two phones cannot both be player 1. A requested slot matches the controller
@@ -45,4 +46,4 @@
 
 ---
 
-**lemoGamePad ultimate™ © Alam showkat** · v2.0.3
+**lemoGamePad ultimate™ © Alam showkat** · v2.1.0

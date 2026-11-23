@@ -142,15 +142,17 @@ fun blendThemes(a: PadTheme, b: PadTheme, t: Float): PadTheme {
 data class Motion(val style: String, val ms: Float, val spread: Float)
 
 object Motions {
-    val PULSE = Motion("pulse", 420f, 1.55f)
-    val WAVE = Motion("wave", 540f, 1.75f)
-    val HALO = Motion("halo", 640f, 1.35f)
-    val SHOCK = Motion("shock", 360f, 1.85f)
-    val BURST = Motion("burst", 460f, 1.70f)
-    val STEP = Motion("step", 440f, 1.60f)
-    val RIPPLE = Motion("ripple", 660f, 1.95f)
-    val LINE = Motion("line", 380f, 1.45f)
-    val VOID = Motion("void", 300f, 1.30f)
+    // Longer tails and a wider reach make each press read as a deliberate
+    // flourish rather than a tiny flick, while staying under one frame budget.
+    val PULSE = Motion("pulse", 460f, 1.70f)
+    val WAVE = Motion("wave", 600f, 1.90f)
+    val HALO = Motion("halo", 700f, 1.50f)
+    val SHOCK = Motion("shock", 390f, 2.00f)
+    val BURST = Motion("burst", 500f, 1.85f)
+    val STEP = Motion("step", 480f, 1.70f)
+    val RIPPLE = Motion("ripple", 720f, 2.10f)
+    val LINE = Motion("line", 420f, 1.55f)
+    val VOID = Motion("void", 340f, 1.40f)
 
     fun of(theme: PadTheme): Motion = when (theme.motion) {
         "wave" -> WAVE
@@ -172,7 +174,7 @@ object Brand {
     const val AUTHOR = "Alam showkat"
 
     /** Keep in sync with `versionName` in android/app/build.gradle.kts. */
-    const val VERSION = "2.0.3"
+    const val VERSION = "2.1.0"
 }
 
 object Themes {

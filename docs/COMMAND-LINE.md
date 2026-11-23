@@ -16,6 +16,7 @@ lemoGamePad-server.exe --no-install-deps   # no auto-install of ViGEmBus / packa
 lemoGamePad-server.exe --no-web            # disable the browser gamepad page
 lemoGamePad-server.exe --web-port 8080     # browser pad TCP port (default: control port + 2)
 lemoGamePad-server.exe --web-key mysecret  # fixed browser pairing key (default: random per run)
+lemoGamePad-server.exe --web-key-file lemoGamePad-web.key  # reuse a saved key (stable Home Screen URL)
 lemoGamePad-server.exe --video-port 9990   # override the TCP stream port
 lemoGamePad-server.exe --video-fps 60      # stream frame rate, capped at 60 (default 60)
 lemoGamePad-server.exe --video-width 480   # balanced-profile width (default 480)
@@ -37,6 +38,14 @@ Web pad      : http://192.168.1.20:9878/?k=AbCdEf12
 Every run gets a new key unless you pass `--web-key`. The port must differ from
 the control port and the screen-stream port. See [Browser pad](WEB.md). Like the
 phone protocol this is LAN-only — never forward the port on a router.
+
+**Stable key for bookmarks and Home Screen.** An iPhone added to the Home Screen
+keeps the original `?k=` URL, so a per-run key breaks that shortcut on the next
+launch. Use `--web-key-file PATH` to create a key on first run and reuse it
+afterwards (created with owner-only permissions on POSIX); an explicit
+`--web-key` takes precedence. Keep the file private — the key is the only thing
+guarding the local page. If the file is unreadable or corrupt, the server warns
+and falls back to a random key instead of refusing to start.
 
 The console shows the PC IPs, the pairing QR, one line per connected phone
 (slot, address, packets/second, battery), the idle state and the slot limit.
