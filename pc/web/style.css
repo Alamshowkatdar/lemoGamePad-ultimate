@@ -68,8 +68,11 @@ body {
   position: absolute;
   inset: var(--safe-top) var(--safe-right) var(--safe-bottom) var(--safe-left);
   display: block;
-  width: auto;
-  height: auto;
+  /* A canvas is a replaced element: width/height:auto would fall back to its
+     bitmap size and feed back into resize(), blowing the pad up on phones.
+     Size it explicitly against #app, minus the notch/home-indicator insets. */
+  width: calc(100% - var(--safe-left) - var(--safe-right));
+  height: calc(100% - var(--safe-top) - var(--safe-bottom));
   touch-action: none;
   -webkit-touch-callout: none;
   outline: none;

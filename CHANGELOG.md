@@ -2,6 +2,14 @@
 
 Newest first. The reasoning behind each release is in [`docs/REVIEW.md`](docs/REVIEW.md).
 
+## 2.1.1
+
+- **Fixed the browser pad zooming itself up on phones.** The safe-area pass had
+  left the canvas with `width/height:auto`, so it fell back to its bitmap size
+  and fed that back into the resize loop. The canvas is now sized explicitly
+  against the viewport minus the notch/home-indicator insets, so Android and
+  iOS get a correctly scaled pad again.
+
 ## 2.1.0
 
 - **Fixed a rumble stop race and tightened party lock.** A delayed refresh can

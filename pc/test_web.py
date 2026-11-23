@@ -334,6 +334,10 @@ def test_page_and_key(server, port):
         "inset: var(--safe-top)",
         "@media (pointer: coarse)",
         "font-size: 16px",
+        # The canvas must be sized explicitly; width/height:auto would use the
+        # bitmap size and zoom the pad up on phones.
+        "width: calc(100% - var(--safe-left) - var(--safe-right))",
+        "height: calc(100% - var(--safe-top) - var(--safe-bottom))",
     ):
         assert marker in css, f"CSS is missing iPhone marker {marker}"
     for marker in (

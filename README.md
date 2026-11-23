@@ -13,7 +13,7 @@ by **Alam showkat**
 
 [**Website & downloads →**](https://alamshowkatdar.github.io/lemoGamePad-ultimate/) · [Download the latest release →](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) · [Report an issue](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/issues)
 
-**App source version:** 2.1.0. Download the signed APK and the Windows/Linux server from the [latest release](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) — use **1.3.7.2 or newer** on Linux, which fixes the swapped X/Y face buttons. The release workflow also publishes a `SHA256SUMS.txt` so you can verify your download.
+**App source version:** 2.1.1. Download the signed APK and the Windows/Linux server from the [latest release](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) — use **1.3.7.2 or newer** on Linux, which fixes the swapped X/Y face buttons. The release workflow also publishes a `SHA256SUMS.txt` so you can verify your download.
 
 ---
 
@@ -47,6 +47,13 @@ the host reads it directly; the app never connects automatically on launch.
 
 > **lemoGamePad ultimate™** — trademark of **Alam showkat**.
 > App package: `com.alamshowkat.lemogamepad`.
+
+### New in 2.1.1
+
+- **Browser pad fits phone screens again.** A safe-area sizing bug made the
+  canvas feed its own bitmap size back into the resize loop, zooming the pad up
+  on Android and iOS until the controls were off-screen. The canvas now scales
+  to the viewport minus the notch/home-indicator insets.
 
 ### New in 2.1.0
 
@@ -387,4 +394,4 @@ licenses are listed in [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md).
 
 ---
 
-**lemoGamePad ultimate™ © Alam showkat** · v2.1.0
+**lemoGamePad ultimate™ © Alam showkat** · v2.1.1

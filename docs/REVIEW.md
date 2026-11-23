@@ -1,4 +1,4 @@
-# Review notes — 1.3.6 / 1.3.7 / 1.4.0 / 1.5.0 / 1.6.0 / 1.6.1 / 1.6.2 / 1.6.3 / 1.6.4 / 1.6.5 / 1.6.6 / 1.6.7 / 1.6.8 / 1.6.9 / 1.6.10 / 1.6.11 / 1.6.12 / 1.6.13 / 1.7.0 / 2.0.0 / 2.0.1 / 2.0.2 / 2.0.3 / 2.1.0
+# Review notes — 1.3.6 / 1.3.7 / 1.4.0 / 1.5.0 / 1.6.0 / 1.6.1 / 1.6.2 / 1.6.3 / 1.6.4 / 1.6.5 / 1.6.6 / 1.6.7 / 1.6.8 / 1.6.9 / 1.6.10 / 1.6.11 / 1.6.12 / 1.6.13 / 1.7.0 / 2.0.0 / 2.0.1 / 2.0.2 / 2.0.3 / 2.1.0 / 2.1.1
 
 A pass over the whole app (Kotlin sources, manifest, Gradle files, CI) focused on
 bugs, UI smoothness, and making the phone-to-phone Bluetooth gamepad honest.
@@ -1620,3 +1620,20 @@ The Android peek/height control was removed in the same pass. It duplicated
 normal scrolling, and its `sheetExpanded` / `toggleSheetHeight()` state had no
 surviving UI after the tabs-only redesign; keeping it would only leave a dead
 code path behind.
+
+## Browser canvas sizing (2.1.1)
+
+The safe-area pass made `#pad-canvas` absolutely positioned with
+`inset: var(--safe-*)` but left `width:auto; height:auto`. A canvas is a
+replaced element, so `auto` resolves to its bitmap size rather than stretching
+to the inset box. `resize()` then read that bitmap-sized rect, multiplied it by
+the device pixel ratio, and wrote it back into `canvas.width/height`, which
+enlarged the CSS box again on the next pass. On phones the pad could therefore
+zoom itself up until the controls were off-screen.
+
+The fix sizes the canvas explicitly against `#app`:
+`width: calc(100% - var(--safe-left) - var(--safe-right))` and the matching
+height. The safe-area insets still keep the pad clear of the notch and home
+indicator, but the bitmap no longer feeds back into the layout.
+`pc/test_web.py` now asserts both explicit sizing rules so the regression
+cannot return unnoticed.
