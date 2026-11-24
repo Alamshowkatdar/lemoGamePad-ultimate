@@ -412,8 +412,12 @@ class WindowsVirtualPad:
 
         p.left_trigger_float(max(s.l2, 255 if s.pressed("l2") else 0) / 255.0)
         p.right_trigger_float(max(s.r2, 255 if s.pressed("r2") else 0) / 255.0)
-        p.left_joystick_float(_axis(s.lx), _axis(s.ly))
-        p.right_joystick_float(_axis(s.rx), _axis(s.ry))
+        # InputState uses positive = up, like XInput and the phone's touch stick.
+        # vgamepad writes the float straight into the DS4 report's bThumbL/RY,
+        # where 0 = up and 255 = down, so Y needs flipping for DS4 only. Without
+        # this, SDL/game auto-mapping for a PS4 controller reads up as down.
+        p.left_joystick_float(_axis(s.lx), -_axis(s.ly))
+        p.right_joystick_float(_axis(s.rx), -_axis(s.ry))
 
 
 def _axis(value: int) -> float:

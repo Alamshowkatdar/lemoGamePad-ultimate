@@ -17,6 +17,7 @@ import struct
 import sys
 import threading
 import time
+import types
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -451,6 +452,92 @@ def test_slot_kinds():
     assert srv.Server._slot_kinds("ds4", 8, windows=True) == ["ds4"] * 8
     assert srv.Server._slot_kinds("x360", 8, windows=False) == ["x360"] * 8
     print("  slot backends ok: P5-P8 use DS4 only on Windows")
+
+
+def test_ds4_axis_convention():
+    """DS4 Y is inverted in the HID report; SDL auto-mapping must see it."""
+
+    def named(*names):
+        return types.SimpleNamespace(**{name: name for name in names})
+
+    vg = types.SimpleNamespace(
+        DS4_BUTTONS=named(
+            "DS4_BUTTON_CROSS",
+            "DS4_BUTTON_CIRCLE",
+            "DS4_BUTTON_SQUARE",
+            "DS4_BUTTON_TRIANGLE",
+            "DS4_BUTTON_SHOULDER_LEFT",
+            "DS4_BUTTON_SHOULDER_RIGHT",
+            "DS4_BUTTON_TRIGGER_LEFT",
+            "DS4_BUTTON_TRIGGER_RIGHT",
+            "DS4_BUTTON_THUMB_LEFT",
+            "DS4_BUTTON_THUMB_RIGHT",
+            "DS4_BUTTON_SHARE",
+            "DS4_BUTTON_OPTIONS",
+        ),
+        DS4_SPECIAL_BUTTONS=named("DS4_SPECIAL_BUTTON_PS"),
+        DS4_DPAD_DIRECTIONS=named(
+            "DS4_BUTTON_DPAD_NORTHEAST",
+            "DS4_BUTTON_DPAD_NORTHWEST",
+            "DS4_BUTTON_DPAD_SOUTHEAST",
+            "DS4_BUTTON_DPAD_SOUTHWEST",
+            "DS4_BUTTON_DPAD_NORTH",
+            "DS4_BUTTON_DPAD_SOUTH",
+            "DS4_BUTTON_DPAD_WEST",
+            "DS4_BUTTON_DPAD_EAST",
+            "DS4_BUTTON_DPAD_NONE",
+        ),
+    )
+
+    class FakePad:
+        def __init__(self):
+            self.axes = {}
+
+        def press_button(self, value):
+            pass
+
+        def release_button(self, value):
+            pass
+
+        def press_special_button(self, value):
+            pass
+
+        def release_special_button(self, value):
+            pass
+
+        def directional_pad(self, value):
+            pass
+
+        def left_trigger_float(self, value):
+            pass
+
+        def right_trigger_float(self, value):
+            pass
+
+        def left_joystick_float(self, x, y):
+            self.axes["left"] = (x, y)
+
+        def right_joystick_float(self, x, y):
+            self.axes["right"] = (x, y)
+
+    pad = FakePad()
+    virtual = srv.WindowsVirtualPad.__new__(srv.WindowsVirtualPad)
+    virtual.vg = vg
+
+    # Full up/left on the phone is positive Y in InputState. vgamepad writes
+    # 128 + round(value * 127) into bThumbLY, where 0 = up.
+    virtual._apply_ds4(
+        pad, srv.InputState(lx=32767, ly=32767, rx=-32768, ry=-32768)
+    )
+    assert pad.axes["left"] == (1.0, -1.0), pad.axes
+    assert pad.axes["right"] == (-1.0, 1.0), pad.axes
+    assert 128 + round(pad.axes["left"][1] * 127) == 1, pad.axes
+    assert 128 + round(pad.axes["right"][1] * 127) == 255, pad.axes
+
+    # Centre must stay centre, and X must keep the X360 sign.
+    virtual._apply_ds4(pad, srv.InputState())
+    assert pad.axes == {"left": (0.0, 0.0), "right": (0.0, 0.0)}, pad.axes
+    print("  DS4 sticks ok: Y flipped, X unchanged, centre preserved")
 
 
 def test_max_phones_cap():
@@ -976,6 +1063,7 @@ def main() -> int:
     try:
         print("lemoGamePad multi-phone test")
         test_slot_kinds()
+        test_ds4_axis_convention()
         test_max_phones_cap()
         test_pad_creation_order()
         test_requested_slot()

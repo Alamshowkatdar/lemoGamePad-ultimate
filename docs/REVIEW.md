@@ -1,4 +1,4 @@
-# Review notes — 1.3.6 / 1.3.7 / 1.4.0 / 1.5.0 / 1.6.0 / 1.6.1 / 1.6.2 / 1.6.3 / 1.6.4 / 1.6.5 / 1.6.6 / 1.6.7 / 1.6.8 / 1.6.9 / 1.6.10 / 1.6.11 / 1.6.12 / 1.6.13 / 1.7.0 / 2.0.0 / 2.0.1 / 2.0.2 / 2.0.3 / 2.1.0 / 2.1.1 / 2.1.2
+# Review notes — 1.3.6 / 1.3.7 / 1.4.0 / 1.5.0 / 1.6.0 / 1.6.1 / 1.6.2 / 1.6.3 / 1.6.4 / 1.6.5 / 1.6.6 / 1.6.7 / 1.6.8 / 1.6.9 / 1.6.10 / 1.6.11 / 1.6.12 / 1.6.13 / 1.7.0 / 2.0.0 / 2.0.1 / 2.0.2 / 2.0.3 / 2.1.0 / 2.1.1 / 2.1.2 / 2.1.3
 
 A pass over the whole app (Kotlin sources, manifest, Gradle files, CI) focused on
 bugs, UI smoothness, and making the phone-to-phone Bluetooth gamepad honest.
@@ -1653,3 +1653,19 @@ or restart the entry animation. A `ResizeObserver` on the canvas catches box
 changes directly, and a short burst of timed rechecks on launch, `pageshow`,
 visibility return and `orientationchange` covers browsers where iOS reports the
 final geometry through no event at all. `pc/test_web.py` asserts the new hooks.
+
+## Windows DS4 stick Y axis (2.1.3)
+
+A pad that identifies as a PS4/DualShock 4 gets a different automatic mapping
+in SDL/Steam and many games. On Windows, slots P5-P8 use the DS4 backend
+automatically, and `--pad ds4` makes every slot DS4. `_apply_ds4()` passed the
+same positive-up Y float to vgamepad that the X360 path uses, but vgamepad
+0.2.0 writes that float straight into the DS4 report bytes `bThumbLY` /
+`bThumbRY`, whose convention is 0 = up, 255 = down. Pushing a stick up was
+therefore reported as down, and auto-mapping applied the DS4 inversion again.
+
+`_apply_ds4()` now negates both Y axes; X, triggers, d-pad and buttons are
+unchanged. X360 (XInput positive-up), Linux evdev (already flipped in
+`linux_pad.py`) and Android Bluetooth HID (already flips with `axis(-ly)`) keep
+their existing behaviour. `test_multi.py` now checks the DS4 floats against the
+vgamepad byte formula so the convention cannot silently regress again.

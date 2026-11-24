@@ -2,6 +2,13 @@
 
 Newest first. The reasoning behind each release is in [`docs/REVIEW.md`](docs/REVIEW.md).
 
+## 2.1.3
+
+- **Fixed inverted stick Y on DualShock 4 pads.** Windows pads presented as a
+  PS4 controller (P5-P8, or `--pad ds4`) now flip the vertical axis before
+  writing the DS4 HID report, so games that auto-map a PS4 controller read up
+  as up. X360 pads, Linux pads and Bluetooth HID were already correct.
+
 ## 2.1.2
 
 - **Fixed intermittent stretching in the iPhone Home Screen web app.** iOS can
