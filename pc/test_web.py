@@ -611,6 +611,7 @@ def test_party_lock(server, port):
 
         first_pong = pong(first, 1)
         second_pong = pong(second, 2)
+        assert bool(first_pong.get("host")) != bool(second_pong.get("host"))
         if first_pong.get("host"):
             host, guest = first, second
         else:
