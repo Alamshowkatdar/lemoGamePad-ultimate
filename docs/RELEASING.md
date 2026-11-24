@@ -10,7 +10,8 @@ manual.
 2. Bump `Brand.VERSION` in
    `android/app/src/main/java/com/alamshowkat/lemogamepad/Theme.kt` so the
    settings footer matches.
-3. Update the version in `README.md` (intro and footer) and add a section to
+3. Update the version in `README.md` (intro and footer), `pc/web/app.js` and
+   `pc/web/index.html` (browser pad labels), and add a section to
    `CHANGELOG.md`.
 4. If behaviour changed, add notes to `docs/REVIEW.md`.
 5. Re-run the tests (see [CONTRIBUTING.md](../CONTRIBUTING.md#tests)).

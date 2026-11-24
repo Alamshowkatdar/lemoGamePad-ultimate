@@ -2,6 +2,11 @@
 
 Newest first. The reasoning behind each release is in [`docs/REVIEW.md`](docs/REVIEW.md).
 
+## 2.1.5
+
+- **Updated the browser pad version label.** The browser footer and in-app
+  version now show the current release instead of the stale 1.7.0 value.
+
 ## 2.1.4
 
 - **P1 is always the party host.** The first controller now takes P1 even if it

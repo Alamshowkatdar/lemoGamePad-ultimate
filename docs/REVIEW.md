@@ -1,4 +1,4 @@
-# Review notes — 1.3.6 / 1.3.7 / 1.4.0 / 1.5.0 / 1.6.0 / 1.6.1 / 1.6.2 / 1.6.3 / 1.6.4 / 1.6.5 / 1.6.6 / 1.6.7 / 1.6.8 / 1.6.9 / 1.6.10 / 1.6.11 / 1.6.12 / 1.6.13 / 1.7.0 / 2.0.0 / 2.0.1 / 2.0.2 / 2.0.3 / 2.1.0 / 2.1.1 / 2.1.2 / 2.1.3 / 2.1.4
+# Review notes — 1.3.6 / 1.3.7 / 1.4.0 / 1.5.0 / 1.6.0 / 1.6.1 / 1.6.2 / 1.6.3 / 1.6.4 / 1.6.5 / 1.6.6 / 1.6.7 / 1.6.8 / 1.6.9 / 1.6.10 / 1.6.11 / 1.6.12 / 1.6.13 / 1.7.0 / 2.0.0 / 2.0.1 / 2.0.2 / 2.0.3 / 2.1.0 / 2.1.1 / 2.1.2 / 2.1.3 / 2.1.4 / 2.1.5
 
 A pass over the whole app (Kotlin sources, manifest, Gradle files, CI) focused on
 bugs, UI smoothness, and making the phone-to-phone Bluetooth gamepad honest.
@@ -1696,3 +1696,16 @@ carry the role, so phones and tabs discover the handoff on their next poll.
 `test_multi.py` now asserts forced P1, host handoff on free-slot moves, swaps and
 disconnects, and PONG role bits; `test_web.py` skips the registration `ps` event
 and checks the browser P1/host behaviour.
+
+## Browser pad version label (2.1.5)
+
+The browser pad received real fixes in 2.1.1, 2.1.2 and 2.1.4, but its visible
+version constant stayed at 1.7.0 from the last UI rework. That made a current
+pad look like an old build and made bug reports ambiguous: the served files were
+new, while the footer claimed otherwise.
+
+`pc/web/app.js` and `pc/web/index.html` now use the release version, and
+`test_web.py` checks both the served script constant and the page labels so the
+browser pad cannot quietly fall behind the app and server again. This is a
+labelling fix only: the WebSocket protocol, 29-byte input packet, pad layout and
+party behaviour are unchanged.
