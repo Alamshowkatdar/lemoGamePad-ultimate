@@ -13,7 +13,7 @@ by **Alam showkat**
 
 [**Website & downloads →**](https://alamshowkatdar.github.io/lemoGamePad-ultimate/) · [Download the latest release →](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) · [Report an issue](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/issues)
 
-**App source version:** 2.1.3. Download the signed APK and the Windows/Linux server from the [latest release](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) — use **1.3.7.2 or newer** on Linux, which fixes the swapped X/Y face buttons. The release workflow also publishes a `SHA256SUMS.txt` so you can verify your download.
+**App source version:** 2.1.4. Download the signed APK and the Windows/Linux server from the [latest release](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) — use **1.3.7.2 or newer** on Linux, which fixes the swapped X/Y face buttons. The release workflow also publishes a `SHA256SUMS.txt` so you can verify your download.
 
 ---
 
@@ -48,6 +48,11 @@ the host reads it directly; the app never connects automatically on launch.
 > **lemoGamePad ultimate™** — trademark of **Alam showkat**.
 > App package: `com.alamshowkat.lemogamepad`.
 
+### New in 2.1.4
+
+- **P1 is the party host.** The first controller takes P1, P1 can swap with
+  anyone, and `LOCK PARTY` follows whichever player ends up on P1.
+
 ### New in 2.1.3
 
 - **PS4/DS4 pads move the sticks the right way.** On Windows, pads presented as
@@ -78,11 +83,12 @@ the host reads it directly; the app never connects automatically on launch.
   follows both game motors, stops the moment the game stops, and survives a lost
   packet. The browser pad behaves the same way. A separate **Vibration from
   games** switch silences game force feedback without losing button clicks.
-- **Party lock and guest QR join.** The first connected controller is the host
-  and can freeze seat changes from the LINK / CONNECTION card. Other players
-  keep playing, late guests can still take a free pad, and the lock releases if
-  the host leaves. A second guest QR (and `&auto=1` browser link) joins the next
-  free pad without touching a saved slot preference.
+- **Party lock and guest QR join.** P1 is the host seat and can freeze seat
+  changes from the LINK / CONNECTION card. P1 can swap with any other player and
+  the host role follows it. Other players keep playing, late guests can still
+  take a free pad, and the lock releases if the host leaves. A second guest QR
+  (and `&auto=1` browser link) joins the next free pad without touching a saved
+  slot preference.
 - **Layout QR sharing.** **SHARE QR** / **SCAN QR** in Android's LAYOUTS card
   exchange a named pad arrangement with another phone. The browser offers
   **SHARE CODE** / **IMPORT CODE** using the same text payload, and can also open
@@ -356,8 +362,9 @@ http://192.168.1.20:9878/?k=<pairing-key>
   Wide browser windows get two columns, phones one roomy column, and **DENSE**
   hides the longer notes when you want a denser view.
 - Player-slot chips (AUTO or P1–P8), a live status pill and latency graph, and
-  CONNECT / RECONNECT / DISCONNECT. The host also gets **LOCK PARTY**, while
-  every other tab sees its seat frozen without its input being paused.
+  CONNECT / RECONNECT / DISCONNECT. The player on P1 gets **LOCK PARTY**; if P1
+  swaps, the new P1 player becomes host. Every other tab sees its seat frozen
+  without its input being paused.
 - A **guest QR** printed by the server (with `&auto=1`) opens the page in AUTO,
   so the PC assigns the next free pad without saving over that tab's usual slot.
 - Drag/pinch layout editing with named saved arrangements, stored only in that
@@ -407,4 +414,4 @@ licenses are listed in [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md).
 
 ---
 
-**lemoGamePad ultimate™ © Alam showkat** · v2.1.3
+**lemoGamePad ultimate™ © Alam showkat** · v2.1.4

@@ -120,10 +120,10 @@ Tap the status pill to open **CONTROL CENTRE**:
   sides while the card is open, and the sheet shows which pad is actually in
   use. The number matches the controller the game sees, because the server
   creates every lower pad first; a move to an unused slot creates that pad too.
-  The first connected controller is the **host** and gets a **LOCK PARTY**
-  button here. While the party is locked, guests cannot move or swap seats,
-  but they keep sending input and a new guest can still take a free pad. The
-  lock is released if the host disconnects.
+  **P1 is the host seat** and gets a **LOCK PARTY** button here. The first tab
+  takes P1; if P1 swaps, the new P1 player becomes host. While the party is
+  locked, guests cannot move or swap seats, but they keep sending input and a
+  new guest can still take a free pad. The lock is released if the host leaves.
 - **Appearance** — the nine themes (Neon, Midnight, Violet, Crimson, Solar,
   Retro, Arctic, Mono, AMOLED) with a cross-fade when switching, PlayStation or
   Xbox face-button labels, an **Animated buttons** toggle and the **FULL

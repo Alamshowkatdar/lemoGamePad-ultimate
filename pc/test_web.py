@@ -430,16 +430,16 @@ def test_input_ping_and_rumble(server, port):
         assert queued.pressed("cross"), queued.buttons
         assert queued.lx == 12345 and queued.ly == -8000, (queued.lx, queued.ly)
 
-        message = client.recv()
+        message = recv_until(client, "s")
         assert message == {"t": "s", "n": 1}, message
 
         client.send({"t": "p", "c": 123456})
-        pong = client.recv()
+        pong = recv_until(client, "q")
         assert pong["t"] == "q" and pong["c"] == 123456 and pong["n"] == 1, pong
         assert pong.get("host") is True and pong.get("lock") is False, pong
 
         server._slot_rumble(server.slots[0], 10, 200)
-        rumble = client.recv()
+        rumble = recv_until(client, "r")
         assert rumble == {"t": "r", "s": 10, "l": 200}, rumble
 
         server._slot_rumble(server.slots[0], 0, 0)
@@ -495,17 +495,27 @@ def test_wrong_key_and_origin(server, port):
 
 
 def test_want_slot(server, port):
-    client = WebSocket(port, f"/ws?k={KEY}")
+    first = WebSocket(port, f"/ws?k={KEY}")
+    second = WebSocket(port, f"/ws?k={KEY}")
     try:
-        client.send({"t": "i", "b": 0, "lx": 0, "ly": 0, "rx": 0, "ry": 0,
-                     "l2": 0, "r2": 0, "w": 2})
+        first.send({"t": "i", "b": 0, "lx": 0, "ly": 0, "rx": 0, "ry": 0,
+                    "l2": 0, "r2": 0, "w": 2})
         wait_for(lambda: len(server.peers) == 1, message="browser peer was not registered")
         peer = next(iter(server.peers.values()))
-        assert peer.slot == 1, peer.slot
-        assert peer.name == "browser 2", peer.name
-        print("  slot ok: a browser can request P2")
+        assert peer.slot == 0, peer.slot  # P1 is the host seat
+        assert peer.name == "browser 1", peer.name
+        assert server.host_token == peer.token
+
+        second.send({"t": "i", "b": 0, "lx": 0, "ly": 0, "rx": 0, "ry": 0,
+                     "l2": 0, "r2": 0, "w": 2})
+        wait_for(lambda: len(server.peers) == 2, message="second tab did not register")
+        guest = next(p for p in server.peers.values() if p is not peer)
+        assert guest.slot == 1, guest.slot
+        assert guest.name == "browser 2", guest.name
+        print("  slot ok: first tab owns P1 host, a later tab can request P2")
     finally:
-        client.close()
+        first.close()
+        second.close()
 
 
 def test_swap(server, port):
@@ -592,25 +602,47 @@ def test_party_lock(server, port):
         wait_for(lambda: len(server.peers) == 2, message="tabs did not register")
         recv_until(first, "s")
         recv_until(second, "s")
-        first_peer, second_peer = list(server.peers.values())
-        assert server.host_token == first_peer.token
 
-        first.send({"t": "lock", "on": 1})
-        host_state = recv_until(first, "ps")
-        guest_state = recv_until(second, "ps")
-        assert host_state["on"] is True and host_state["host"] is True, host_state
-        assert guest_state["on"] is True and guest_state["host"] is False, guest_state
+        # Either tab may win the race to register. Ask each one who holds P1
+        # instead of assuming the first socket also sent the first input.
+        def pong(client, challenge):
+            client.send({"t": "p", "c": challenge})
+            return recv_until(client, "q")
+
+        first_pong = pong(first, 1)
+        second_pong = pong(second, 2)
+        if first_pong.get("host"):
+            host, guest = first, second
+        else:
+            host, guest = second, first
+        assert host is not guest
+        assert server.host_token == next(
+            p.token for p in server.peers.values() if p.slot == 0
+        )
+
+        # Registration already broadcasts the host flag, so skip any stale
+        # unlocked snapshot before checking the lock change.
+        host.send({"t": "lock", "on": 1})
+        host_state = None
+        while host_state is None or host_state.get("on") is not True:
+            host_state = recv_until(host, "ps")
+        guest_state = None
+        while guest_state is None or guest_state.get("on") is not True:
+            guest_state = recv_until(guest, "ps")
+        assert host_state["host"] is True, host_state
+        assert guest_state["host"] is False, guest_state
         assert server.locked
 
         # A locked guest cannot swap; UNAVAILABLE closes its pending card at once.
-        second.send({"t": "swap", "w": 1})
-        refused = recv_until(second, "sr")
+        guest.send({"t": "swap", "w": 1})
+        refused = recv_until(guest, "sr")
         assert refused["c"] == srv.SLOT_UNAVAILABLE, refused
-        assert first_peer.slot == 0 and second_peer.slot == 1
+        assert {p.slot for p in server.peers.values()} == {0, 1}
 
-        first.send({"t": "lock", "on": 0})
-        unlocked = recv_until(second, "ps")
-        assert unlocked["on"] is False, unlocked
+        host.send({"t": "lock", "on": 0})
+        unlocked = None
+        while unlocked is None or unlocked.get("on") is not False:
+            unlocked = recv_until(guest, "ps")
         assert not server.locked
         print("  party lock ok: browser host freezes seats and unlocks")
     finally:

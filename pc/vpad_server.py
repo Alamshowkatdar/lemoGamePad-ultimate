@@ -1242,6 +1242,9 @@ class Server:
     and unplugged when the player moves away or leaves, so switching to P2 does
     not leave an idle P1 connected as a second gamepad.
 
+    P1 is the party host seat: the first phone owns it, and if P1 swaps pads the
+    host role follows the new occupant.
+
     Eight is the supported maximum and the default. Windows' XInput API still
     exposes only four pads; with the default ``x360`` backend, slots 5-8
     automatically use the DualShock 4/HID backend so they remain usable by
@@ -1574,6 +1577,8 @@ class Server:
         """
         moved_from = -1
         is_new = False
+        host_changed = False
+        notices: list[tuple[Peer, int, int, int]] = []
         with self.lock:
             peer = self.peers.get(token)
             if peer is not None:
@@ -1621,13 +1626,18 @@ class Server:
                 if len(self.peers) >= self.max_phones:
                     return None, False, "full"
 
-                slot = None
-                if 1 <= want_slot <= self.max_phones:
-                    wanted = self.slots[want_slot - 1]
-                    if wanted.peer is None:
-                        slot = wanted
-                if slot is None:
-                    slot = next((s for s in self.slots if s.peer is None), None)
+                # P1 is the host seat. The first phone owns it even when its
+                # settings still ask for another pad; later guests keep theirs.
+                if self.slots[0].peer is None:
+                    slot = self.slots[0]
+                else:
+                    slot = None
+                    if 1 <= want_slot <= self.max_phones:
+                        wanted = self.slots[want_slot - 1]
+                        if wanted.peer is None:
+                            slot = wanted
+                    if slot is None:
+                        slot = next((s for s in self.slots if s.peer is None), None)
                 if slot is None:
                     return None, False, "full"
 
@@ -1646,8 +1656,16 @@ class Server:
                 self.peers[token] = peer
                 self._pads_dirty = True
                 is_new = True
-                if self.host_token is None:
-                    self.host_token = token
+
+            host_changed, notices = self._sync_host_locked(
+                peer.token if moved_from == 0 else None
+            )
+
+        for notice in notices:
+            self._swap_result(*notice)
+        if host_changed:
+            self._log("party host is now the player on P1")
+            self._broadcast_party_state()
 
         # Pad creation/removal happens in the main loop so it cannot race with
         # another assignment. _flush_inputs skips a slot until its pad exists.
@@ -1662,12 +1680,12 @@ class Server:
         cancelled: list[tuple[Peer, int, int, int]] = []
         host_left = False
         host_locked = False
+        host_changed = False
         with self.lock:
             self.peers.pop(peer.token, None)
             if peer.token == self.host_token:
                 # Never leave the party stuck behind a host that walked away.
                 host_locked = self.locked
-                self.host_token = min(self.peers) if self.peers else None
                 self.locked = False
                 host_left = True
             slot = self._slot_of(peer)
@@ -1685,14 +1703,17 @@ class Server:
                     continue
                 code = SLOT_UNAVAILABLE if swap.target is peer else SLOT_CANCELLED
                 cancelled.append((other, swap.id, code, other_slot.index + 1))
+            host_changed, notices = self._sync_host_locked()
+            cancelled.extend(notices)
         for other, rid, code, slot_index in cancelled:
             self._swap_result(other, rid, code, slot_index)
         self._log(f"controller disconnected: {peer.describe()}")
-        if host_left:
-            if host_locked:
-                self._log("party host left; lock released")
-            # The surviving peer inherits the host role, so browser tabs need
-            # the new flag even when the party was never locked.
+        if host_left and host_locked:
+            self._log("party host left; lock released")
+        if host_changed:
+            self._log("party host is now the player on P1")
+            # The surviving peer inherits the role, so browser tabs need the
+            # new flag even when the party was never locked.
             self._broadcast_party_state()
 
     # --------------------------------------------------------------- browser pad
@@ -1847,6 +1868,33 @@ class Server:
             self._pending.pop(peer.token, None)
         return True
 
+    def _sync_host_locked(self, skip_token: Optional[int] = None
+                          ) -> tuple[bool, list[tuple[Peer, int, int, int]]]:
+        """
+        Keep P1 filled and make its occupant the party host; caller holds lock.
+
+        Moving out of P1 leaves the role behind. The next peer takes P1 and gets
+        a swap result so its app stops asking for the old pad. [skip_token] is
+        the player that just left P1: promoting them straight back would undo
+        their move. Returns (host_changed, results to send outside the lock).
+        """
+        results: list[tuple[Peer, int, int, int]] = []
+        if self.peers and self.slots[0].peer is None:
+            candidates = [
+                p for p in self.peers.values() if p.token != skip_token
+            ] or list(self.peers.values())
+            promoted = min(candidates, key=lambda p: p.token)
+            if self._move_peer_locked(promoted, 0):
+                results.append((promoted, self._next_swap_id(), SLOT_ACCEPTED, 1))
+
+        host = self.slots[0].peer if self.slots else None
+        new_token = host.token if host is not None else None
+        changed = new_token != self.host_token
+        self.host_token = new_token
+        if new_token is None:
+            self.locked = False
+        return changed, results
+
     def _apply_swap_locked(self, swap: SwapRequest):
         """Swap both players' pads; caller holds the lock. None on a race."""
         requester = self.peers.get(swap.requester.token)
@@ -1921,6 +1969,7 @@ class Server:
             return
         asks: list[SwapRequest] = []
         results: list[tuple[Peer, int, int, int]] = []
+        host_changed = False
         with self.lock:
             if self.peers.get(requester.token) is not requester:
                 return
@@ -2043,15 +2092,25 @@ class Server:
                         self._swaps[request_id] = swap
                         asks.append(swap)
 
+            skip = requester.token if (
+                self.slots[0].peer is None and requester.slot != 0
+            ) else None
+            host_changed, notices = self._sync_host_locked(skip)
+            results.extend(notices)
+
         for swap in asks:
             self._send_slot_ask(swap)
         for peer, request_id, code, slot in results:
             self._swap_result(peer, request_id, code, slot)
+        if host_changed:
+            self._log("party host is now the player on P1")
+            self._broadcast_party_state()
 
     def _resolve_swap(self, voter: Peer, request_id: int, accept: bool,
                       now: float) -> None:
         """Record the target player's answer and, on accept, trade pads."""
         results: list[tuple[Peer, int, int, int]] = []
+        host_changed = False
         with self.lock:
             if self.locked and voter.token != self.host_token:
                 return
@@ -2080,8 +2139,17 @@ class Server:
                 results.append((swap.requester, request_id, SLOT_DECLINED,
                                 swap.requester.slot + 1))
 
+            skip = swap.requester.token if (
+                self.slots[0].peer is None and swap.requester.slot != 0
+            ) else None
+            host_changed, notices = self._sync_host_locked(skip)
+            results.extend(notices)
+
         for peer, rid, code, slot in results:
             self._swap_result(peer, rid, code, slot)
+        if host_changed:
+            self._log("party host is now the player on P1")
+            self._broadcast_party_state()
 
     def _service_swaps(self, now: float) -> None:
         """Resend unanswered asks and expire requests whose players left."""

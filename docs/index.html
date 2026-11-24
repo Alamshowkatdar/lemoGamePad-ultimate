@@ -67,9 +67,9 @@
 
     <section class="section" id="download">
       <div class="section-head">
-        <p class="kicker">Downloads · latest release 2.1.3</p>
+        <p class="kicker">Downloads · latest release 2.1.4</p>
         <h2>Pick the pieces you need</h2>
-        <p>All 2.1.3 binaries are attached to the GitHub release. Check <code>SHA256SUMS.txt</code> before you run anything.</p>
+        <p>All 2.1.4 binaries are attached to the GitHub release. Check <code>SHA256SUMS.txt</code> before you run anything.</p>
       </div>
 
       <div class="cards download-grid">
@@ -223,7 +223,7 @@
               <li>No camera? Tap <strong>Scan network</strong>, or enter the IP from the server banner manually.</li>
               <li>For the lowest latency, enable <strong>USB tethering</strong> and choose the <strong>USB</strong> chip. <strong>AUTO</strong> probes both Wi-Fi and USB.</li>
             </ol>
-            <p class="tip"><strong>More players?</strong> Scan the <code>lemoGamePad-guest-qr-*.png</code> code printed by the server to join the next free pad automatically. The first connected phone is the host and can freeze seat changes with <strong>LOCK PARTY</strong>.</p>
+            <p class="tip"><strong>More players?</strong> Scan the <code>lemoGamePad-guest-qr-*.png</code> code printed by the server to join the next free pad automatically. P1 is the host and can freeze seat changes with <strong>LOCK PARTY</strong>; if P1 swaps, the new P1 player becomes host.</p>
             <p class="tip"><strong>Bluetooth is different:</strong> it is a standard HID gamepad for a PC or Android host. Pair the host, then tap <strong>SELECT HOST</strong> in the app. It does not use the PC server.</p>
             <a class="text-link" href="https://github.com/Alamshowkatdar/lemoGamePad-ultimate/blob/main/docs/ANDROID.md">Read the full Android guide →</a>
           </div>
@@ -238,7 +238,7 @@
               <li>Open it on a device on the same Wi-Fi. The page is served by the PC itself and works offline.</li>
               <li>Touch the pad or press a key to activate the controller. The status pill opens keyboard map, themes, player slot, layouts and screen preview.</li>
             </ol>
-            <p class="tip"><strong>Party play:</strong> the first connected controller is the host and gets <strong>LOCK PARTY</strong> in the Connection card. A <code>&amp;auto=1</code> guest link or its QR joins the next free pad without changing a saved slot.</p>
+            <p class="tip"><strong>Party play:</strong> P1 is the host and gets <strong>LOCK PARTY</strong> in the Connection card. P1 can swap with anyone and the host role follows it. A <code>&amp;auto=1</code> guest link or its QR joins the next free pad without changing a saved slot.</p>
             <p class="tip"><strong>This website is only for downloads and instructions.</strong> The playable browser pad must be opened from the <code>http://PC-IP:9878/?k=...</code> URL printed by your own PC server. Public HTTPS pages cannot open a local <code>ws://</code> socket, and a relay would add latency.</p>
             <a class="text-link" href="https://github.com/Alamshowkatdar/lemoGamePad-ultimate/blob/main/docs/WEB.md">Read the full browser-pad guide →</a>
           </div>

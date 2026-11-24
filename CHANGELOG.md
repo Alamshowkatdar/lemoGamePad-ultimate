@@ -2,6 +2,13 @@
 
 Newest first. The reasoning behind each release is in [`docs/REVIEW.md`](docs/REVIEW.md).
 
+## 2.1.4
+
+- **P1 is always the party host.** The first controller now takes P1 even if it
+  remembers another slot. P1 can swap with any other seat, and the host role
+  follows the new P1 player. If P1 leaves, the next player moves up and inherits
+  the role.
+
 ## 2.1.3
 
 - **Fixed inverted stick Y on DualShock 4 pads.** Windows pads presented as a

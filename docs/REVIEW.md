@@ -1,4 +1,4 @@
-# Review notes — 1.3.6 / 1.3.7 / 1.4.0 / 1.5.0 / 1.6.0 / 1.6.1 / 1.6.2 / 1.6.3 / 1.6.4 / 1.6.5 / 1.6.6 / 1.6.7 / 1.6.8 / 1.6.9 / 1.6.10 / 1.6.11 / 1.6.12 / 1.6.13 / 1.7.0 / 2.0.0 / 2.0.1 / 2.0.2 / 2.0.3 / 2.1.0 / 2.1.1 / 2.1.2 / 2.1.3
+# Review notes — 1.3.6 / 1.3.7 / 1.4.0 / 1.5.0 / 1.6.0 / 1.6.1 / 1.6.2 / 1.6.3 / 1.6.4 / 1.6.5 / 1.6.6 / 1.6.7 / 1.6.8 / 1.6.9 / 1.6.10 / 1.6.11 / 1.6.12 / 1.6.13 / 1.7.0 / 2.0.0 / 2.0.1 / 2.0.2 / 2.0.3 / 2.1.0 / 2.1.1 / 2.1.2 / 2.1.3 / 2.1.4
 
 A pass over the whole app (Kotlin sources, manifest, Gradle files, CI) focused on
 bugs, UI smoothness, and making the phone-to-phone Bluetooth gamepad honest.
@@ -1548,7 +1548,8 @@ swap updates only the live seat in that tab; it deliberately skips the preferenc
 write so the guest code stays temporary.
 
 Party lock is the complement: it stops *moving* players, not *joining* or
-*playing*. The first registered peer is designated host without a new handshake;
+*playing*. At 2.1.0 the first registered peer was designated host without a new
+handshake (later changed so the P1 slot owns the role — see below);
 type 12 carries the host's lock bit over UDP, and the browser uses
 `{"t":"lock","on":...}`. Enforcement sits at the three existing seat-change
 choke points — the live `want_slot` move branch, `_begin_swap` and `_resolve_swap`
@@ -1561,7 +1562,8 @@ between the first check and insertion cannot slip a seat change through. Locking
 also cancels the target's Accept prompt, not just the requester's pending card.
 
 Host loss cannot be allowed to strand the party behind a lock, so `_drop_peer`
-clears the lock and promotes the lowest remaining token. Browser tabs learn that
+clears the lock and promotes the lowest remaining token (now the next P1 player).
+Browser tabs learn that
 through `ps`; phones learn it through PONG. `pc/test_multi.py` covers blocked
 guest moves and swaps, continued input, locked host moves, free-slot joins while
 locked, PONG party bits, QR flags and host-loss recovery. `pc/test_web.py` also
@@ -1669,3 +1671,28 @@ unchanged. X360 (XInput positive-up), Linux evdev (already flipped in
 `linux_pad.py`) and Android Bluetooth HID (already flips with `axis(-ly)`) keep
 their existing behaviour. `test_multi.py` now checks the DS4 floats against the
 vgamepad byte formula so the convention cannot silently regress again.
+
+## P1 as the party host (2.1.4)
+
+Release 2.1.0 made the *first registered peer* the host, independent of the pad
+it happened to occupy. That was confusing in practice: a phone with a saved P5
+preference became the host on P5, while the controller at P1 had no host powers.
+The host role now belongs to the **P1 slot**, not to a connection order.
+
+`_register_peer()` places the first peer on P1 even when its saved `want_slot`
+says otherwise; later guests keep their saved pads. `_sync_host_locked()` is
+called after every slot ownership change and derives `host_token` from
+`slots[0].peer`, so a P1 swap transfers the role to the new occupant without a
+new handshake or packet layout change. When P1 is emptied, the next peer is
+moved up and receives a `SLOT_ACCEPTED` result with a fresh request id; that
+updates the app's `wantSlot` and browser `prefs.slot`, so it does not keep asking
+for its old pad and bounce back. A `skip_token` keeps the player who just left
+P1 from being promoted straight back into it.
+
+The existing lock enforcement points already read `host_token`, so they needed
+no protocol changes: after a P1 swap the new host can rearrange seats and the
+old host is just another guest. PONG and the browser's `ps` broadcast already
+carry the role, so phones and tabs discover the handoff on their next poll.
+`test_multi.py` now asserts forced P1, host handoff on free-slot moves, swaps and
+disconnects, and PONG role bits; `test_web.py` skips the registration `ps` event
+and checks the browser P1/host behaviour.

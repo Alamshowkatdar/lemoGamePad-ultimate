@@ -117,12 +117,13 @@ Install the APK on the other phones and pair them the same way.
   using sends that player a small **Accept / Decline** card instead of taking
   the pad; the requester sees a pending slot and line until the answer arrives.
   The status pill and the slot line show the pad the PC actually assigned.
-- **Party lock** — the first connected controller is the host. In the LINK card
-  the host gets **LOCK PARTY** / **UNLOCK PARTY**. While the party is locked,
-  other phones cannot move or swap seats; their buttons, sticks and triggers
-  keep working, and a new guest can still claim a free pad. The host can still
-  change seats, and the lock clears if the host disconnects. Non-hosts see their
-  slot chips dimmed and a short "Party locked" line.
+- **Party lock** — **P1 is the host seat**. The first phone takes P1; if P1
+  swaps with someone else, that player becomes host and gets **LOCK PARTY** /
+  **UNLOCK PARTY** in the LINK card. If P1 leaves, the next player moves up and
+  inherits the role. While the party is locked, other phones cannot move or
+  swap seats; their buttons, sticks and triggers keep working, and a new guest
+  can still claim a free pad. Non-hosts see their slot chips dimmed and a short
+  "Party locked" line.
 - **Swaps ask first** — the other player's card sits at the top of the pad with
   no backdrop, and play continues on both phones while they decide. **Accept**
   trades both pads; **Decline**, no answer within 10 s, or a player leaving

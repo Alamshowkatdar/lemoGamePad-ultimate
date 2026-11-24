@@ -26,13 +26,14 @@
   consent request, and the move happens only after Accept. Requests are retried
   on later packets so the phone moves as soon as the wanted pad frees up. The
   server reports the pad it actually assigned in every `PONG`.
-- Party lock is a host-only brake on those seat changes. The first registered
-  peer becomes the host and may send type 12 with a `1`/`0` flag. While locked,
-  the server refuses `want_pad` moves, swap requests and swap votes from every
-  other peer, but input is never paused and brand-new peers may still claim a
-  free pad. `PONG` carries the lock and host bits so phones can dim the slot
-  chips and reveal the host control. If the host drops, the lowest remaining
-  token inherits the role and the lock is cleared.
+- Party lock is a host-only brake on those seat changes. **P1 is the host seat**:
+  the first registered peer takes P1 even if it asks for another pad, and the
+  host role follows whoever holds P1 after a swap. The host may send type 12
+  with a `1`/`0` flag. While locked, the server refuses `want_pad` moves, swap
+  requests and swap votes from every other peer, but input is never paused and
+  brand-new peers may still claim a free pad. `PONG` carries the lock and host
+  bits so phones can dim the slot chips and reveal the host control. If P1 is
+  emptied, the next peer takes it, the role moves with it, and the lock clears.
 - Rumble: the virtual pad reports its light and heavy motor speeds (ViGEmBus on
   every change; evdev on each force-feedback event). The server forwards them as
   type-7 packets **to that slot's phone only**, dropping game-driven repeats. A

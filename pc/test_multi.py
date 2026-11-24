@@ -564,7 +564,7 @@ def test_max_phones_cap():
 
 def test_pad_creation_order():
     """
-    A request for P5 must replace the idle P1 pad, not leave P1..P4 connected.
+    The first phone owns the P1 host pad; idle slots never keep a device.
 
     Only occupied slots keep a virtual device, so switching slots never leaves
     an extra gamepad in the OS device list.
@@ -604,14 +604,14 @@ def test_pad_creation_order():
             0x5EED, ("127.0.0.1", 5000), time.time(), want_slot=5
         )
         assert peer is not None and fresh and reason == "", (peer, fresh, reason)
-        assert peer.slot == 4, peer.slot
+        assert peer.slot == 0, peer.slot  # P1 is the host seat
+        assert server.host_token == 0x5EED
         # The main loop applies pad changes; a direct registration must sync.
         server._sync_pads()
-        assert len(created) == 2, len(created)  # P1 probe + P5
-        assert all(slot.pad is None for slot in server.slots[:4]), "idle pads left connected"
-        assert server.slots[4].pad is not None
-        assert all(slot.pad is None for slot in server.slots[5:]), "created too many"
-        print("  pad order ok: P5 replaces idle P1, no P1-P4 or P6-P8")
+        assert len(created) == 1, len(created)  # the P1 probe pad is reused
+        assert server.slots[0].pad is not None
+        assert all(slot.pad is None for slot in server.slots[1:]), "idle pads left connected"
+        print("  pad order ok: first phone owns P1, no idle extra pads")
     finally:
         srv.create_virtual_pad = original
         if server is not None:
@@ -647,17 +647,18 @@ def test_requested_slot():
         first.token = first.discover(0)[0]
         second.token = second.discover(0)[0]
 
-        # A direct request for P3 must land on slot index 2.
+        # The first phone always owns P1, even when it remembers P3.
         first.input(want_slot=3)
         wait_for(lambda: first.token in server.peers, timeout=10.0,
                  message="first phone did not register")
-        assert server.peers[first.token].slot == 2, server.peers[first.token].slot
+        assert server.peers[first.token].slot == 0, server.peers[first.token].slot
+        assert server.host_token == first.token
 
         # The peer is inserted before its virtual pad is created, and creating
         # a uinput device can take several seconds on a busy CI runner. Wait
         # for the receive thread to finish that work, otherwise the PONG below
         # may still be sitting in the socket when drain() times out.
-        wait_for(lambda: server.slots[2].pad is not None, timeout=20.0,
+        wait_for(lambda: server.slots[0].pad is not None, timeout=20.0,
                  message="the virtual pad was never created")
 
         # PONG reports the pad the PC actually assigned (trailing byte).
@@ -667,17 +668,17 @@ def test_requested_slot():
             magic, _ver, mtype, _seq, _tok = HEADER.unpack_from(data)
             if magic == MAGIC and mtype == srv.MSG_PONG and len(data) >= HEADER.size + 7:
                 reported = data[HEADER.size + 6]
-        assert reported == 3, f"PONG should report pad 3, got {reported}"
+        assert reported == 1, f"PONG should report pad 1, got {reported}"
 
-        # The same request from another phone cannot steal P3; it falls back.
+        # Later guests still get the pad they ask for when it is free.
         second.input(want_slot=3)
         wait_for(lambda: second.token in server.peers, timeout=10.0,
                  message="second phone did not register")
-        assert server.peers[second.token].slot != 2, "P3 was stolen"
+        assert server.peers[second.token].slot == 2, "P3 was not honoured"
 
-        # Changing the request moves an already-connected phone to a free pad.
-        first.input(want_slot=2)
-        wait_for(lambda: server.peers[first.token].slot == 1, timeout=3.0,
+        # Changing the request moves an already-connected guest to a free pad.
+        second.input(want_slot=2)
+        wait_for(lambda: server.peers[second.token].slot == 1, timeout=3.0,
                  message="connected phone did not move to P2")
         assert server.slots[2].peer is None, "the old pad was not released"
 
@@ -689,26 +690,26 @@ def test_requested_slot():
         assert sum(slot.pad is not None for slot in server.slots) == len(
             server.peers
         ), "idle pads are still connected"
-        first.input(buttons=1 << CROSS)
+        second.input(buttons=1 << CROSS)
         wait_for(
-            lambda: pad_buttons(server, server.peers[first.token]) == 1 << CROSS,
+            lambda: pad_buttons(server, server.peers[second.token]) == 1 << CROSS,
             message="the moved-to pad did not receive input",
         )
 
-        # A pad owned by another phone is never taken; the mover stays put.
-        occupied = server.peers[second.token].slot + 1
+        # P1 is never taken while the host is on it.
         for _ in range(3):
-            first.input(want_slot=occupied)
+            second.input(want_slot=1)
             time.sleep(0.05)
         time.sleep(0.2)
-        assert server.peers[first.token].slot == 1, "an occupied pad was stolen"
+        assert server.peers[second.token].slot == 1, "an occupied pad was stolen"
+        assert server.host_token == first.token
 
         # Out-of-range requests are ignored like AUTO.
-        first.input(want_slot=9)
+        second.input(want_slot=9)
         time.sleep(0.2)
-        assert server.peers[first.token].slot == 1, "out-of-range slot moved the phone"
+        assert server.peers[second.token].slot == 1, "out-of-range slot moved the phone"
         print(
-            "  requested slot ok: honours P3, falls back when busy, "
+            "  requested slot ok: P1 stays host, later pads honoured, "
             "moves live, never steals"
         )
     finally:
@@ -770,6 +771,42 @@ def test_swap_accept():
             message="swapped pads did not receive input",
         )
         print("  swap accept ok: consent needed, input keeps running, pads trade")
+    finally:
+        stop_phones(server, thread, first, second)
+
+
+def test_p1_host_follows_swap():
+    """Swapping P1 hands the party host role to the new occupant."""
+    server, port, thread, first, second = two_phone_server()
+    try:
+        assert server.host_token == first.token
+        assert server.peers[first.token].slot == 0
+
+        first.request_slot(2)
+        wait_for(lambda: bool(server._swaps), message="swap request was not registered")
+        request_id = next(iter(server._swaps))
+        second.vote(request_id, True)
+        wait_for(
+            lambda: server.peers[first.token].slot == 1
+            and server.peers[second.token].slot == 0,
+            message="pads were not swapped",
+        )
+        wait_for(lambda: server.host_token == second.token,
+                 message="host did not follow P1")
+
+        def party_state(phone):
+            phone.ping()
+            state = None
+            for data, _ in phone.drain(0.6):
+                if HEADER.unpack_from(data)[2] != srv.MSG_PONG:
+                    continue
+                if len(data) >= HEADER.size + 9:
+                    state = (data[HEADER.size + 7], data[HEADER.size + 8])
+            return state
+
+        assert party_state(second) == (0, 1), "new P1 must report HOST"
+        assert party_state(first) == (0, 0), "old P1 must lose HOST"
+        print("  host follows P1: swap transfers the role and PONG flags")
     finally:
         stop_phones(server, thread, first, second)
 
@@ -883,13 +920,15 @@ def test_free_slot_request():
             kind == "result" and code == srv.SLOT_ACCEPTED and slot == 3
             for kind, _rid, code, slot in results
         ), results
-        assert server.peers[second.token].slot == 1
+        # Leaving P1 hands the host role to the next player.
+        assert server.peers[second.token].slot == 0, "P1 was left empty"
+        assert server.host_token == second.token
 
-        # The input frame written before the result still names P1.
+        # The input frame written before the result still names the old pad.
         first.input(buttons=1 << CROSS, want_slot=1)
         time.sleep(0.25)
         assert server.peers[first.token].slot == 2, "stale request moved the player back"
-        print("  free slot ok: immediate move, no ask, stale input ignored")
+        print("  free slot ok: move, P1 host handoff, stale input ignored")
     finally:
         stop_phones(server, thread, first, second)
 
@@ -936,7 +975,7 @@ def test_party_lock_blocks_guests():
 
 
 def test_party_lock_host_and_join():
-    """The host may still move while locked, and new guests may claim a free pad."""
+    """Moving off P1 hands the host role on; locked guests can still join."""
     server, port, thread, first, second = two_phone_server()
     third = Phone(port)
     try:
@@ -950,6 +989,8 @@ def test_party_lock_host_and_join():
         )
         wait_for(lambda: server.slots[2].pad is not None, timeout=20.0,
                  message="host's new pad was never created")
+        assert server.peers[second.token].slot == 0, "P1 was left empty"
+        assert server.host_token == second.token, "host did not follow P1"
 
         # This is the server half of guest QR join: the code puts the phone in
         # AUTO (want_slot=0) and the PC fills the lowest free pad.
@@ -958,10 +999,10 @@ def test_party_lock_host_and_join():
             third.input(want_slot=0)
             wait_for(lambda: third.token in server.peers, timeout=10.0,
                      message="guest did not register while locked")
-            assert server.peers[third.token].slot == 0, (
+            assert server.peers[third.token].slot == 1, (
                 "guest did not take the remaining free pad"
             )
-            wait_for(lambda: server.slots[0].pad is not None, timeout=20.0,
+            wait_for(lambda: server.slots[1].pad is not None, timeout=20.0,
                      message="guest's pad was never created")
 
             # PONG carries lock + role after the slot byte for the phone UI.
@@ -977,7 +1018,7 @@ def test_party_lock_host_and_join():
         assert "a=1" in srv.qr_payload("127.0.0.1", port, "PC", auto=True)
         assert "a=1" not in srv.qr_payload("127.0.0.1", port, "PC")
         assert "&auto=1" in server.web_url("127.0.0.1", auto=True)
-        print("  locked host can move; guest join still takes a free pad")
+        print("  host follows P1; guest join still takes a free pad")
     finally:
         third.close()
         stop_phones(server, thread, first, second)
@@ -995,7 +1036,8 @@ def test_host_leave_unlocks():
             wait_for(lambda: not server.locked, timeout=6.0,
                      message="party stayed locked after the host left")
             assert server.host_token == second.token
-        print("  host disconnect releases the lock")
+            assert server.peers[second.token].slot == 0, "P1 was not filled"
+        print("  host disconnect releases the lock; P1 is filled")
     finally:
         second.close()
         server.running = False
@@ -1068,6 +1110,7 @@ def main() -> int:
         test_pad_creation_order()
         test_requested_slot()
         test_swap_accept()
+        test_p1_host_follows_swap()
         test_swap_decline()
         test_swap_cancel()
         test_swap_timeout()
