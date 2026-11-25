@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://alamshowkatdar.github.io/lemoGamePad-ultimate/sitemap.xml

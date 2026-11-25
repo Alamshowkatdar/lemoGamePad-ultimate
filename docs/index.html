@@ -3,12 +3,120 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>lemoGamePad ultimate — downloads &amp; setup</title>
-  <meta name="description" content="Download the lemoGamePad ultimate Android app and PC server. Follow the Windows, Linux, Android and browser-pad setup guides.">
+  <title>lemoGamePad ultimate — Turn an Android phone into a PC gamepad</title>
+  <meta name="description" content="Use your Android phone as a free gamepad for Windows or Linux PC. Play up to 8 controllers over Wi-Fi, USB or Bluetooth. Download and setup guides.">
+  <meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large">
   <meta name="theme-color" content="#050d1a">
+  <link rel="canonical" href="https://alamshowkatdar.github.io/lemoGamePad-ultimate/">
   <link rel="icon" type="image/svg+xml" href="assets/logo.svg">
   <link rel="apple-touch-icon" href="assets/logo.png">
   <link rel="stylesheet" href="assets/site.css">
+
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="lemoGamePad ultimate">
+  <meta property="og:locale" content="en_US">
+  <meta property="og:url" content="https://alamshowkatdar.github.io/lemoGamePad-ultimate/">
+  <meta property="og:title" content="lemoGamePad ultimate — Turn an Android phone into a PC gamepad">
+  <meta property="og:description" content="Free, open-source Android gamepad for Windows and Linux PCs. Eight players, Wi-Fi, USB or Bluetooth, browser pad, no account or cloud.">
+  <meta property="og:image" content="https://alamshowkatdar.github.io/lemoGamePad-ultimate/assets/logo.png">
+  <meta property="og:image:width" content="512">
+  <meta property="og:image:height" content="512">
+  <meta property="og:image:alt" content="lemoGamePad ultimate logo">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="lemoGamePad ultimate — Turn an Android phone into a PC gamepad">
+  <meta name="twitter:description" content="Free, open-source Android gamepad for Windows and Linux PCs. Eight players, Wi-Fi, USB or Bluetooth, browser pad, no account or cloud.">
+  <meta name="twitter:image" content="https://alamshowkatdar.github.io/lemoGamePad-ultimate/assets/logo.png">
+  <meta name="twitter:image:alt" content="lemoGamePad ultimate logo">
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "SoftwareApplication",
+        "@id": "https://alamshowkatdar.github.io/lemoGamePad-ultimate/#software",
+        "name": "lemoGamePad ultimate",
+        "url": "https://alamshowkatdar.github.io/lemoGamePad-ultimate/",
+        "description": "Turn an Android phone into a virtual gamepad for a Windows or Linux PC over Wi-Fi, USB or Bluetooth, with up to eight simultaneous players and a browser pad.",
+        "applicationCategory": "UtilitiesApplication",
+        "operatingSystem": "Android 7.0+, Windows 10, Windows 11, Linux",
+        "softwareVersion": "2.1.5",
+        "author": {
+          "@type": "Person",
+          "name": "Alam showkat",
+          "url": "https://github.com/Alamshowkatdar"
+        },
+        "offers": {
+          "@type": "Offer",
+          "price": "0",
+          "priceCurrency": "USD"
+        },
+        "featureList": [
+          "Android phone as a PC gamepad over Wi-Fi, USB or Bluetooth",
+          "Up to eight simultaneous virtual controllers",
+          "Xbox 360 XInput and DualShock 4 pads on Windows, evdev pads on Linux",
+          "Browser pad without installing the Android app",
+          "PC screen preview and gyro aim",
+          "Layout editor and QR layout sharing"
+        ]
+      },
+      {
+        "@type": "FAQPage",
+        "@id": "https://alamshowkatdar.github.io/lemoGamePad-ultimate/#faq",
+        "mainEntity": [
+          {
+            "@type": "Question",
+            "name": "Why does scanning find no PC?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Check the server banner and firewall line. Use a normal Wi-Fi network, not guest Wi-Fi or one with AP/client isolation. If that is impossible, connect the phone by USB and enable USB tethering."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Does Windows SmartScreen block the EXE?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Choose More info → Run anyway. The binary is not code-signed. Accept the UAC prompts so the server can install ViGEmBus and its firewall rules."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Why does the game show only four controllers?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Windows XInput exposes four pads. Pads 5–8 are DualShock 4/DirectInput devices for games and emulators that read those APIs. On Linux all eight are evdev Xbox pads."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Why does the browser pad say the pairing link is invalid?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "The server was restarted, which generates a new random key. Copy the current Web pad URL or rescan the lemoGamePad-web-qr-*.png file."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Bluetooth is paired but no controller appears — what now?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Bluetooth is HID-only. On the host, add the “Lemo GamePad” device; in the app, tap MAKE DISCOVERABLE and then SELECT HOST. Keep the app open."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Why does input feel laggy?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Use 5 GHz Wi-Fi or USB tethering, keep the phone near the PC and disable battery optimisation for the app. Try Input rate → TURBO only if the game samples at its own clock; otherwise STANDARD saves battery."
+            }
+          }
+        ]
+      }
+    ]
+  }
+  </script>
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
@@ -31,12 +139,13 @@
     <section class="hero" id="top">
       <div class="hero-glow" aria-hidden="true"></div>
       <div class="hero-inner">
-        <p class="eyebrow"><span class="pulse"></span> Turn your phone into a real gamepad</p>
-        <h1>One phone.<br><span>Eight controllers.</span><br>Zero dongles.</h1>
+        <p class="eyebrow"><span class="pulse"></span> One phone. Eight controllers. Zero dongles.</p>
+        <h1>Turn your Android phone<br>into a <span>gamepad</span><br>for your PC</h1>
         <p class="lede">
-          lemoGamePad ultimate sends input over your local network to a tiny PC server,
-          then presents a genuine virtual controller to Windows or Linux games.
-          Prefer no app? The PC can serve a browser pad on the same Wi-Fi.
+          lemoGamePad ultimate is a free, open-source way to use your Android phone as a game controller
+          for Windows or Linux. Input travels over your local network to a small PC server that presents a
+          genuine virtual controller to games — over Wi-Fi, USB tethering or Bluetooth HID. Prefer no app?
+          The PC can serve a browser pad on the same Wi-Fi.
         </p>
         <div class="hero-actions">
           <a class="btn primary" href="#download">Download <span aria-hidden="true">↓</span></a>
@@ -263,8 +372,9 @@
 
     <section class="section" id="troubleshooting">
       <div class="section-head">
-        <p class="kicker">Troubleshooting</p>
-        <h2>Fast fixes for common problems</h2>
+        <p class="kicker">FAQ &amp; troubleshooting</p>
+        <h2>Frequently asked questions</h2>
+        <p>Common questions about using an Android phone as a PC gamepad — connection, controller support, Bluetooth and latency.</p>
       </div>
       <div class="faq">
         <details>
@@ -272,7 +382,7 @@
           <p>Check the server banner and firewall line. Use a normal Wi-Fi network, not guest Wi-Fi or one with AP/client isolation. If that is impossible, connect the phone by USB and enable USB tethering.</p>
         </details>
         <details>
-          <summary>Windows SmartScreen blocks the EXE</summary>
+          <summary>Does Windows SmartScreen block the EXE?</summary>
           <p>Choose <strong>More info → Run anyway</strong>. The binary is not code-signed. Accept the UAC prompts so the server can install ViGEmBus and its firewall rules.</p>
         </details>
         <details>
@@ -284,7 +394,7 @@
           <p>The server was restarted, which generates a new random key. Copy the current <code>Web pad</code> URL or rescan <code>lemoGamePad-web-qr-*.png</code>.</p>
         </details>
         <details>
-          <summary>Bluetooth paired but no controller appears</summary>
+          <summary>Bluetooth is paired but no controller appears — what now?</summary>
           <p>Bluetooth is HID-only. On the host, add the “Lemo GamePad” device; in the app, tap <strong>MAKE DISCOVERABLE</strong> and then <strong>SELECT HOST</strong>. Keep the app open.</p>
         </details>
         <details>
