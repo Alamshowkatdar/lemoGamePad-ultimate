@@ -10,7 +10,7 @@
   <link rel="canonical" href="https://alamshowkatdar.github.io/lemoGamePad-ultimate/">
   <link rel="icon" type="image/svg+xml" href="assets/logo.svg">
   <link rel="apple-touch-icon" href="assets/logo.png">
-  <link rel="preload" as="image" href="assets/app-pad-blue.png">
+  <link rel="preload" as="image" href="assets/themes/midnight.webp">
   <link rel="stylesheet" href="assets/site.css">
 
   <meta property="og:type" content="website">
@@ -159,10 +159,26 @@
           <div><strong>Local</strong><span>no account, no cloud</span></div>
         </div>
       </div>
-      <div class="hero-device">
+      <div class="hero-device" style="--pad-accent: #4ea8ff">
         <div class="phone-shot">
-          <img src="assets/app-pad-blue.png" alt="The real lemoGamePad Android app in landscape, with analog sticks, D-pad, face buttons and a live connection status" width="1600" height="663" fetchpriority="high">
-          <span class="shot-badge">MIDNIGHT BLUE · v2.1.5</span>
+          <img id="pad-image" src="assets/themes/midnight.webp" alt="The real lemoGamePad Android app in landscape using the Midnight Black theme, with analog sticks, D-pad, face buttons and a live connection status" width="1400" height="580" fetchpriority="high">
+          <span class="device-camera" aria-hidden="true"></span>
+          <span class="shot-badge" id="pad-badge">MIDNIGHT BLUE · v2.1.5</span>
+        </div>
+        <div class="theme-picker" role="group" aria-label="Preview lemoGamePad themes">
+          <p class="theme-picker-heading"><span>Pad theme</span><small>Real app previews</small></p>
+          <div class="theme-swatches">
+            <button type="button" class="theme-swatch is-active" style="--swatch: #4ea8ff" data-image="assets/themes/midnight.webp" data-name="Midnight Black" data-badge="MIDNIGHT BLUE · v2.1.5" data-accent="#4ea8ff" aria-pressed="true" title="Midnight Black"><span class="swatch-dot" aria-hidden="true"></span>Midnight</button>
+            <button type="button" class="theme-swatch" style="--swatch: #ff3bd6" data-image="assets/themes/cyberpunk.webp" data-name="Cyberpunk" data-badge="CYBERPUNK · v2.1.5" data-accent="#ff3bd6" aria-pressed="false" title="Cyberpunk"><span class="swatch-dot" aria-hidden="true"></span>Cyberpunk</button>
+            <button type="button" class="theme-swatch" style="--swatch: #0e9f8f" data-image="assets/themes/arctic.webp" data-name="Arctic" data-badge="ARCTIC · v2.1.5" data-accent="#0e9f8f" aria-pressed="false" title="Arctic"><span class="swatch-dot" aria-hidden="true"></span>Arctic</button>
+            <button type="button" class="theme-swatch" style="--swatch: #ffb52e" data-image="assets/themes/amoled.webp" data-name="AMOLED" data-badge="AMOLED · v2.1.5" data-accent="#ffb52e" aria-pressed="false" title="AMOLED"><span class="swatch-dot" aria-hidden="true"></span>AMOLED</button>
+            <button type="button" class="theme-swatch" style="--swatch: #ff2d3d" data-image="assets/themes/racing-red.webp" data-name="Racing Red" data-badge="RACING RED · v2.1.5" data-accent="#ff2d3d" aria-pressed="false" title="Racing Red"><span class="swatch-dot" aria-hidden="true"></span>Racing Red</button>
+            <button type="button" class="theme-swatch" style="--swatch: #7cdb2f" data-image="assets/themes/xbox.webp" data-name="Xbox" data-badge="XBOX · v2.1.5" data-accent="#7cdb2f" aria-pressed="false" title="Xbox"><span class="swatch-dot" aria-hidden="true"></span>Xbox</button>
+            <button type="button" class="theme-swatch" style="--swatch: #4c8dff" data-image="assets/themes/playstation.webp" data-name="PlayStation" data-badge="PLAYSTATION BLUE · v2.1.5" data-accent="#4c8dff" aria-pressed="false" title="PlayStation"><span class="swatch-dot" aria-hidden="true"></span>PlayStation</button>
+            <button type="button" class="theme-swatch" style="--swatch: #2b6cf6" data-image="assets/themes/minimal.webp" data-name="Minimal" data-badge="MINIMAL · v2.1.5" data-accent="#2b6cf6" aria-pressed="false" title="Minimal"><span class="swatch-dot" aria-hidden="true"></span>Minimal</button>
+            <button type="button" class="theme-swatch" style="--swatch: #ffd23f" data-image="assets/themes/retro-arcade.webp" data-name="Retro Arcade" data-badge="RETRO ARCADE · v2.1.5" data-accent="#ffd23f" aria-pressed="false" title="Retro Arcade"><span class="swatch-dot" aria-hidden="true"></span>Retro Arcade</button>
+            <button type="button" class="theme-swatch" style="--swatch: #8fa3b8" data-image="assets/themes/stealth.webp" data-name="Stealth" data-badge="STEALTH · v2.1.5" data-accent="#8fa3b8" aria-pressed="false" title="Stealth"><span class="swatch-dot" aria-hidden="true"></span>Stealth</button>
+          </div>
         </div>
         <div class="signal" aria-hidden="true"><span></span><span></span><span></span><b>PC</b></div>
       </div>
@@ -448,6 +464,29 @@
         });
       });
     });
+
+    (function () {
+      var device = document.querySelector('.hero-device');
+      var image = document.getElementById('pad-image');
+      var badge = document.getElementById('pad-badge');
+      var swatches = Array.prototype.slice.call(document.querySelectorAll('.theme-swatch'));
+      if (!device || !image || !badge || !swatches.length) return;
+
+      swatches.forEach(function (swatch) {
+        swatch.addEventListener('click', function () {
+          swatches.forEach(function (other) {
+            var active = other === swatch;
+            other.classList.toggle('is-active', active);
+            other.setAttribute('aria-pressed', active ? 'true' : 'false');
+          });
+          image.src = swatch.dataset.image;
+          image.alt = 'The real lemoGamePad Android app in landscape using the ' +
+            swatch.dataset.name + ' theme, with analog sticks, D-pad, face buttons and a live connection status';
+          badge.textContent = swatch.dataset.badge;
+          device.style.setProperty('--pad-accent', swatch.dataset.accent);
+        });
+      });
+    })();
   </script>
 </body>
 </html>

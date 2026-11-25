@@ -233,51 +233,151 @@ h3 { font-size: 20px; }
   position: relative;
   display: grid;
   place-items: center;
-  min-height: 420px;
+  min-height: 560px;
 }
 
+/* S24 Ultra-style titanium frame around the real connected pad capture. */
 .phone-shot {
   position: relative;
   width: min(560px, 100%);
-  padding: 10px;
-  border: 1px solid rgba(148, 163, 184, 0.32);
-  border-radius: 30px;
-  background: linear-gradient(160deg, #1a2434, #0a0f18 60%);
-  box-shadow: var(--shadow), inset 0 0 0 6px rgba(8, 11, 18, 0.75);
+  padding: 11px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 38px;
+  background: linear-gradient(145deg, #a9afb5 0%, #565c62 20%, #262a2f 55%, #6c7278 82%, #b1b7bd 100%);
+  box-shadow: var(--shadow), inset 0 0 0 2px rgba(9, 11, 14, 0.9), inset 0 0 0 5px rgba(255, 255, 255, 0.05);
   transform: rotate(-4deg);
 }
 
+/* Built-in S Pen on the left edge. */
 .phone-shot::before {
   position: absolute;
   top: 50%;
-  left: -5px;
-  width: 6px;
-  height: 44px;
+  left: -12px;
+  width: 10px;
+  height: 96px;
   border-radius: 999px 0 0 999px;
-  background: #05070b;
+  background: linear-gradient(180deg, #c1c6cb, #5b6168 18%, #292d32 82%, #b4bac0);
+  box-shadow: -3px 0 8px rgba(0, 0, 0, 0.5);
   content: "";
   transform: translateY(-50%);
+}
+
+/* Volume and power rails on the right edge. */
+.phone-shot::after {
+  position: absolute;
+  top: 122px;
+  right: -7px;
+  width: 7px;
+  height: 122px;
+  border-radius: 0 4px 4px 0;
+  background: linear-gradient(180deg,
+    transparent 0 12%, #9ba1a7 12% 23%, transparent 23% 43%,
+    #9ba1a7 43% 55%, transparent 55% 74%, #9ba1a7 74% 87%, transparent 87%);
+  content: "";
 }
 
 .phone-shot img {
   display: block;
   width: 100%;
   height: auto;
-  border-radius: 20px;
+  border-radius: 28px;
+  background: #000;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.9);
+}
+
+.device-camera {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #05070b;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.07);
+  transform: translateX(-50%);
 }
 
 .shot-badge {
   position: absolute;
-  right: 16px;
-  bottom: 16px;
+  right: 18px;
+  bottom: 18px;
   padding: 6px 10px;
-  border: 1px solid rgba(110, 231, 255, 0.35);
+  border: 1px solid var(--pad-accent, var(--accent));
   border-radius: 999px;
   background: rgba(8, 11, 18, 0.85);
-  color: var(--accent);
+  color: var(--pad-accent, var(--accent));
   font-size: 10px;
   font-weight: 900;
   letter-spacing: 0.12em;
+}
+
+.theme-picker {
+  width: min(560px, 100%);
+  margin-top: 26px;
+  padding: 14px 16px 16px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(12, 17, 27, 0.88);
+  box-shadow: var(--shadow);
+}
+
+.theme-picker-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 11px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.theme-picker-heading span { color: var(--text); }
+.theme-picker-heading small { font-size: 9px; letter-spacing: 0.07em; }
+
+.theme-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.theme-swatch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.07);
+  color: var(--muted);
+  font: 700 10px/1 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: color 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+}
+
+.theme-swatch:hover { color: var(--text); border-color: var(--line-strong); }
+
+.theme-swatch.is-active {
+  border-color: var(--pad-accent, var(--accent));
+  background: rgba(110, 231, 255, 0.1);
+  color: var(--text);
+}
+
+.theme-swatch:focus-visible {
+  outline: 2px solid var(--pad-accent, var(--accent));
+  outline-offset: 2px;
+}
+
+.swatch-dot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--swatch);
+  box-shadow: 0 0 9px var(--swatch);
 }
 
 .signal {
@@ -288,13 +388,13 @@ h3 { font-size: 20px; }
   align-items: center;
   gap: 5px;
   padding: 8px 12px;
-  border: 1px solid rgba(110, 231, 255, 0.35);
+  border: 1px solid var(--pad-accent, var(--accent));
   border-radius: 999px;
   background: rgba(8, 11, 18, 0.9);
   font-size: 11px;
   font-weight: 900;
   letter-spacing: 0.12em;
-  color: var(--accent);
+  color: var(--pad-accent, var(--accent));
   transform: rotate(4deg);
 }
 
@@ -302,7 +402,7 @@ h3 { font-size: 20px; }
   width: 5px;
   height: 5px;
   border-radius: 50%;
-  background: var(--accent);
+  background: var(--pad-accent, var(--accent));
   animation: signal 1.4s infinite;
 }
 
@@ -586,8 +686,8 @@ footer {
     padding-top: 70px;
   }
 
-  .hero-device { min-height: 360px; }
-  .phone-shot { width: min(420px, 92vw); }
+  .hero-device { min-height: 500px; }
+  .phone-shot, .theme-picker { width: min(420px, 92vw); }
   .signal { right: 6%; bottom: 12px; }
 }
 

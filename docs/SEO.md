@@ -18,7 +18,7 @@ The public site is <https://alamshowkatdar.github.io/lemoGamePad-ultimate/> (Git
 - A Jekyll layout (`_layouts/default.html`) gives every published guide its own keyword-focused title, description, canonical URL, Open Graph tags, navigation and `TechArticle` structured data. `_config.yml` supplies page metadata without adding front matter to the Markdown files.
 - The homepage links to the on-site guides instead of GitHub blob pages, plus a documentation hub section with keyword-rich anchor text.
 - Internal-only pages (review notes, release checklist, SEO notes) are `noindex`.
-- The hero now uses a real screenshot of the Android app (`assets/app-pad-blue.png`, captured in landscape from the connected phone at v2.1.5 with the default Midnight Blue theme and PlayStation face labels) instead of a CSS mock-up, with descriptive alt text, a preload hint, and the same image as the social preview.
+- The hero uses real screenshots of the connected Android app at v2.1.5 inside an S24 Ultra-style titanium frame, with an accessible theme picker that previews all ten lemoGamePad palettes (`assets/themes/*.webp`). The default Midnight Blue capture is also the social preview (`assets/app-pad-blue.png`).
 - GitHub repository homepage points to the website, and relevant topics were added.
 
 ## Required off-site steps (cannot be done in code)
