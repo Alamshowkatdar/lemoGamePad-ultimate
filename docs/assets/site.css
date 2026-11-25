@@ -288,13 +288,13 @@ h3 { font-size: 20px; }
   align-items: center;
   gap: 5px;
   padding: 8px 12px;
-  border: 1px solid rgba(52, 211, 153, 0.35);
+  border: 1px solid rgba(110, 231, 255, 0.35);
   border-radius: 999px;
   background: rgba(8, 11, 18, 0.9);
   font-size: 11px;
   font-weight: 900;
   letter-spacing: 0.12em;
-  color: var(--accent-3);
+  color: var(--accent);
   transform: rotate(4deg);
 }
 
@@ -302,7 +302,7 @@ h3 { font-size: 20px; }
   width: 5px;
   height: 5px;
   border-radius: 50%;
-  background: var(--accent-3);
+  background: var(--accent);
   animation: signal 1.4s infinite;
 }
 
