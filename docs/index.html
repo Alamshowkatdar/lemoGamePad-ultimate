@@ -21,8 +21,8 @@
   <meta property="og:description" content="Free, open-source Android gamepad for Windows and Linux PCs. Eight players, Wi-Fi, USB or Bluetooth, browser pad, no account or cloud.">
   <meta property="og:image" content="https://alamshowkatdar.github.io/lemoGamePad-ultimate/assets/app-pad-blue.png">
   <meta property="og:image:width" content="1600">
-  <meta property="og:image:height" content="663">
-  <meta property="og:image:alt" content="The real lemoGamePad Android app with analog sticks, D-pad and face buttons">
+  <meta property="og:image:height" content="791">
+  <meta property="og:image:alt" content="The real lemoGamePad Android app on a Galaxy S24 Ultra, with analog sticks, D-pad and face buttons">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="lemoGamePad ultimate — Turn an Android phone into a PC gamepad">
   <meta name="twitter:description" content="Free, open-source Android gamepad for Windows and Linux PCs. Eight players, Wi-Fi, USB or Bluetooth, browser pad, no account or cloud.">
@@ -161,12 +161,11 @@
       </div>
       <div class="hero-device" style="--pad-accent: #4ea8ff">
         <div class="phone-shot">
-          <img id="pad-image" src="assets/themes/midnight.webp" alt="The real lemoGamePad Android app in landscape using the Midnight Black theme, with analog sticks, D-pad, face buttons and a live connection status" width="1400" height="580" fetchpriority="high">
-          <span class="device-camera" aria-hidden="true"></span>
+          <img id="pad-image" src="assets/themes/midnight.webp" alt="The real lemoGamePad Android app running on a Galaxy S24 Ultra in landscape using the Midnight Black theme, with analog sticks, D-pad, face buttons and a live PC connection" width="2630" height="1300" fetchpriority="high">
           <span class="shot-badge" id="pad-badge">MIDNIGHT BLUE · v2.1.5</span>
         </div>
         <div class="theme-picker" role="group" aria-label="Preview lemoGamePad themes">
-          <p class="theme-picker-heading"><span>Pad theme</span><small>Real app previews</small></p>
+          <p class="theme-picker-heading"><span>Pad theme</span><small>Real app on a Galaxy S24 Ultra</small></p>
           <div class="theme-swatches">
             <button type="button" class="theme-swatch is-active" style="--swatch: #4ea8ff" data-image="assets/themes/midnight.webp" data-name="Midnight Black" data-badge="MIDNIGHT BLUE · v2.1.5" data-accent="#4ea8ff" aria-pressed="true" title="Midnight Black"><span class="swatch-dot" aria-hidden="true"></span>Midnight</button>
             <button type="button" class="theme-swatch" style="--swatch: #ff3bd6" data-image="assets/themes/cyberpunk.webp" data-name="Cyberpunk" data-badge="CYBERPUNK · v2.1.5" data-accent="#ff3bd6" aria-pressed="false" title="Cyberpunk"><span class="swatch-dot" aria-hidden="true"></span>Cyberpunk</button>
@@ -179,6 +178,7 @@
             <button type="button" class="theme-swatch" style="--swatch: #ffd23f" data-image="assets/themes/retro-arcade.webp" data-name="Retro Arcade" data-badge="RETRO ARCADE · v2.1.5" data-accent="#ffd23f" aria-pressed="false" title="Retro Arcade"><span class="swatch-dot" aria-hidden="true"></span>Retro Arcade</button>
             <button type="button" class="theme-swatch" style="--swatch: #8fa3b8" data-image="assets/themes/stealth.webp" data-name="Stealth" data-badge="STEALTH · v2.1.5" data-accent="#8fa3b8" aria-pressed="false" title="Stealth"><span class="swatch-dot" aria-hidden="true"></span>Stealth</button>
           </div>
+          <p class="device-credit">Galaxy S24 Ultra render: <a href="https://www.samsungmobilepress.com/media-assets/galaxy-s24-ultra" rel="noopener noreferrer" target="_blank">Samsung Mobile Press</a></p>
         </div>
         <div class="signal" aria-hidden="true"><span></span><span></span><span></span><b>PC</b></div>
       </div>
@@ -480,8 +480,8 @@
             other.setAttribute('aria-pressed', active ? 'true' : 'false');
           });
           image.src = swatch.dataset.image;
-          image.alt = 'The real lemoGamePad Android app in landscape using the ' +
-            swatch.dataset.name + ' theme, with analog sticks, D-pad, face buttons and a live connection status';
+          image.alt = 'The real lemoGamePad Android app running on a Galaxy S24 Ultra in landscape using the ' +
+            swatch.dataset.name + ' theme, with analog sticks, D-pad, face buttons and a live PC connection';
           badge.textContent = swatch.dataset.badge;
           device.style.setProperty('--pad-accent', swatch.dataset.accent);
         });

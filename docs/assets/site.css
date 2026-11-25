@@ -233,74 +233,27 @@ h3 { font-size: 20px; }
   position: relative;
   display: grid;
   place-items: center;
-  min-height: 560px;
+  min-height: 520px;
 }
 
-/* S24 Ultra-style titanium frame around the real connected pad capture. */
+/* The device itself is a real Galaxy S24 Ultra product render; only the screen is our app. */
 .phone-shot {
   position: relative;
-  width: min(560px, 100%);
-  padding: 11px;
-  border: 1px solid rgba(255, 255, 255, 0.22);
-  border-radius: 38px;
-  background: linear-gradient(145deg, #a9afb5 0%, #565c62 20%, #262a2f 55%, #6c7278 82%, #b1b7bd 100%);
-  box-shadow: var(--shadow), inset 0 0 0 2px rgba(9, 11, 14, 0.9), inset 0 0 0 5px rgba(255, 255, 255, 0.05);
+  width: min(620px, 100%);
   transform: rotate(-4deg);
-}
-
-/* Built-in S Pen on the left edge. */
-.phone-shot::before {
-  position: absolute;
-  top: 50%;
-  left: -12px;
-  width: 10px;
-  height: 96px;
-  border-radius: 999px 0 0 999px;
-  background: linear-gradient(180deg, #c1c6cb, #5b6168 18%, #292d32 82%, #b4bac0);
-  box-shadow: -3px 0 8px rgba(0, 0, 0, 0.5);
-  content: "";
-  transform: translateY(-50%);
-}
-
-/* Volume and power rails on the right edge. */
-.phone-shot::after {
-  position: absolute;
-  top: 122px;
-  right: -7px;
-  width: 7px;
-  height: 122px;
-  border-radius: 0 4px 4px 0;
-  background: linear-gradient(180deg,
-    transparent 0 12%, #9ba1a7 12% 23%, transparent 23% 43%,
-    #9ba1a7 43% 55%, transparent 55% 74%, #9ba1a7 74% 87%, transparent 87%);
-  content: "";
+  filter: drop-shadow(0 28px 34px rgba(0, 0, 0, 0.55));
 }
 
 .phone-shot img {
   display: block;
   width: 100%;
   height: auto;
-  border-radius: 28px;
-  background: #000;
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.9);
-}
-
-.device-camera {
-  position: absolute;
-  top: 16px;
-  left: 50%;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #05070b;
-  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.07);
-  transform: translateX(-50%);
 }
 
 .shot-badge {
   position: absolute;
-  right: 18px;
-  bottom: 18px;
+  right: 22px;
+  bottom: 22px;
   padding: 6px 10px;
   border: 1px solid var(--pad-accent, var(--accent));
   border-radius: 999px;
@@ -341,6 +294,20 @@ h3 { font-size: 20px; }
   display: flex;
   flex-wrap: wrap;
   gap: 7px;
+}
+
+.device-credit {
+  margin: 12px 0 0;
+  color: var(--muted);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  text-align: right;
+}
+
+.device-credit a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 .theme-swatch {
@@ -686,8 +653,8 @@ footer {
     padding-top: 70px;
   }
 
-  .hero-device { min-height: 500px; }
-  .phone-shot, .theme-picker { width: min(420px, 92vw); }
+  .hero-device { min-height: 460px; }
+  .phone-shot, .theme-picker { width: min(460px, 94vw); }
   .signal { right: 6%; bottom: 12px; }
 }
 
