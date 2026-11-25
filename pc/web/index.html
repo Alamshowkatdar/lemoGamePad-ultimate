@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, user-scalable=no">
   <meta name="theme-color" content="#0f1a14">
   <meta name="color-scheme" content="dark">
+  <meta name="description" content="lemoGamePad browser pad — use a phone, tablet or laptop as a game controller for a Windows or Linux PC on the same Wi-Fi.">
+  <meta name="robots" content="noindex, nofollow">
   <!-- Add to Home Screen opens the pad as a standalone app instead of a Safari tab. -->
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
@@ -12,10 +14,12 @@
   <meta name="apple-mobile-web-app-title" content="lemoGamePad">
   <title>lemoGamePad &mdash; browser pad</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon.png">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <div id="app">
+    <h1 class="sr-only">lemoGamePad browser pad</h1>
     <canvas id="pad-canvas" aria-label="Browser gamepad. Drag the sticks and tap the buttons."></canvas>
 
     <div id="edit-bar" hidden>

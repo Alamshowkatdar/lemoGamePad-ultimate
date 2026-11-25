@@ -48,6 +48,16 @@ the host reads it directly; the app never connects automatically on launch.
 > **lemoGamePad ultimate™** — trademark of **Alam showkat**.
 > App package: `com.alamshowkat.lemogamepad`.
 
+## Get started
+
+1. Download the signed APK and the receiver from the [latest release](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest).
+2. Start `lemoGamePad-server.exe` on Windows or `lemoGamePad-server` on Linux, then scan the QR code in the console.
+3. Open the app in landscape, tap **Connect**, and the phone becomes controller **P1**. Add more phones for up to eight pads.
+
+Prefer no install? Start the PC server and open the **Web pad** URL it prints on a phone, iPhone or laptop on the same Wi-Fi.
+
+Full guides: [Android phone as a gamepad](https://alamshowkatdar.github.io/lemoGamePad-ultimate/ANDROID.html) · [Windows receiver](https://alamshowkatdar.github.io/lemoGamePad-ultimate/INSTALL-WINDOWS.html) · [Linux receiver](https://alamshowkatdar.github.io/lemoGamePad-ultimate/INSTALL-LINUX.html) · [Browser pad](https://alamshowkatdar.github.io/lemoGamePad-ultimate/WEB.html) · [Troubleshooting](https://alamshowkatdar.github.io/lemoGamePad-ultimate/TROUBLESHOOTING.html) · [Command-line options](https://alamshowkatdar.github.io/lemoGamePad-ultimate/COMMAND-LINE.html)
+
 ### New in 2.1.5
 
 - **The browser pad now shows the current version.** Its footer and in-app

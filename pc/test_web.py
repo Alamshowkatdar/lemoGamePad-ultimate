@@ -281,6 +281,7 @@ def test_page_and_key(server, port):
     assert status == 200, status
     assert "browser pad" in body, body[:120]
     assert "lemoGamePad" in body
+    assert 'name="description"' in body and 'name="robots" content="noindex' in body
     assert "http://" not in body and "https://" not in body, "page must not load remote assets"
 
     status, _body = http_get(port, "/")
@@ -408,6 +409,8 @@ def test_page_and_key(server, port):
 
     status, icon = http_get(port, "/favicon.svg")
     assert status == 200 and "<svg" in icon, status
+    status, touch_icon = http_get(port, "/icon.png")
+    assert status == 200 and len(touch_icon) > 100, status
     print("  page/key ok: page needs the key, relative assets load")
 
 
