@@ -12,3 +12,72 @@ defaults:
       layout: default
       title: "Android app guide — use your phone as a gamepad for PC"
       description: "Install the lemoGamePad Android app and connect it to a Windows or Linux PC over Wi-Fi, USB or Bluetooth HID. Step-by-step setup guide."
+  - scope:
+      path: "INSTALL-WINDOWS.md"
+    values:
+      layout: default
+      title: "Windows install — phone as an Xbox gamepad for PC"
+      description: "Install the lemoGamePad Windows receiver EXE and use an Android phone as an Xbox 360 gamepad. ViGEmBus, firewall rules and QR pairing explained."
+  - scope:
+      path: "INSTALL-LINUX.md"
+    values:
+      layout: default
+      title: "Linux install — virtual gamepad server for PC"
+      description: "Install the lemoGamePad Linux server from binary or source, load uinput and connect Android phones as evdev Xbox gamepads."
+  - scope:
+      path: "WEB.md"
+    values:
+      layout: default
+      title: "Browser gamepad for PC — play without an app"
+      description: "Use a phone, iPhone or laptop as a browser gamepad over Wi-Fi. No Android app and no account: open the local URL printed by the PC server."
+  - scope:
+      path: "TROUBLESHOOTING.md"
+    values:
+      layout: default
+      title: "Gamepad troubleshooting — phone not connecting to PC"
+      description: "Fix common lemoGamePad problems: PC not found, SmartScreen, the four-controller limit, invalid browser link, Bluetooth pairing and input lag."
+  - scope:
+      path: "PROTOCOL.md"
+    values:
+      layout: default
+      title: "Protocol — how the phone gamepad talks to the PC"
+      description: "Technical details of the lemoGamePad UDP control protocol, JPEG screen stream and browser WebSocket, including ports and packet formats."
+  - scope:
+      path: "COMMAND-LINE.md"
+    values:
+      layout: default
+      title: "Server command-line options"
+      description: "All lemoGamePad server flags for ports, player count, screen stream, browser pad key, transports and controller backends."
+  - scope:
+      path: "LIMITATIONS.md"
+    values:
+      layout: default
+      title: "Known limitations of the phone gamepad"
+      description: "Known limits of using an Android phone as a PC gamepad: XInput's four pads, Bluetooth HID differences, browser input rate and screen preview."
+  - scope:
+      path: "BUILDING.md"
+    values:
+      layout: default
+      title: "Build from source — repository layout"
+      description: "Build the lemoGamePad Android app and PC server from source, understand the repository layout and run the test suites."
+  - scope:
+      path: "RELEASING.md"
+    values:
+      layout: default
+      robots: "noindex, nofollow"
+      title: "Release checklist"
+      description: "Internal release checklist for lemoGamePad ultimate."
+  - scope:
+      path: "REVIEW.md"
+    values:
+      layout: default
+      robots: "noindex, nofollow"
+      title: "Review notes"
+      description: "Internal review notes for lemoGamePad ultimate."
+  - scope:
+      path: "SEO.md"
+    values:
+      layout: default
+      robots: "noindex, nofollow"
+      title: "SEO notes"
+      description: "Internal SEO notes for the lemoGamePad ultimate website."

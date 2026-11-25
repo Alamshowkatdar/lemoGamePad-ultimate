@@ -14,7 +14,10 @@ The public site is <https://alamshowkatdar.github.io/lemoGamePad-ultimate/> (Git
 - `index, follow` robots policy, Open Graph and Twitter card tags (including image dimensions and alt text).
 - JSON-LD structured data: `SoftwareApplication` (version, OS, free offer, features) and `FAQPage` matching the visible FAQ answers.
 - FAQ section heading and question wording now match the structured data.
-- `robots.txt` and `sitemap.xml` served from the site root.
+- `robots.txt` and `sitemap.xml` served from the site root; the sitemap lists the homepage and all public guides.
+- A Jekyll layout (`_layouts/default.html`) gives every published guide its own keyword-focused title, description, canonical URL, Open Graph tags, navigation and `TechArticle` structured data. `_config.yml` supplies page metadata without adding front matter to the Markdown files.
+- The homepage links to the on-site guides instead of GitHub blob pages, plus a documentation hub section with keyword-rich anchor text.
+- Internal-only pages (review notes, release checklist, SEO notes) are `noindex`.
 - GitHub repository homepage points to the website, and relevant topics were added.
 
 ## Required off-site steps (cannot be done in code)

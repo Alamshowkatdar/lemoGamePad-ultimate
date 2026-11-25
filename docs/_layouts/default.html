@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ page.title }} | lemoGamePad ultimate</title>
   <meta name="description" content="{{ page.description }}">
-  <meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large">
+  <meta name="robots" content="{{ page.robots | default: 'index, follow, max-snippet:-1, max-image-preview:large' }}">
   <link rel="canonical" href="{{ site.url }}{{ site.baseurl }}{{ page.url }}">
   <meta name="theme-color" content="#050d1a">
   <link rel="icon" type="image/svg+xml" href="{{ site.baseurl }}/assets/logo.svg">
