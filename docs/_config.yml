@@ -1,4 +1,14 @@
 title: lemoGamePad ultimate
 description: Downloads and setup instructions for lemoGamePad ultimate.
+url: https://alamshowkatdar.github.io
+baseurl: /lemoGamePad-ultimate
 theme: null
 markdown: kramdown
+
+defaults:
+  - scope:
+      path: "ANDROID.md"
+    values:
+      layout: default
+      title: "Android app guide — use your phone as a gamepad for PC"
+      description: "Install the lemoGamePad Android app and connect it to a Windows or Linux PC over Wi-Fi, USB or Bluetooth HID. Step-by-step setup guide."

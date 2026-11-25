@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ page.title }} | lemoGamePad ultimate</title>
+  <meta name="description" content="{{ page.description }}">
+  <meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large">
+  <link rel="canonical" href="{{ site.url }}{{ site.baseurl }}{{ page.url }}">
+  <meta name="theme-color" content="#050d1a">
+  <link rel="icon" type="image/svg+xml" href="{{ site.baseurl }}/assets/logo.svg">
+  <link rel="apple-touch-icon" href="{{ site.baseurl }}/assets/logo.png">
+  <link rel="stylesheet" href="{{ site.baseurl }}/assets/site.css">
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="lemoGamePad ultimate">
+  <meta property="og:locale" content="en_US">
+  <meta property="og:url" content="{{ site.url }}{{ site.baseurl }}{{ page.url }}">
+  <meta property="og:title" content="{{ page.title }}">
+  <meta property="og:description" content="{{ page.description }}">
+  <meta property="og:image" content="{{ site.url }}{{ site.baseurl }}/assets/logo.png">
+  <meta property="og:image:width" content="512">
+  <meta property="og:image:height" content="512">
+  <meta property="og:image:alt" content="lemoGamePad ultimate logo">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="{{ page.title }}">
+  <meta name="twitter:description" content="{{ page.description }}">
+  <meta name="twitter:image" content="{{ site.url }}{{ site.baseurl }}/assets/logo.png">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "TechArticle",
+    "headline": {{ page.title | jsonify }},
+    "description": {{ page.description | jsonify }},
+    "url": "{{ site.url }}{{ site.baseurl }}{{ page.url }}",
+    "inLanguage": "en",
+    "author": {
+      "@type": "Person",
+      "name": "Alam showkat",
+      "url": "https://github.com/Alamshowkatdar"
+    },
+    "publisher": {
+      "@type": "Organization",
+      "name": "lemoGamePad ultimate",
+      "url": "{{ site.url }}{{ site.baseurl }}/"
+    },
+    "isPartOf": {
+      "@type": "WebSite",
+      "name": "lemoGamePad ultimate",
+      "url": "{{ site.url }}{{ site.baseurl }}/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="topbar">
+    <a class="brand" href="{{ site.baseurl }}/" aria-label="lemoGamePad ultimate home">
+      <img class="brand-logo" src="{{ site.baseurl }}/assets/logo.svg" alt="" width="44" height="44">
+      <span>lemoGamePad <strong>ultimate</strong></span>
+    </a>
+    <nav aria-label="Main navigation">
+      <a href="{{ site.baseurl }}/#download">Download</a>
+      <a href="{{ site.baseurl }}/#quickstart">Quick start</a>
+      <a href="{{ site.baseurl }}/#setup">Setup guides</a>
+      <a href="{{ site.baseurl }}/#support">Help</a>
+      <a class="nav-cta" href="{{ site.baseurl }}/#download">Get it</a>
+    </nav>
+  </header>
+  <main id="main" class="doc-page">
+    {{ content }}
+    <p class="doc-back"><a href="{{ site.baseurl }}/">← Back to lemoGamePad ultimate home</a></p>
+  </main>
+  <footer>
+    <span>lemoGamePad ultimate™ · by Alam showkat · MIT licensed</span>
+    <span><a href="{{ site.baseurl }}/">Home</a></span>
+  </footer>
+</body>
+</html>
