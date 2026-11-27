@@ -71,4 +71,6 @@ Do not upload binaries to git; they belong on the release only.
 Fix the source, bump the version (never reuse a version number that was already
 published — Android will refuse an update signed or versioned inconsistently),
 tag again, and publish a new release. Delete a broken draft release rather than
-editing its assets in place.
+editing its assets in place. If the broken release was already published, leave
+it in place but add a note pointing to the fixed version; do not move or reuse
+its tag.
