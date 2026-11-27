@@ -23,7 +23,7 @@ use std::sync::mpsc::{self, Receiver};
 use std::thread;
 use std::time::{Duration, Instant};
 
-const APP_VERSION: &str = "2.2";
+const APP_VERSION: &str = "2.2.1";
 #[cfg(target_os = "windows")]
 const VIGEM_PAGE: &str = "https://github.com/nefarius/ViGEmBus/releases/tag/v1.22.0";
 const RELEASES_API: &str =
@@ -1292,10 +1292,10 @@ mod tests {
 
     #[test]
     fn compares_release_tags() {
-        assert!(newer("v2.2.1", APP_VERSION));
+        assert!(newer("v2.2.2", APP_VERSION));
         assert!(newer("2.3", APP_VERSION));
         assert!(!newer("v2.1.6", APP_VERSION));
-        assert!(!newer("2.2", APP_VERSION));
+        assert!(!newer("2.2.1", APP_VERSION));
         assert!(!newer("v2", "2.0.1"));
     }
 

@@ -61,7 +61,7 @@ type Ds4Register = unsafe extern "C" fn(
 ) -> u32;
 
 struct Api {
-    _library: Library,
+    _library: &'static Library,
     allocate_client: Symbol<'static, AllocateClient>,
     connect: Symbol<'static, Connect>,
     allocate_x360: Symbol<'static, AllocateTarget>,
@@ -93,7 +93,7 @@ impl Api {
             };
         }
         Ok(Self {
-            _library: Library::new("ViGEmClient.dll").or_else(|_| Library::new("ViGEmClient64.dll"))?,
+            _library: library,
             allocate_client: symbol!("vigem_alloc", AllocateClient),
             connect: symbol!("vigem_connect", Connect),
             allocate_x360: symbol!("vigem_target_x360_alloc", AllocateTarget),
@@ -166,7 +166,7 @@ impl WindowsVirtualPad {
             return Err(format!("could not add virtual pad (error {code})"));
         }
 
-        let state = Box::new((rumble, slot));
+        let state = Box::new((rumble.clone(), slot));
         let user_data = Box::into_raw(state) as *mut c_void;
         let mut pad = Self {
             api,

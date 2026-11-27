@@ -77,3 +77,29 @@ jobs:
           elif [ "$code" -ne 0 ]; then
             exit "$code"
           fi
+
+  rust-linux:
+    name: Rust receiver + panel (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Check both binaries
+        run: cargo check --locked --manifest-path rust/Cargo.toml
+
+      - name: Unit tests
+        run: cargo test --locked --manifest-path rust/Cargo.toml
+
+  rust-windows:
+    name: Rust receiver + panel (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      # Compiles the cfg(windows) ViGEm backend, which the Linux job cannot see.
+      - name: Check both binaries
+        run: cargo check --locked --manifest-path rust/Cargo.toml

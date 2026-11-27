@@ -1,4 +1,4 @@
-# Review notes — 1.3.6 / 1.3.7 / 1.4.0 / 1.5.0 / 1.6.0 / 1.6.1 / 1.6.2 / 1.6.3 / 1.6.4 / 1.6.5 / 1.6.6 / 1.6.7 / 1.6.8 / 1.6.9 / 1.6.10 / 1.6.11 / 1.6.12 / 1.6.13 / 1.7.0 / 2.0.0 / 2.0.1 / 2.0.2 / 2.0.3 / 2.1.0 / 2.1.1 / 2.1.2 / 2.1.3 / 2.1.4 / 2.1.5 / 2.2
+# Review notes — 1.3.6 / 1.3.7 / 1.4.0 / 1.5.0 / 1.6.0 / 1.6.1 / 1.6.2 / 1.6.3 / 1.6.4 / 1.6.5 / 1.6.6 / 1.6.7 / 1.6.8 / 1.6.9 / 1.6.10 / 1.6.11 / 1.6.12 / 1.6.13 / 1.7.0 / 2.0.0 / 2.0.1 / 2.0.2 / 2.0.3 / 2.1.0 / 2.1.1 / 2.1.2 / 2.1.3 / 2.1.4 / 2.1.5 / 2.2 / 2.2.1
 
 A pass over the whole app (Kotlin sources, manifest, Gradle files, CI) focused on
 bugs, UI smoothness, and making the phone-to-phone Bluetooth gamepad honest.
@@ -34,6 +34,20 @@ This file records what was found and what changed, so the reasoning does not get
 lost between releases.
 
 ---
+
+## Windows build repair (2.2.1)
+
+- `Api::load` leaked the ViGEm library for `'static` symbols but then tried to
+  load a second `Library` into `_library`, which failed to compile on Windows
+  because `libloading::Error` cannot convert into `String`. The field now holds
+  the same leaked library reference the symbols were already borrowed from.
+- The rumble `Sender` was moved into the boxed callback state and then cloned
+  for the `WindowsVirtualPad` struct, which is a borrow after move. It is now
+  cloned into the callback state first.
+- The release workflow ignored a failed `cargo build` because PowerShell does
+  not stop on native command errors by default; it now checks `$LASTEXITCODE`.
+  `pc-tests.yml` also compiles both Rust binaries on `windows-latest`, so
+  `cfg(windows)` code is exercised on every push.
 
 ## Native panel and Linux input (2.2)
 

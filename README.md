@@ -13,7 +13,7 @@ by **Alam showkat**
 
 [**Website & downloads →**](https://alamshowkatdar.github.io/lemoGamePad-ultimate/) · [Download the latest release →](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) · [Report an issue](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/issues)
 
-**App source version:** 2.2. Download the signed APK and the Windows/Linux server from the [latest release](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) — use the **2.2** APK and receiver together for matching version labels. The release workflow also publishes a `SHA256SUMS.txt` so you can verify your download.
+**App source version:** 2.2.1. Download the signed APK and the Windows/Linux server from the [latest release](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) — use the **2.2.1** APK and receiver together for matching version labels. The release workflow also publishes a `SHA256SUMS.txt` so you can verify your download.
 
 ---
 
@@ -82,6 +82,12 @@ changed. From a source checkout, run `pc/gui.sh` after
 `pc/linux/install-linux.sh`; add `--manual-start` to open the panel without
 starting the server. `pc/desktop_gui.py` is the earlier Python/Tk reference and
 is not part of the shipped binaries.
+
+### New in 2.2.1
+
+- **Windows builds are fixed.** Two Windows-only Rust compile errors in the
+  ViGEm backend are corrected, and CI now compiles both binaries on Windows on
+  every push so the same mistake cannot reach a release again.
 
 ### New in 2.2
 
@@ -464,4 +470,4 @@ licenses are listed in [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md).
 
 ---
 
-**lemoGamePad ultimate™ © Alam showkat** · v2.2
+**lemoGamePad ultimate™ © Alam showkat** · v2.2.1

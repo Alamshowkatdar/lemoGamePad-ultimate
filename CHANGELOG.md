@@ -2,6 +2,16 @@
 
 Newest first. The reasoning behind each release is in [`docs/REVIEW.md`](docs/REVIEW.md).
 
+## 2.2.1
+
+- **Fixed the Windows receiver build.** The ViGEm client library is reused for
+  the loaded symbols instead of being loaded twice, and the rumble sender is
+  cloned into the callback state instead of being moved. Both errors only
+  appeared on Windows.
+- **Added a Windows compile check to CI.** The PC test workflow now checks both
+  Rust binaries on Linux and Windows, and the release build stops immediately
+  when Cargo fails instead of trying to copy missing EXEs.
+
 ## 2.2
 
 - **Native desktop panel, icons and layout.** `lemoGamePad-app` now uses drawn

@@ -13,8 +13,8 @@ manual.
 3. Update the version in `README.md` (intro and footer), `pc/web/app.js`,
    `pc/web/index.html` (browser pad labels), `version` in `rust/Cargo.toml`,
    and `APP_VERSION` in `rust/src/gui/main.rs` (desktop update checker), then
-   add a section to `CHANGELOG.md`. Cargo requires three-part semver, so a `2.2`
-   release is `2.2.0` in `Cargo.toml` while every user-facing label stays `2.2`.
+   add a section to `CHANGELOG.md`. Cargo requires three-part semver, so a short label such as
+   `2.2` is written `2.2.0` in `Cargo.toml` while user-facing labels stay short.
 4. If behaviour changed, add notes to `docs/REVIEW.md`.
 5. Re-run the tests (see [CONTRIBUTING.md](../CONTRIBUTING.md#tests)).
 
@@ -32,12 +32,12 @@ At minimum:
 
 ## 3. Tag and publish
 
-Use the exact version label as the tag (`2.2`). The workflow strips an optional
+Use the exact version label as the tag (`2.2.1`). The workflow strips an optional
 leading `v`, but plain labels keep the APK name, documentation and update checks
 identical. Do not reuse a tag that has already been published.
 
 ```bash
-git tag -a 2.2 -m "lemoGamePad ultimate 2.2"
+git tag -a 2.2.1 -m "lemoGamePad ultimate 2.2.1"
 git push origin main --tags
 ```
 

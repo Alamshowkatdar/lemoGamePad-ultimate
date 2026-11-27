@@ -89,7 +89,7 @@ jobs:
             echo "::error::GUI version '$gui' does not match release tag '$tag'"
             exit 1
           fi
-          # Cargo requires three-part semver: a 2.2 release is 2.2.0 in the manifest.
+          # Cargo requires three-part semver: a short 2.2 label is 2.2.0 in the manifest.
           if [ "$cargo_version" != "$tag" ] && [ "$cargo_version" != "$tag.0" ]; then
             echo "::error::Cargo version '$cargo_version' does not match release tag '$tag'"
             exit 1
@@ -122,6 +122,7 @@ jobs:
         working-directory: rust
         run: |
           cargo build --release
+          if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
           New-Item -ItemType Directory -Force -Path ../pc/dist | Out-Null
           Copy-Item target/release/lemoGamePad-server.exe ../pc/dist/lemoGamePad-server.exe -Force
           Copy-Item target/release/lemoGamePad-app.exe ../pc/dist/lemoGamePad-app.exe -Force
