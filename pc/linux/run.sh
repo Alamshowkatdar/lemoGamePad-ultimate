@@ -1,8 +1,7 @@
 #!/bin/sh
-# Start the lemoGamePad ultimate Linux receiver from this checkout.
+# Start the native lemoGamePad ultimate receiver from this checkout.
 #
-# Uses pc/.venv when install-linux.sh has created it, otherwise falls back to
-# python3 from PATH. Arguments are passed straight through, for example:
+# Arguments are passed straight through, for example:
 #
 #   pc/linux/run.sh --pad ds4
 set -eu
@@ -19,15 +18,16 @@ while [ -L "$SELF" ]; do
 done
 HERE=$(CDPATH= cd -- "$(dirname -- "$SELF")" && pwd)
 PC_DIR=$(dirname "$HERE")
-PYTHON="$PC_DIR/.venv/bin/python"
 
-if [ -x "$PYTHON" ]; then
-    :
-elif command -v python3 >/dev/null 2>&1; then
-    PYTHON=python3
-else
-    echo "python3 not found. Run pc/linux/install-linux.sh first." >&2
-    exit 1
-fi
+for candidate in \
+    "$PC_DIR/lemoGamePad-server" \
+    "$PC_DIR/dist/lemoGamePad-server" \
+    "$PC_DIR/../rust/target/release/lemoGamePad-server"
+do
+    if [ -x "$candidate" ]; then
+        exec "$candidate" "$@"
+    fi
+done
 
-exec "$PYTHON" "$PC_DIR/vpad_server.py" "$@"
+echo "Native receiver not found. Run pc/build_rust.sh first." >&2
+exit 1

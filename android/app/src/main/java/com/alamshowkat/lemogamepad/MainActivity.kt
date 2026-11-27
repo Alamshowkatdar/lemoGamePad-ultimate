@@ -57,6 +57,8 @@ class MainActivity : Activity() {
     private var doctorStartup = false
     private var doctorStep = 0
     @Volatile private var doctorCheckRunning = false
+    @Volatile private var updateCheckRunning = false
+    private var pendingUpdate: ReleaseChecker.Release? = null
     private var doctorCheckResult = ""
     private var startupOverlaysChecked = false
 
@@ -302,6 +304,14 @@ class MainActivity : Activity() {
         handler.post(adaptiveTicker)
         view.startMotion()
         if (screenEnabled) showScreenPreview(true)
+        pendingUpdate?.let { release ->
+            if (wifiGuide == null && setupGuide == null && connectionDoctor == null &&
+                settingsPanel?.isShowing != true
+            ) {
+                pendingUpdate = null
+                showUpdate(release)
+            }
+        }
         // Bluetooth stays off until the user picks a host in the settings card.
         // If a gamepad was already started explicitly, resume its report ticker.
         if (phoneGamepadActive) {
@@ -620,8 +630,8 @@ class MainActivity : Activity() {
         if (!SettingsGuard.bool(prefs, PrefsKeys.CONNECTION_DOCTOR_SEEN, false)) {
             doctorStartup = true
             showConnectionDoctor()
-        } else {
-            maybeShowWhatsNew()
+        } else if (!maybeShowWhatsNew()) {
+            checkForUpdate()
         }
     }
 
@@ -886,14 +896,14 @@ class MainActivity : Activity() {
         0L to Brand.VERSION
     }
 
-    private fun maybeShowWhatsNew() {
+    private fun maybeShowWhatsNew(): Boolean {
         val (current, name) = appVersion()
         val previous = prefs.getLong(PrefsKeys.LAST_WHATSNEW_CODE, 0L)
-        if (current == 0L || previous == current) return
+        if (current == 0L || previous == current) return false
         // A fresh install has nothing to compare against; only updates get the card.
         if (previous == 0L) {
             prefs.edit().putLong(PrefsKeys.LAST_WHATSNEW_CODE, current).apply()
-            return
+            return false
         }
         prefs.edit().putLong(PrefsKeys.LAST_WHATSNEW_CODE, current).apply()
         LayoutDialogs.info(
@@ -905,6 +915,50 @@ class MainActivity : Activity() {
                 "• Manual game profiles, adaptive quality and one merged live connection card.\n" +
                 "• Connection Doctor links to the website for downloads and guides; battery saver pauses live stats.\n" +
                 "• Layout editor adds undo/redo, snap/grid, alignment guides, safe-area guides, multi-select, copy/paste, lock and mirror.",
+        )
+        return true
+    }
+
+    /** Checks GitHub at most twice a day; failures are silent and offline-safe. */
+    private fun checkForUpdate() {
+        if (updateCheckRunning || isFinishing) return
+        val now = System.currentTimeMillis()
+        val last = prefs.getLong(PrefsKeys.UPDATE_LAST_CHECK, 0L)
+        if (now - last < UPDATE_CHECK_INTERVAL_MS) return
+        updateCheckRunning = true
+        prefs.edit().putLong(PrefsKeys.UPDATE_LAST_CHECK, now).apply()
+
+        thread(name = "update-check") {
+            val release = ReleaseChecker.latest(Brand.VERSION)
+            updateCheckRunning = false
+            if (release == null || release.tag == prefs.getString(PrefsKeys.UPDATE_SEEN_TAG, null)) {
+                return@thread
+            }
+            handler.post {
+                if (isFinishing) return@post
+                if (!resumed) {
+                    pendingUpdate = release
+                } else {
+                    showUpdate(release)
+                }
+            }
+        }
+    }
+
+    private fun showUpdate(release: ReleaseChecker.Release) {
+        // Remember the tag even when the user chooses Later, so one release is
+        // only announced once per install.
+        prefs.edit().putString(PrefsKeys.UPDATE_SEEN_TAG, release.tag).apply()
+        LayoutDialogs.confirm(
+            activity = this,
+            theme = view.theme,
+            title = "UPDATE AVAILABLE",
+            message = "lemoGamePad ultimate ${release.version} is available on GitHub. " +
+                "Open the release page to download the APK and server binaries. " +
+                "Nothing is installed automatically.",
+            positive = "DOWNLOAD",
+            onConfirm = { openUrl(release.url) },
+            negative = "LATER",
         )
     }
 
@@ -2412,5 +2466,9 @@ class MainActivity : Activity() {
         // quietly without a toast storm.
         private const val ADAPTIVE_SAMPLE_MS = 2_000L
         private const val ADAPTIVE_NOTICE_MS = 60_000L
+
+        // Release checks are best-effort and cheap, but still rate limited so
+        // repeated launches do not hammer the public GitHub API.
+        private const val UPDATE_CHECK_INTERVAL_MS = 12L * 60L * 60L * 1000L
     }
 }

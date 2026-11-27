@@ -10,9 +10,11 @@ manual.
 2. Bump `Brand.VERSION` in
    `android/app/src/main/java/com/alamshowkat/lemogamepad/Theme.kt` so the
    settings footer matches.
-3. Update the version in `README.md` (intro and footer), `pc/web/app.js` and
-   `pc/web/index.html` (browser pad labels), and add a section to
-   `CHANGELOG.md`.
+3. Update the version in `README.md` (intro and footer), `pc/web/app.js`,
+   `pc/web/index.html` (browser pad labels), `version` in `rust/Cargo.toml`,
+   and `APP_VERSION` in `rust/src/gui/main.rs` (desktop update checker), then
+   add a section to `CHANGELOG.md`. Cargo requires three-part semver, so a `2.2`
+   release is `2.2.0` in `Cargo.toml` while every user-facing label stays `2.2`.
 4. If behaviour changed, add notes to `docs/REVIEW.md`.
 5. Re-run the tests (see [CONTRIBUTING.md](../CONTRIBUTING.md#tests)).
 
@@ -30,11 +32,12 @@ At minimum:
 
 ## 3. Tag and publish
 
-Use a `v`-prefixed tag for every release (`v1.7.0`, not `1.7.0`) so the release
-workflow and the "latest release" badge stay consistent.
+Use the exact version label as the tag (`2.2`). The workflow strips an optional
+leading `v`, but plain labels keep the APK name, documentation and update checks
+identical. Do not reuse a tag that has already been published.
 
 ```bash
-git tag -a vX.Y.Z -m "lemoGamePad ultimate X.Y.Z"
+git tag -a 2.2 -m "lemoGamePad ultimate 2.2"
 git push origin main --tags
 ```
 
@@ -44,9 +47,9 @@ Then create a GitHub Release from the tag and publish it. The
 | Asset | Built by |
 | --- | --- |
 | `lemoGamePad-<version>.apk` | `release` job (signed APK) |
-| `lemoGamePad-server.exe` | `windows-server` job |
-| `lemoGamePad-server` + `install-linux.sh` | `linux-server` job |
-| `SHA256SUMS.txt` | `checksums` job |
+| `lemoGamePad-server.exe`, `lemoGamePad-app.exe`, `allow_firewall.ps1` | `windows-server` job |
+| `lemoGamePad-server`, `lemoGamePad-app`, `install-linux.sh` | `linux-server` job |
+| `LICENSE`, `THIRD_PARTY_LICENSES.md`, `SHA256SUMS.txt` | `checksums` job |
 
 Do not upload binaries to git; they belong on the release only.
 

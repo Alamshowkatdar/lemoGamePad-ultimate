@@ -9,7 +9,9 @@ and download:
 
 | File | Size | What it is |
 |---|---|---|
-| `lemoGamePad-server.exe` | ~19 MB | Windows receiver. Just run it — it installs its own driver and firewall rules. |
+| `lemoGamePad-app.exe` | ~20 MB | Desktop control panel. Starts the receiver and shows status, QR codes, settings and log. |
+| `lemoGamePad-server.exe` | ~2 MB | Native Rust console receiver. Prints the same status and QR codes as the panel. |
+| `allow_firewall.ps1` | ~1 KB | One-time helper to open the inbound ports (run as Administrator). |
 | `SHA256SUMS.txt` | ~1 KB | Checksums for the release files. |
 
 The binaries are attached to the release, not stored in the git history.
@@ -22,77 +24,62 @@ Linux and Android have their own guides:
 
 > **Windows SmartScreen:** the EXE is not code-signed (a certificate costs money),
 > so Windows may show *"Windows protected your PC"*. Click **More info → Run
-> anyway**. Apart from downloading ViGEmBus when it is missing, the server does
-> not use the internet.
+> anyway**. The receiver never downloads or installs anything; it only listens
+> on your LAN.
 
 ---
 
-## Install on a fresh PC (one double-click)
+## Install on a fresh PC
 
-1. Put `lemoGamePad-server.exe` in a folder (for example `C:\lemoGamePad\`) and
-   double-click it.
-2. The server checks what the PC is missing and installs it:
-   - **ViGEmBus driver** — the signed kernel driver that creates virtual pads.
-     If it is missing, the server downloads the official Nefarius build
-     (version 1.22.0), verifies its SHA-256 and runs the silent installer.
-   - **Windows Firewall rules** — inbound UDP on the control port and TCP on the
-     video and browser-pad ports, for **all network profiles** (Domain, Private,
-     Public), because Windows often classifies USB tethering as *Public*.
-3. **Windows will show one or two UAC prompts** ("Do you want to allow this app
-   to make changes?"). Click **Yes**. This is required to install a driver and
-   change firewall rules. Nothing else is elevated.
-4. When setup finishes, the console shows something like:
+1. Install the signed **ViGEmBus 1.22.0** driver once from
+   <https://github.com/nefarius/ViGEmBus/releases/tag/v1.22.0>. Reboot if the
+   installer asks.
+2. Put the release files in a folder (for example `C:\lemoGamePad\`) and run
+   `allow_firewall.ps1` as Administrator:
 
-   ```
-   lemoGamePad ultimate  -  virtual Xbox 360 gamepad
-   by Alam showkat
-   ----------------------------------------------------------
-   Control port : 9876 (UDP)
-   Screen stream: 9877 (TCP)
-   Browser pad  : 9878 (TCP, Wi-Fi only)
-   Controllers  : up to 8 phones at once
-   Pads 5-8     : DS4/DirectInput (XInput only allows four pads)
-   ViGEmBus     : OK (virtual gamepad driver installed)
-   PC IP        : 192.168.1.23
-   Web pad      : http://192.168.1.23:9878/?k=ABC123
-   Firewall     : OK (UDP 9876 / TCP 9877 / TCP 9878 allowed)
-   ...
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File .\allow_firewall.ps1
    ```
 
-   and prints a **QR code** you can scan from the phone. Leave this window open
-   while you play.
+   It opens inbound UDP on the control port and TCP on the video and
+   browser-pad ports for all network profiles (Domain, Private, Public), because
+   Windows often classifies USB tethering as *Public*.
 
-   The default is 8 controller slots. Windows games that read XInput still see
-   at most four pads; pads 5–8 automatically use the DualShock 4/HID backend so
-   DirectInput/Raw Input games and emulators can use all eight. Use
-   `--max-phones 4` if you want the old limit.
+   The desktop panel can do this for you: open **Settings → Install dependencies
+   (asks UAC)**, confirm, approve the UAC prompt, and install the signed ViGEmBus
+   driver from the page it opens. Nothing downloads or installs automatically.
+3. Double-click `lemoGamePad-app.exe` for the desktop panel, or
+   `lemoGamePad-server.exe` for the console banner and QR. The panel supervises
+   the native receiver and starts it automatically.
 
-That is the whole PC install. There is **no Python, no pip, no driver hunting,
-no firewall script** needed on a normal machine.
+The console shows something like:
 
-### What if I don't want the automatic setup?
-
-Run it once with the escape hatch:
-
-```powershell
-lemoGamePad-server.exe --no-install-deps
+```
+lemoGamePad ultimate  -  virtual Xbox 360 gamepad
+by Alam showkat
+----------------------------------------------------------
+Control port : 9876 (UDP)
+Screen stream: 9877 (TCP)
+Browser pad  : 9878 (TCP, Wi-Fi only)
+Controllers  : up to 8 phones at once
+Pads 5-8     : DS4/DirectInput (XInput only allows four pads)
+ViGEmBus     : OK (virtual gamepad driver installed)
+PC IP        : 192.168.1.23
+Web pad      : http://192.168.1.23:9878/?k=ABC123
 ```
 
-Then install ViGEmBus yourself from
-<https://github.com/nefarius/ViGEmBus/releases/tag/v1.22.0> and open the firewall
-with `pc\allow_firewall.ps1` (as Administrator) if phones cannot find the PC.
-The banner always tells you the real state, so you can see what is missing.
+The console also prints a **QR code** you can scan from the phone. The desktop
+app shows the same details in **Status** and the QR in **Pairing / QR**.
 
-### If UAC is cancelled
+The default is 8 controller slots. Windows games that read XInput still see at
+most four pads; pads 5–8 automatically use the DualShock 4/HID backend so
+DirectInput/Raw Input games and emulators can use all eight. Use
+`--max-phones 4` if you want the old limit.
 
-Nothing breaks — the server still starts and prints the exact commands you can
-run later. Install ViGEmBus manually and/or run the `netsh` lines the server
-prints in an **Administrator** PowerShell (or `pc\allow_firewall.ps1` from the
-source repository):
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\pc\allow_firewall.ps1
-```
+If ViGEmBus is missing, the banner prints the pinned download link instead of
+trying to install it. The receiver still runs, but no virtual pad is created.
+The `--no-install-deps` flag suppresses the one-time setup reminder in the log;
+it does not change the network protocol.
 
 ### Moving the EXE later
 

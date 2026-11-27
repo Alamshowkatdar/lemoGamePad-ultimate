@@ -13,7 +13,7 @@ by **Alam showkat**
 
 [**Website & downloads →**](https://alamshowkatdar.github.io/lemoGamePad-ultimate/) · [Download the latest release →](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) · [Report an issue](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/issues)
 
-**App source version:** 2.1.5. Download the signed APK and the Windows/Linux server from the [latest release](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) — use **1.3.7.2 or newer** on Linux, which fixes the swapped X/Y face buttons. The release workflow also publishes a `SHA256SUMS.txt` so you can verify your download.
+**App source version:** 2.2. Download the signed APK and the Windows/Linux server from the [latest release](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) — use the **2.2** APK and receiver together for matching version labels. The release workflow also publishes a `SHA256SUMS.txt` so you can verify your download.
 
 ---
 
@@ -23,14 +23,14 @@ by **Alam showkat**
 
 | Piece | Runs on | What it does |
 | --- | --- | --- |
-| **lemoGamePad ultimate** (APK) | Android 7.0+ | Draws the pad, sends your inputs, shows the PC screen in a small window. |
-| **lemoGamePad-server.exe** | Windows 10 / 11 | Receives the inputs and creates a **real virtual gamepad** that games see as an Xbox 360 controller (or a DualShock 4 with `--pad ds4`). |
-| **`lemoGamePad-server`** / `pc/vpad_server.py` | Linux | Same receiver, using the kernel's `uinput` interface instead of ViGEmBus. |
+| **lemoGamePad ultimate** (APK) | Android 7.0+ | Draws the pad, sends your inputs, shows the PC screen in a small window, and notifies you when a newer release is published. |
+| **lemoGamePad-app.exe** / **`lemoGamePad-app`** | Windows 10 / 11, Linux | Desktop control panel: start/stop the receiver, see live players and host, show/copy/save pairing QR codes, change settings and read the log. |
+| **lemoGamePad-server.exe** / **`lemoGamePad-server`** | Windows 10 / 11, Linux | Native Rust console receiver. Receives inputs and creates a **real virtual gamepad** — Xbox 360 (or DualShock 4 with `--pad ds4`) through ViGEmBus on Windows, or evdev/uinput on Linux. |
 
 Windows sees genuine controllers with analog sticks and pressure-sensitive
 triggers. No root, no dongle, no proprietary receiver, and **no Python install on
-the PC** — the server is a single `.exe`. On Linux the receiver needs no root
-either, only access to `/dev/uinput`.
+the PC** — both the receiver and the desktop panel are native Rust binaries. On
+Linux the receiver needs no root either, only access to `/dev/uinput`.
 
 ```
 ┌─────────────────┐        Wi-Fi / USB          ┌────────────────────────┐   ┌──────────────┐
@@ -51,12 +51,47 @@ the host reads it directly; the app never connects automatically on launch.
 ## Get started
 
 1. Download the signed APK and the receiver from the [latest release](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest).
-2. Start `lemoGamePad-server.exe` on Windows or `lemoGamePad-server` on Linux, then scan the QR code in the console.
-3. Open the app in landscape, tap **Connect**, and the phone becomes controller **P1**. Add more phones for up to eight pads.
+2. Start `lemoGamePad-app` on Windows/Linux for the desktop panel, or use `lemoGamePad-server.exe` / `lemoGamePad-server` for the console. The panel supervises the same native receiver and shows the pairing QR automatically.
+3. Open the phone app in landscape, tap **Connect**, and it becomes controller **P1**. Add more phones for up to eight pads.
 
-Prefer no install? Start the PC server and open the **Web pad** URL it prints on a phone, iPhone or laptop on the same Wi-Fi.
+Prefer no install? In the app's **Pairing / QR** tab choose **Browser**, or start the console server and open the **Web pad** URL it prints on a phone, iPhone or laptop on the same Wi-Fi.
 
 Full guides: [Android phone as a gamepad](https://alamshowkatdar.github.io/lemoGamePad-ultimate/ANDROID.html) · [Windows receiver](https://alamshowkatdar.github.io/lemoGamePad-ultimate/INSTALL-WINDOWS.html) · [Linux receiver](https://alamshowkatdar.github.io/lemoGamePad-ultimate/INSTALL-LINUX.html) · [Browser pad](https://alamshowkatdar.github.io/lemoGamePad-ultimate/WEB.html) · [Troubleshooting](https://alamshowkatdar.github.io/lemoGamePad-ultimate/TROUBLESHOOTING.html) · [Command-line options](https://alamshowkatdar.github.io/lemoGamePad-ultimate/COMMAND-LINE.html)
+
+### Desktop control panel
+
+`lemoGamePad-app` is a thin control panel around the native Rust receiver.
+It starts the receiver on launch, has a dark/light theme toggle and left-side navigation, and
+has four panels. The panel checks GitHub for a newer release on launch and shows
+a dismissible banner with a **View release** link when one is available; nothing
+is downloaded automatically. Use **Check update** in the title bar to recheck.
+
+- **Status** — server state, connected players, seat/device, packet rate, loss,
+  battery, host, party lock, active ports and setup problems.
+- **Pairing / QR** — app and browser pairing codes for every LAN address, plus
+  **Copy link**, **Save QR** and **Open browser pad**.
+- **Settings** — ports, pad type, player count, rumble, screen stream and
+  browser key. **Apply & Restart** is needed for changes. **Install dependencies**
+  opens a confirmation, then a system admin prompt (`pkexec` on Linux, UAC on
+  Windows); it never runs by itself. On Windows it opens the ViGEmBus download
+  and elevates `allow_firewall.ps1`.
+- **Log** — the same messages the console receiver prints.
+
+It still uses the existing protocol — no packet layout or pairing format
+changed. From a source checkout, run `pc/gui.sh` after
+`pc/linux/install-linux.sh`; add `--manual-start` to open the panel without
+starting the server. `pc/desktop_gui.py` is the earlier Python/Tk reference and
+is not part of the shipped binaries.
+
+### New in 2.2
+
+- **The desktop panel is easier to use.** Reliable drawn tab icons, a medium
+  default window and scrolling keep every control reachable after resizing.
+- **Linux sticks, triggers and D-pad work again.** A missing `EV_ABS` event type
+  is now enabled; rumble setup was fixed at the same time.
+- **One-click, confirmed dependency setup.** The panel can ask for `pkexec` on
+  Linux or UAC on Windows. Windows opens the ViGEmBus page and elevates the
+  firewall helper; nothing downloads or installs automatically.
 
 ### New in 2.1.5
 
@@ -429,4 +464,4 @@ licenses are listed in [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md).
 
 ---
 
-**lemoGamePad ultimate™ © Alam showkat** · v2.1.5
+**lemoGamePad ultimate™ © Alam showkat** · v2.2

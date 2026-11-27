@@ -2,6 +2,35 @@
 
 Newest first. The reasoning behind each release is in [`docs/REVIEW.md`](docs/REVIEW.md).
 
+## 2.2
+
+- **Native desktop panel, icons and layout.** `lemoGamePad-app` now uses drawn
+  tab icons instead of missing glyphs, a medium 920×620 default window, and a
+  scroll area so every control stays reachable after resizing.
+- **Fixed the Linux virtual gamepad.** The `EV_ABS` event type is now enabled
+  alongside the analog axes, so sticks, triggers and the D-pad reach games.
+  Force-feedback setup and the new event-node lookup race were fixed too.
+- **Added explicit dependency setup to the panel.** **Settings → Install
+  dependencies** asks for confirmation, then uses `pkexec` on Linux or a UAC
+  prompt on Windows. Windows opens the ViGEmBus download page and elevates
+  `allow_firewall.ps1` with the configured ports. Nothing installs itself.
+- **Rewrote the desktop control panel in Rust.** `lemoGamePad-app` is now a
+  native eframe/egui binary, like the receiver it supervises. It starts/stops
+  the existing receiver, shows live player status, host and party lock, pairing
+  QR codes and links for every LAN address, settings and the server log. It has
+  a dark/light theme toggle and side navigation. The UDP/WebSocket protocol and
+  the 29-byte input packet are unchanged; the console receiver remains
+  available. The Python/Tk panel stays in the repository as a reference.
+- **Added release notifications to the desktop panel.** It checks GitHub on
+  launch in a background thread, shows a dismissible banner with the new
+  version and a **View release** link, and never downloads anything itself. A
+  button in the title bar rechecks on demand; `--no-update-check` disables the
+  automatic request.
+- **Added release notifications to the Android app.** It checks GitHub at most
+  twice a day in the background and shows a themed **Update available** card with
+  **Download** and **Later**. Download opens the release page; nothing is
+  installed automatically, and offline checks fail silently.
+
 ## 2.1.5
 
 - **Updated the browser pad version label.** The browser footer and in-app

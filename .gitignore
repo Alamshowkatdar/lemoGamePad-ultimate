@@ -16,6 +16,7 @@ pc/.venv/
 pc/build/
 pc/dist/
 pc/*.spec
+rust/target/
 __pycache__/
 *.py[cod]
 .pytest_cache/
@@ -26,6 +27,10 @@ lemoGamePad-qr-*.png
 pc/lemoGamePad-qr-*.png
 lemoGamePad-web-qr-*.png
 pc/lemoGamePad-web-qr-*.png
+lemoGamePad-guest-qr-*.png
+pc/lemoGamePad-guest-qr-*.png
+lemoGamePad-web-guest-qr-*.png
+pc/lemoGamePad-web-guest-qr-*.png
 
 # --- editors / OS ----------------------------------------------------------
 .vscode/

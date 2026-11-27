@@ -7,10 +7,10 @@
 | Symptom | Fix |
 |---|---|
 | SmartScreen blocks the EXE | **More info → Run anyway**. The EXE is unsigned. |
-| A UAC prompt asks for permission | Accept it — the server needs it to install ViGEmBus and open the firewall. |
+| A UAC prompt asks for permission | It only appears after **Settings → Install dependencies** in the desktop panel. Approve it to run the firewall helper; ViGEmBus is installed manually. |
 | Scan finds nothing | Look at the diagnostics line: `no interface` means the phone has no link of that transport (enable USB tethering); `no reply` means probes left but nothing answered. If the link is up, read the server's `Firewall` line. Otherwise disable "AP/client isolation" on the router and avoid guest networks. |
 | Server says `Firewall : NOT open` | Accept the UAC prompt, or run `pc\allow_firewall.ps1` as Administrator. |
-| Server says `ViGEmBus : MISSING` | Let it install (do not pass `--no-install-deps`), or install from the official release page. |
+| Server says `ViGEmBus : MISSING` | Install [ViGEmBus 1.22.0](https://github.com/nefarius/ViGEmBus/releases/tag/v1.22.0) once and reboot if asked. `--no-install-deps` only hides reminders. |
 | `CONNECTING · 192.168.x.x` forever | Wrong IP, firewall blocked, or the server is not running. Check the `PC IP` line. |
 | Wi-Fi works for internet but not for the pad | The network isolates clients (guest Wi-Fi, "AP isolation"). Use **USB**, or move both devices to a normal network. |
 | `WI-FI found no PC — linked over USB instead` | Wi-Fi answered with nothing while the USB tether did answer. Use the link that works. |
@@ -35,7 +35,7 @@
 | Browser pad connects but no controller appears | All `--max-phones` slots are busy, or the page has not sent input yet — touch the pad or press a key. Disconnect an idle phone or raise the limit (maximum eight). |
 | Browser pad has no rumble | Check **Vibration from games** and the main vibration switch in Controls. iOS Safari has no Vibration API; rumble is skipped there. On Android, allow the browser to vibrate. |
 | Browser pad controls feel delayed | Prefer 5 GHz Wi-Fi and close background downloads. The page sends at up to 60 Hz and the server coalesces bursts. |
-| Screen preview is black or says capture is unavailable on Linux | Native Wayland blocks `mss`. Install `grim`, `spectacle` or `gnome-screenshot` (see Linux notes), or log in with an X11 session. |
+| Screen preview is black or says capture is unavailable on Linux | Install `grim`, `spectacle` or `gnome-screenshot` for Wayland (see Linux notes), install `import`/`scrot` for X11, or log in with an X11 session. |
 | Game doesn't see a controller | It probably wants XInput; the virtual pad *is* XInput. For DirectInput-only games, use Steam Input. A Bluetooth HID pad is DirectInput only, so use the Wi-Fi/USB server link for XInput games. |
 | Device Manager lists greyed "Xbox 360 Controller for Windows" | Ghosts from a server that was killed instead of closed. Run `pc\clean_pads.ps1` as Administrator. |
 | Rumble not working | Check **Vibration from games** in the Android controls card. Some games only rumble on the pad they detect at launch — connect before starting the game. Run `python pc\test_rumble.py` (server closed) to prove the PC side works. |

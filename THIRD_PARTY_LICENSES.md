@@ -4,17 +4,20 @@ lemoGamePad ultimate is released under the [MIT License](LICENSE). It uses the
 following third-party components. They are not covered by the project's MIT
 license; their own licenses apply.
 
-## PC server (bundled or required at runtime)
+## Native binaries (Rust, bundled)
 
 | Component | Used for | License | Project |
 | --- | --- | --- | --- |
-| [vgamepad](https://github.com/yannbouteiller/vgamepad) | Windows virtual-pad bindings | MIT | yannbouteiller/vgamepad |
-| [ViGEmBus](https://github.com/nefarius/ViGEmBus) | Windows virtual-pad kernel driver (downloaded separately by the installer, SHA-256 verified) | BSD-3-Clause | nefarius/ViGEmBus |
-| [python-evdev](https://github.com/gvalkov/python-evdev) | Linux `/dev/uinput` bindings | BSD-3-Clause | gvalkov/python-evdev |
-| [mss](https://github.com/BoboTiG/python-mss) | X11 screen capture | MIT | BoboTiG/python-mss |
-| [Pillow](https://github.com/python-pillow/Pillow) | JPEG encoding | HPND | python-pillow/Pillow |
-| [qrcode](https://github.com/lincolnloop/python-qrcode) | Pairing QR code | BSD-3-Clause | lincolnloop/python-qrcode |
-| [PyInstaller](https://pyinstaller.org) | Building the single-file server (build tool only) | GPL-2.0-or-later with the PyInstaller exception | pyinstaller/pyinstaller |
+| [eframe](https://github.com/emilk/egui) | Native window and render loop for the desktop panel | MIT OR Apache-2.0 | emilk/egui |
+| [egui](https://github.com/emilk/egui) | Immediate-mode widgets for the desktop panel | MIT OR Apache-2.0 | emilk/egui |
+| [image](https://github.com/image-rs/image) | JPEG encoding for the screen stream | MIT OR Apache-2.0 | image-rs/image |
+| [libloading](https://github.com/nagisa/rust_libloading) | Loading ViGEmClient.dll / Windows system APIs | MIT OR Apache-2.0 | nagisa/rust_libloading |
+| [libc](https://github.com/rust-lang/libc) | Linux uinput ioctls and Unix signals | MIT OR Apache-2.0 | rust-lang/libc |
+| [qrcode](https://github.com/kennytm/qrcode-rust) | Pairing QR code | MIT OR Apache-2.0 | kennytm/qrcode-rust |
+
+The Python packages listed in `pc/requirements.txt` are used only by the
+source-tree reference and test scripts; they are not bundled into the shipped
+binaries.
 
 ## Android app
 
@@ -24,13 +27,15 @@ license; their own licenses apply.
 
 ## Platform components
 
-The app uses only the Android framework. The PC server uses only the Python
-standard library, apart from the packages above. Windows and Android system
+The Android app uses only the Android framework. The native receiver uses the
+Rust crates above and the operating system's socket, uinput/ViGEm and capture
+interfaces. Windows users install the [ViGEmBus](https://github.com/nefarius/ViGEmBus)
+driver separately; it is BSD-3-Clause licensed. Windows and Android system
 components (including the camera and Bluetooth stacks) are covered by their
 platform licenses.
 
 ## Full license texts
 
 Full texts ship with each upstream project. If you redistribute a built
-`lemoGamePad-server` binary, include this file and the license texts of the
-bundled packages; PyInstaller places them next to the extracted application.
+`lemoGamePad-server` or `lemoGamePad-app` binary, include this file and the
+license texts of the bundled Rust crates.

@@ -76,6 +76,8 @@ internal object PrefsKeys {
     const val SETTINGS_DENSE = "settings_dense"
     const val BT_LAST_HOST = "bt_last_host"
     const val LAST_WHATSNEW_CODE = "last_whatsnew_code"
+    const val UPDATE_LAST_CHECK = "update_last_check_ms"
+    const val UPDATE_SEEN_TAG = "update_seen_tag"
     const val THEME = "theme"
     const val FACES = "faces"
     const val MOTION = "motion"

@@ -31,9 +31,10 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
     exit 1
 }
 
-# Prefer the shipped EXE in release\, then the PyInstaller output in dist\.
+# Prefer the shipped EXE in release\, then the Cargo output in dist\.
 if ([string]::IsNullOrWhiteSpace($Program)) {
     $candidates = @(
+        (Join-Path $PSScriptRoot "lemoGamePad-server.exe"),
         (Join-Path (Split-Path -Parent $PSScriptRoot) "release\lemoGamePad-server.exe"),
         (Join-Path $PSScriptRoot "dist\lemoGamePad-server.exe")
     )

@@ -165,6 +165,7 @@ internal object LayoutDialogs {
         title: String,
         message: String,
         positive: String,
+        negative: String = "CANCEL",
         onConfirm: () -> Unit,
     ) {
         val root = overlay(activity, theme) ?: return
@@ -179,7 +180,7 @@ internal object LayoutDialogs {
             setPadding(0, px(activity, 16), 0, 0)
         }
         actions.addView(
-            button(activity, theme, "CANCEL", primary = false, color = theme.accent) { dismiss() },
+            button(activity, theme, negative.uppercase(), primary = false, color = theme.accent) { dismiss() },
             wrapParams(),
         )
         actions.addView(

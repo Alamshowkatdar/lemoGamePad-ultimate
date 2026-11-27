@@ -6,8 +6,9 @@
 # Works from a source checkout or next to a downloaded lemoGamePad-server.
 #
 # Installs everything the Linux receiver needs:
-#   * distribution packages (Python 3, venv/pip, evdev build deps and a
-#     Wayland screen-capture helper)
+#   * distribution packages (Python 3, venv/pip for the source test tools, evdev
+#     build deps, X11 libraries for the Rust desktop panel, and a Wayland
+#     screen-capture helper)
 #   * the uinput kernel module, a udev rule and "input" group membership
 #   * a Python virtualenv in pc/.venv with pc/requirements.txt
 #   * firewall holes for UDP 9876 / TCP 9877 / TCP 9878 (browser pad) when
@@ -199,6 +200,21 @@ install_pkgs_optional() {
     fi
 }
 
+install_gui_pkgs() {
+    # eframe/egui opens a normal X11 window; these libraries are needed at
+    # runtime even though the panel itself is a native Rust binary.
+    case "$PM" in
+        pacman) GUI_PKGS="libx11 libxcursor libxi libxrandr libxkbcommon mesa" ;;
+        apt) GUI_PKGS="libx11-6 libxcursor1 libxi6 libxrandr2 libxkbcommon-x11-0 libgl1" ;;
+        dnf) GUI_PKGS="libX11 libXcursor libXi libXrandr libxkbcommon-x11 mesa-libGL" ;;
+        zypper) GUI_PKGS="libX11-6 libXcursor1 libXi6 libXrandr2 libxkbcommon-x11-0 Mesa-libGL1" ;;
+        apk) GUI_PKGS="libx11 libxcursor libxi libxrandr libxkbcommon-x11 mesa-gl" ;;
+        xbps) GUI_PKGS="libX11 libXcursor libXi libXrandr libxkbcommon-x11 mesa-gl" ;;
+        *) return 0 ;;
+    esac
+    install_pkgs_optional "Desktop GUI (egui/X11)" $GUI_PKGS || true
+}
+
 # ------------------------------------------------------------- capture helper
 session_type="${LEMO_SESSION_TYPE:-${XDG_SESSION_TYPE:-}}"
 desktop="${LEMO_DESKTOP:-${XDG_CURRENT_DESKTOP:-${DESKTOP_SESSION:-}}}"
@@ -220,35 +236,35 @@ if [ "$DO_PACKAGES" -eq 1 ]; then
     echo "==> Packages"
     if [ -z "$PM" ]; then
         echo "  !! No supported package manager found."
-        echo "     Install Python 3 (with venv and pip), gcc, the libevdev headers"
-        echo "     and (on Wayland) grim, spectacle or gnome-screenshot."
+        echo "     Install Python 3 (with venv and pip), Rust/Cargo, gcc, the libevdev"
+        echo "     headers and (on Wayland) grim, spectacle or gnome-screenshot."
     else
         case "$PM" in
             pacman)
-                BASE_PKGS="python python-pip gcc pkgconf libevdev"
+                BASE_PKGS="python python-pip rust cargo gcc pkgconf libevdev"
                 ;;
             apt)
-                BASE_PKGS="python3 python3-venv python3-pip python3-dev gcc libevdev-dev pkg-config linux-libc-dev"
+                BASE_PKGS="python3 python3-venv python3-pip python3-dev cargo rustc gcc libevdev-dev pkg-config linux-libc-dev"
                 run_pkg apt-get update -qq || true
                 ;;
             dnf)
-                BASE_PKGS="python3 python3-pip python3-devel gcc libevdev-devel pkgconf kernel-headers"
+                BASE_PKGS="python3 python3-pip python3-devel cargo rust gcc libevdev-devel pkgconf kernel-headers"
                 ;;
             zypper)
-                BASE_PKGS="python3 python3-pip python3-devel gcc libevdev-devel pkg-config"
+                BASE_PKGS="python3 python3-pip python3-devel cargo rust gcc libevdev-devel pkg-config"
                 run_pkg zypper --non-interactive refresh || true
                 ;;
             apk)
-                BASE_PKGS="python3 py3-pip python3-dev gcc musl-dev libevdev-dev pkgconf"
+                BASE_PKGS="python3 py3-pip python3-dev cargo rust gcc musl-dev libevdev-dev pkgconf"
                 ;;
             xbps)
-                BASE_PKGS="python3 python3-pip python3-devel gcc pkg-config libevdev-devel"
+                BASE_PKGS="python3 python3-pip python3-devel cargo rust gcc pkg-config libevdev-devel"
                 ;;
         esac
 
         if [ "$HAS_SOURCE" -eq 0 ]; then
             BASE_PKGS=""
-            echo "  prebuilt receiver detected; Python build packages are not needed."
+            echo "  prebuilt binaries detected; Python build packages are not needed."
         fi
 
         if ! install_pkgs "base packages" $BASE_PKGS; then
@@ -259,6 +275,8 @@ if [ "$DO_PACKAGES" -eq 1 ]; then
             esac
             exit 1
         fi
+
+        install_gui_pkgs
 
         if [ -n "$CAPTURE_PKG" ]; then
             install_pkgs_optional "Wayland capture helper ($session_type)" "$CAPTURE_PKG" || true
@@ -429,6 +447,18 @@ else
     echo "==> Python virtualenv (skipped)"
 fi
 
+# ------------------------------------------------------------- native receiver
+if [ "$DO_VENV" -eq 1 ] && [ "$HAS_SOURCE" -eq 1 ]; then
+    echo "==> Native receiver (Cargo)"
+    if ! command -v cargo >/dev/null 2>&1; then
+        echo "  !! cargo not found; install Rust from https://rustup.rs" >&2
+    elif [ "$DRY_RUN" -eq 1 ]; then
+        echo "  [dry-run] cargo build --release --manifest-path $PC_DIR/../rust/Cargo.toml"
+    else
+        as_user cargo build --release --manifest-path "$PC_DIR/../rust/Cargo.toml"
+    fi
+fi
+
 # ------------------------------------------------------------------ firewall
 if [ "$DO_FIREWALL" -eq 1 ]; then
     echo "==> Firewall"
@@ -454,24 +484,50 @@ else
 fi
 
 # ------------------------------------------------------------------ launchers
-START_CMD=""
+# Prefer the desktop app when it is present; fall back to the console receiver.
+GUI_CMD=""
 for candidate in \
-    "$HERE/run.sh" \
-    "$HERE/lemoGamePad-server" \
-    "$PC_DIR/lemoGamePad-server" \
-    "$PC_DIR/dist/lemoGamePad-server" \
-    "$HERE/dist/lemoGamePad-server"
+    "$HERE/gui.sh" \
+    "$HERE/lemoGamePad-app" \
+    "$PC_DIR/lemoGamePad-app" \
+    "$PC_DIR/dist/lemoGamePad-app" \
+    "$HERE/dist/lemoGamePad-app"
 do
     if [ -f "$candidate" ]; then
         if [ "$DRY_RUN" -eq 0 ] && [ ! -x "$candidate" ]; then
             chmod +x "$candidate" 2>/dev/null || true
         fi
         if [ -x "$candidate" ] || [ "$DRY_RUN" -eq 1 ]; then
-            START_CMD="$candidate"
+            GUI_CMD="$candidate"
             break
         fi
     fi
 done
+
+START_CMD=""
+TERMINAL=true
+if [ -n "$GUI_CMD" ]; then
+    START_CMD="$GUI_CMD"
+    TERMINAL=false
+else
+    for candidate in \
+        "$HERE/run.sh" \
+        "$HERE/lemoGamePad-server" \
+        "$PC_DIR/lemoGamePad-server" \
+        "$PC_DIR/dist/lemoGamePad-server" \
+        "$HERE/dist/lemoGamePad-server"
+    do
+        if [ -f "$candidate" ]; then
+            if [ "$DRY_RUN" -eq 0 ] && [ ! -x "$candidate" ]; then
+                chmod +x "$candidate" 2>/dev/null || true
+            fi
+            if [ -x "$candidate" ] || [ "$DRY_RUN" -eq 1 ]; then
+                START_CMD="$candidate"
+                break
+            fi
+        fi
+    done
+fi
 
 if [ "$DO_SHORTCUT" -eq 1 ]; then
     echo "==> Launcher"
@@ -480,7 +536,7 @@ if [ "$DO_SHORTCUT" -eq 1 ]; then
 
     if [ -z "$START_CMD" ]; then
         echo "  No receiver found next to this script; skipping the launcher."
-        echo "  Put lemoGamePad-server in the same folder and rerun."
+        echo "  Put lemoGamePad-app or lemoGamePad-server in the same folder and rerun."
     elif [ "$DRY_RUN" -eq 1 ]; then
         echo "  [dry-run] ln -s $START_CMD $BIN_DIR/lemogamepad"
         echo "  [dry-run] write $APP_DIR/lemogamepad.desktop"
@@ -494,10 +550,10 @@ if [ "$DO_SHORTCUT" -eq 1 ]; then
 [Desktop Entry]
 Type=Application
 Name=lemoGamePad ultimate
-Comment=Virtual Xbox 360 / DualShock 4 gamepad receiver
+Comment=lemoGamePad gamepad receiver and desktop control panel
 Exec="$BIN_DIR/lemogamepad"
 Icon=input-gaming
-Terminal=true
+Terminal=$TERMINAL
 Categories=Game;Utility;
 StartupNotify=false
 EOF
@@ -525,14 +581,18 @@ if [ "$NEED_RELOGIN" -eq 1 ]; then
     echo "Until then you can still start the server; it will say uinput is not ready."
     echo
 fi
-echo "Start the receiver:"
+echo "Start lemoGamePad:"
 if [ -n "$START_CMD" ]; then
     echo "  $START_CMD"
 else
-    echo "  Place lemoGamePad-server next to install-linux.sh and run it there."
+    echo "  Place lemoGamePad-app or lemoGamePad-server next to install-linux.sh and run it there."
 fi
 if [ "$DO_SHORTCUT" -eq 1 ] && [ -n "$START_CMD" ]; then
     echo "or choose 'lemoGamePad ultimate' from the application menu."
 fi
 echo
-echo "Then scan the QR code in the terminal with the Android app."
+if [ "$TERMINAL" = false ]; then
+    echo "The desktop panel shows the pairing QR and live controller status."
+else
+    echo "Then scan the QR code in the terminal with the Android app."
+fi

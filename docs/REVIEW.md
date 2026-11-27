@@ -1,4 +1,4 @@
-# Review notes — 1.3.6 / 1.3.7 / 1.4.0 / 1.5.0 / 1.6.0 / 1.6.1 / 1.6.2 / 1.6.3 / 1.6.4 / 1.6.5 / 1.6.6 / 1.6.7 / 1.6.8 / 1.6.9 / 1.6.10 / 1.6.11 / 1.6.12 / 1.6.13 / 1.7.0 / 2.0.0 / 2.0.1 / 2.0.2 / 2.0.3 / 2.1.0 / 2.1.1 / 2.1.2 / 2.1.3 / 2.1.4 / 2.1.5
+# Review notes — 1.3.6 / 1.3.7 / 1.4.0 / 1.5.0 / 1.6.0 / 1.6.1 / 1.6.2 / 1.6.3 / 1.6.4 / 1.6.5 / 1.6.6 / 1.6.7 / 1.6.8 / 1.6.9 / 1.6.10 / 1.6.11 / 1.6.12 / 1.6.13 / 1.7.0 / 2.0.0 / 2.0.1 / 2.0.2 / 2.0.3 / 2.1.0 / 2.1.1 / 2.1.2 / 2.1.3 / 2.1.4 / 2.1.5 / 2.2
 
 A pass over the whole app (Kotlin sources, manifest, Gradle files, CI) focused on
 bugs, UI smoothness, and making the phone-to-phone Bluetooth gamepad honest.
@@ -34,6 +34,27 @@ This file records what was found and what changed, so the reasoning does not get
 lost between releases.
 
 ---
+
+## Native panel and Linux input (2.2)
+
+- The desktop panel is now a native eframe/egui binary that supervises the
+  existing Rust receiver. The old Python/Tk panel remains as a reference only.
+  Unicode glyphs were replaced with drawn tab icons because several systems
+  rendered them as missing boxes; the default window was reduced to 920×620 and
+  the content area scrolls on both axes when resized.
+- Linux virtual pads were advertising `EV_KEY` but not `EV_ABS`, so analog
+  sticks, triggers and hat switches were invisible to games even though the
+  individual axis bits were set. The `UI_SET_EVBIT(EV_ABS)` call is now part of
+  the declared event-type list and covered by a regression test.
+- The `UI_SET_*BIT` ioctls were passing the bit by pointer instead of by value,
+  which made every capability request fail with `EINVAL`. `FF_GAIN` also used
+  the wrong ioctl number, and the force-feedback thread could miss the new
+  `/dev/input/event*` node; all three are fixed.
+- Dependency setup is opt-in. Linux uses `pkexec`; Windows opens the pinned
+  ViGEmBus download page and elevates `allow_firewall.ps1` with UAC, forwarding
+  the configured control/video/web ports. No installer runs automatically.
+- Both panels and the browser pad now check GitHub for a newer release in the
+  background and offer a link. They never download or install anything.
 
 ## Fixed
 

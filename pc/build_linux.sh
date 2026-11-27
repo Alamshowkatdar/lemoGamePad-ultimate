@@ -1,35 +1,26 @@
 #!/bin/sh
-# Build a self-contained Linux binary with PyInstaller.
+# Build both native Rust binaries: the console receiver and the desktop panel.
 #
 #   ./pc/build_linux.sh
 #
-# The result is dist/lemoGamePad-server. It still needs the one-time uinput
-# setup (pc/linux/install-linux.sh) at runtime.
+# Results are dist/lemoGamePad-server and dist/lemoGamePad-app. They still need
+# the one-time uinput setup from pc/linux/install-linux.sh at runtime.
 set -eu
 cd "$(dirname "$0")"
 
-PYTHON="${PYTHON:-python3}"
-
-if ! "$PYTHON" -c "import PyInstaller" >/dev/null 2>&1; then
-    echo "PyInstaller is required." >&2
-    echo "  $PYTHON -m pip install --user pyinstaller" >&2
-    echo "or use a virtualenv:" >&2
-    echo "  $PYTHON -m venv .venv && . .venv/bin/activate" >&2
-    echo "  pip install -r requirements.txt pyinstaller" >&2
+if ! command -v cargo >/dev/null 2>&1; then
+    echo "Rust is required: https://rustup.rs" >&2
     exit 1
 fi
 
-"$PYTHON" -m PyInstaller \
-    --noconfirm --clean --onefile \
-    --name lemoGamePad-server \
-    --hidden-import linux_pad \
-    --collect-submodules evdev \
-    --collect-all mss \
-    --collect-all PIL \
-    --collect-all qrcode \
-    --add-data "web:web" \
-    vpad_server.py
-
-echo
-echo "Built: $(pwd)/dist/lemoGamePad-server"
-echo "Run it from a terminal so the banner and QR code stay visible."
+(
+    cd ../rust
+    cargo build --release
+)
+mkdir -p dist
+for name in lemoGamePad-server lemoGamePad-app; do
+    cp "../rust/target/release/$name" "dist/$name"
+    echo "Built: $(pwd)/dist/$name"
+done
+cp linux/install-linux.sh dist/install-linux.sh
+echo "Built: $(pwd)/dist/install-linux.sh"

@@ -12,7 +12,7 @@ lemoGamePad-server.exe --max-phones 8      # allow 1-8 phones at once (default 8
 lemoGamePad-server.exe --no-rumble         # do not forward rumble to the phone
 lemoGamePad-server.exe --no-video          # disable the PC screen stream
 lemoGamePad-server.exe --no-qr             # do not print the pairing QR code
-lemoGamePad-server.exe --no-install-deps   # no auto-install of ViGEmBus / packages / firewall
+lemoGamePad-server.exe --no-install-deps   # hide dependency reminders (no install is automatic)
 lemoGamePad-server.exe --no-web            # disable the browser gamepad page
 lemoGamePad-server.exe --web-port 8080     # browser pad TCP port (default: control port + 2)
 lemoGamePad-server.exe --web-key mysecret  # fixed browser pairing key (default: random per run)
@@ -24,8 +24,21 @@ lemoGamePad-server.exe --video-quality 42  # JPEG quality 20-90 (default 42)
 lemoGamePad-server.exe --list-ip           # print this PC's LAN IPs and exit
 ```
 
-On Linux use `python3 vpad_server.py` with the same options (or the built
-`dist/lemoGamePad-server`).
+On Linux use `./rust/target/release/lemoGamePad-server` with the same options
+(or the built `dist/lemoGamePad-server`).
+
+**Desktop panel.** `lemoGamePad-app.exe`, `dist/lemoGamePad-app` and `pc/gui.sh`
+start the same server with a GUI. The panel accepts the common flags above
+(`--port`, `--pad`, `--max-phones`, `--no-rumble`, `--no-video`, `--no-web`,
+`--web-key`, `--web-key-file`, `--no-install-deps`) as starting values, plus:
+
+```
+lemoGamePad-app --manual-start        # open the panel without starting the server
+lemoGamePad-app --no-update-check     # skip the GitHub release check on launch
+```
+
+Settings changed in the panel need **Apply & Restart**. The console receiver
+remains the choice for scripts and headless machines.
 
 **Browser pad.** Unless `--no-web` is passed, the server also hosts a gamepad
 page on TCP **control port + 2** (default `9878`). The console prints the full

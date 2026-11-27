@@ -6,8 +6,9 @@
 
 ```
 pc/
-  vpad_server.py            server + virtual-pad factory + dependency setup + stream + QR
-  linux_pad.py              Linux backend: creates a standard evdev pad via /dev/uinput
+  vpad_server.py            legacy Python reference (not shipped; protocol source of truth)
+  linux_pad.py              legacy Python Linux backend reference
+  desktop_gui.py            earlier Python/Tk panel (protocol/UI reference only)
   simulate_client.py        fake controller for testing without a phone
   test_multi.py             multi-phone suite: discovery, slots, rumble, reconnect
   test_latency.py           receive path, coalescing, ordering, PONG stats
@@ -23,13 +24,22 @@ pc/
     style.css               responsive pad styling
     app.js                  touch/keyboard input, WebSocket client, rumble
     favicon.svg             page icon
-  build_exe.ps1             rebuilds release/lemoGamePad-server.exe
-  build_linux.sh            rebuilds dist/lemoGamePad-server (PyInstaller)
+rust/
+  src/main.rs               CLI entrypoint and shutdown handling
+  src/gui/main.rs           native eframe/egui desktop panel entrypoint
+  src/server.rs             UDP receiver, slots, swaps, party lock, status
+  src/pad/                  native ViGEmBus and uinput backends
+  src/video.rs              PC screen stream
+  src/web.rs                browser pad HTTP + WebSocket server
+pc/
+  build_rust.sh             copies both Cargo binaries into pc/dist
+  build_exe.ps1             builds Rust receiver + Rust panel on Windows
+  build_linux.sh            builds Rust receiver + Rust panel on Linux
   linux/
     install-linux.sh        one-shot setup: packages, uinput, venv, firewall, launcher
                             (also attached to the release for the standalone binary)
     install-uinput.sh       compatibility alias for install-linux.sh
-    run.sh                  start the receiver with pc/.venv
+    run.sh                  start the native receiver from a source checkout
     70-lemogamepad.rules    udev rule for /dev/uinput permissions
   allow_firewall.ps1        manual inbound UDP + TCP rules (all profiles)
   clean_pads.ps1            removes ghost virtual controllers (Administrator)
@@ -55,7 +65,7 @@ android/
     Protocol.kt             wire format constants + shared state
   keystore/                 your local signing key (git-ignored, never pushed)
 docs/
-  REVIEW.md                 what changed in 1.3.6-2.1.5 and why (bug list + notes)
+  REVIEW.md                 what changed in 1.3.6-2.2 and why (bug list + notes)
   INSTALL-WINDOWS.md        Windows install and manual setup
   INSTALL-LINUX.md          Linux release binary, source setup, capture notes
   ANDROID.md                app install, transports, pairing, usage, settings
@@ -79,32 +89,30 @@ release/                    local build output (git-ignored; use GitHub Releases
 
 ## Build from source
 
-### PC server (needs Python 3.9+)
+### PC receiver and desktop panel (both Rust)
 
 ```powershell
 cd pc
-python -m pip install -r requirements.txt
 powershell -ExecutionPolicy Bypass -File .\build_exe.ps1
 ```
 
-The script installs PyInstaller and builds a single-file EXE into
-`release\lemoGamePad-server.exe`. Running `python pc\vpad_server.py` also works
-and will pip-install missing packages, install ViGEmBus and open the firewall on
-first use (unless you pass `--no-install-deps`).
+The script builds both binaries with Cargo and copies `dist/lemoGamePad-server.exe`
+and `dist/lemoGamePad-app.exe` into `release\`. Use
+`rust\target\release\lemoGamePad-server.exe` directly when you only need the
+console receiver. The panel finds the receiver binary next to itself.
 
 On Linux:
 
 ```bash
-cd pc
-python3 -m venv .venv && . .venv/bin/activate
-pip install -r requirements.txt pyinstaller
-./build_linux.sh
+./pc/build_linux.sh
 ```
 
-`build_linux.sh` produces `dist/lemoGamePad-server`. It needs the one-time
-`pc/linux/install-linux.sh` setup at runtime, and never installs packages for
-you. Both build scripts bundle `pc/web/` through PyInstaller's `--add-data`, so
-the browser pad keeps working from the single-file binary.
+It produces `dist/lemoGamePad-server` and `dist/lemoGamePad-app`. The receiver
+needs the one-time `pc/linux/install-linux.sh` setup at runtime. The panel needs
+X11 client libraries at runtime; `install-linux.sh` installs them and builds both
+binaries from a source checkout. Cargo embeds the browser pad assets, so no
+`--add-data` step is needed. The old Python files remain in the repository only
+as a protocol reference and are not part of the released receiver or panel.
 
 ### Android app (needs JDK 17–21 + Android SDK platform 34 / build-tools 34)
 

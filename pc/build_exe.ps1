@@ -1,46 +1,35 @@
-# Rebuilds the standalone lemoGamePad-server.exe with PyInstaller.
+# Rebuilds the native Rust receiver and desktop panel on Windows.
 #   powershell -ExecutionPolicy Bypass -File .\build_exe.ps1
 
 $ErrorActionPreference = "Stop"
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
+$root = Split-Path -Parent $here
+$names = @("lemoGamePad-server", "lemoGamePad-app")
 
-# PyInstaller logs to stderr, which PowerShell treats as an error under "Stop".
-$ErrorActionPreference = "Continue"
-
-$env:VGAMEPAD_SKIP_VIGEMBUS_INSTALL = "true"
-python -m pip install --quiet --upgrade pyinstaller vgamepad mss pillow qrcode
-if ($LASTEXITCODE -ne 0) { throw "pip install failed" }
-
-Push-Location $here
+Push-Location (Join-Path $root "rust")
 try {
-    python -m PyInstaller `
-        --noconfirm `
-        --onefile `
-        --console `
-        --name lemoGamePad-server `
-        --collect-all vgamepad `
-        --collect-all mss `
-        --collect-all PIL `
-        --collect-all qrcode `
-        --add-data "web;web" `
-        --exclude-module linux_pad `
-        --exclude-module evdev `
-        --distpath dist `
-        --workpath build `
-        vpad_server.py
-    if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed with exit code $LASTEXITCODE" }
+    cargo build --release
+    if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
+} finally {
+    Pop-Location
+}
 
-    $exe = Join-Path $here "dist\lemoGamePad-server.exe"
-    $out = Join-Path (Split-Path -Parent $here) "release"
-    New-Item -ItemType Directory -Force -Path $out | Out-Null
-    $target = Join-Path $out "lemoGamePad-server.exe"
+$dist = Join-Path $here "dist"
+New-Item -ItemType Directory -Force -Path $dist | Out-Null
 
-    # Windows keeps the previous EXE locked while it is still running or while
-    # antivirus scans it, so retry briefly before giving up.
+$out = Join-Path $root "release"
+New-Item -ItemType Directory -Force -Path $out | Out-Null
+
+foreach ($name in $names) {
+    $built = Join-Path $root "rust/target/release/$name.exe"
+    if (-not (Test-Path $built)) { throw "Missing build output: $built" }
+    Copy-Item $built (Join-Path $dist "$name.exe") -Force
+
+    $target = Join-Path $out "$name.exe"
     $copied = $false
     for ($attempt = 1; $attempt -le 10; $attempt++) {
         try {
-            Copy-Item $exe $target -Force -ErrorAction Stop
+            Copy-Item $built $target -Force -ErrorAction Stop
             $copied = $true
             break
         } catch {
@@ -48,14 +37,14 @@ try {
         }
     }
     if (-not $copied) {
-        Write-Host ""
-        Write-Host "Could not replace $target." -ForegroundColor Red
-        Write-Host "Close any running lemoGamePad-server window and run this script again." -ForegroundColor Red
+        Write-Host "Could not replace $target. Close any running lemoGamePad window and try again." -ForegroundColor Red
         exit 1
     }
-    Write-Host ""
     Write-Host "EXE ready: $target" -ForegroundColor Green
-} finally {
-    Pop-Location
 }
+
+$firewall = Join-Path $here "allow_firewall.ps1"
+Copy-Item $firewall (Join-Path $dist "allow_firewall.ps1") -Force
+Copy-Item $firewall (Join-Path $out "allow_firewall.ps1") -Force
+Write-Host "Firewall helper ready: $out\allow_firewall.ps1" -ForegroundColor Green
 exit 0
