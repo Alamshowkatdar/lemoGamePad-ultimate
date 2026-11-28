@@ -39,7 +39,7 @@ use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-const APP_VERSION: &str = "2.2.4";
+const APP_VERSION: &str = "2.2.5";
 // Setup scripts and the signed ViGEmBus installer are compiled into the binary
 // so "Install dependencies" works offline with only the single EXE.
 #[cfg(target_os = "linux")]
@@ -1931,10 +1931,10 @@ mod tests {
 
     #[test]
     fn compares_release_tags() {
-        assert!(newer("v2.2.5", APP_VERSION));
+        assert!(newer("v2.2.6", APP_VERSION));
         assert!(newer("2.3", APP_VERSION));
         assert!(!newer("v2.1.6", APP_VERSION));
-        assert!(!newer("2.2.4", APP_VERSION));
+        assert!(!newer("2.2.5", APP_VERSION));
         assert!(!newer("v2", "2.0.1"));
     }
 

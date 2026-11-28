@@ -13,7 +13,7 @@ by **Alam showkat**
 
 [**Website & downloads →**](https://alamshowkatdar.github.io/lemoGamePad-ultimate/) · [Download the latest release →](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) · [Report an issue](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/issues)
 
-**App source version:** 2.2.4. Download the signed APK and the Windows/Linux server from the [latest release](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) — use the **2.2.4** APK and receiver together for matching version labels. The release workflow also publishes a `SHA256SUMS.txt` so you can verify your download.
+**App source version:** 2.2.5. Download the signed APK and the Windows/Linux server from the [latest release](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) — use the **2.2.5** APK and receiver together for matching version labels. The release workflow also publishes a `SHA256SUMS.txt` so you can verify your download.
 
 ---
 
@@ -82,6 +82,17 @@ changed. From a source checkout, run `pc/gui.sh` after
 `pc/linux/install-linux.sh`; add `--manual-start` to open the panel without
 starting the server. `pc/desktop_gui.py` is the earlier Python/Tk reference and
 is not part of the shipped binaries.
+
+### New in 2.2.5
+
+- **Android checks for updates on app start.** The GitHub release check now
+  runs once every time the app process starts, even when onboarding cards are
+  queued. A newer release shows **UPDATE AVAILABLE** with **DOWNLOAD** /
+  **LATER** as soon as the screen is clear; nothing downloads or installs by
+  itself.
+- **Rotation-safe editor regression check.** The Android UI test now uses the
+  rotated window size and navigates by UI text, so it works on phones held in
+  landscape.
 
 ### New in 2.2.4
 
@@ -482,4 +493,4 @@ licenses are listed in [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md).
 
 ---
 
-**lemoGamePad ultimate™ © Alam showkat** · v2.2.4
+**lemoGamePad ultimate™ © Alam showkat** · v2.2.5

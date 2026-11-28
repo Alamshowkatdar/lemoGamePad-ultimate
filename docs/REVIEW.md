@@ -1,4 +1,4 @@
-# Review notes — 1.3.6 / 1.3.7 / 1.4.0 / 1.5.0 / 1.6.0 / 1.6.1 / 1.6.2 / 1.6.3 / 1.6.4 / 1.6.5 / 1.6.6 / 1.6.7 / 1.6.8 / 1.6.9 / 1.6.10 / 1.6.11 / 1.6.12 / 1.6.13 / 1.7.0 / 2.0.0 / 2.0.1 / 2.0.2 / 2.0.3 / 2.1.0 / 2.1.1 / 2.1.2 / 2.1.3 / 2.1.4 / 2.1.5 / 2.2 / 2.2.1 / 2.2.2 / 2.2.3 / 2.2.4
+# Review notes — 1.3.6 / 1.3.7 / 1.4.0 / 1.5.0 / 1.6.0 / 1.6.1 / 1.6.2 / 1.6.3 / 1.6.4 / 1.6.5 / 1.6.6 / 1.6.7 / 1.6.8 / 1.6.9 / 1.6.10 / 1.6.11 / 1.6.12 / 1.6.13 / 1.7.0 / 2.0.0 / 2.0.1 / 2.0.2 / 2.0.3 / 2.1.0 / 2.1.1 / 2.1.2 / 2.1.3 / 2.1.4 / 2.1.5 / 2.2 / 2.2.1 / 2.2.2 / 2.2.3 / 2.2.4 / 2.2.5
 
 A pass over the whole app (Kotlin sources, manifest, Gradle files, CI) focused on
 bugs, UI smoothness, and making the phone-to-phone Bluetooth gamepad honest.
@@ -34,6 +34,30 @@ This file records what was found and what changed, so the reasoning does not get
 lost between releases.
 
 ---
+
+## Startup release check (2.2.5)
+
+The Android updater used to run only from `continueStartupOverlays()`, after the
+onboarding, Connection Doctor and What's New cards had all been skipped. A
+12-hour preference gate could also suppress the check on a fresh launch, so a
+user who opened the app expecting to hear about a new release often saw nothing.
+
+The check now starts once per app process from `onResume()`, before any startup
+cards are shown. When GitHub reports a newer tag, the notice is queued until no
+guide, dialog, settings sheet or editor owns the screen; a short ticker flushes
+it as soon as the UI is clear. `LayoutDialogs.isShowing()` prevents two themed
+cards from stacking. The non-blocking contract is unchanged: **DOWNLOAD** opens
+the release page and **LATER** dismisses the card, with no automatic download or
+install. The 12-hour gate and its preference key were removed so every cold
+start really checks.
+
+The EDIT LAYOUT regression script had been written around a 1920×1080 landscape
+window and multiplied uiautomator bounds again before sampling screenshots. On
+a 2340×1080 phone it tapped the wrong header pill and sampled unrelated pixels.
+It now reads the rotated window bounds from the uiautomator hierarchy, taps the
+centred status pill, selects **STYLE**, scrolls to **EDIT LAYOUT**, and compares
+screenshots 1:1 with the dump coordinates. This turned a false device failure
+into a passing regression run.
 
 ## Windows build repair (2.2.1)
 

@@ -2,6 +2,17 @@
 
 Newest first. The reasoning behind each release is in [`docs/REVIEW.md`](docs/REVIEW.md).
 
+## 2.2.5
+
+- **Android checks for updates on app start.** A GitHub release check now runs
+  once per app launch, regardless of onboarding cards or a previous check time.
+  If a newer release exists, **UPDATE AVAILABLE** waits until no dialog, sheet
+  or editor is open, then offers **DOWNLOAD** or **LATER**. It never downloads
+  or installs anything automatically, and offline failures are silent.
+- **Rotation-safe Android UI regression.** The EDIT LAYOUT test now measures the
+  rotated window, navigates by UI text, and scales screenshots correctly, so it
+  passes on landscape phones instead of reporting false failures.
+
 ## 2.2.4
 
 - **Button shapes in the Android layout editor.** Selected buttons can be

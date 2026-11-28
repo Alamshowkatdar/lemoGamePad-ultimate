@@ -2,7 +2,7 @@
 """Check that every user-facing version label matches rust/Cargo.toml.
 
     python3 tools/check_versions.py
-    python3 tools/check_versions.py --expected 2.2.4
+    python3 tools/check_versions.py --expected 2.2.5
 
 The Cargo manifest is canonical. Cargo needs three-part semver, so 2.2.0 is
 shown as 2.2 everywhere a person reads the version. --expected is used by the
