@@ -1585,6 +1585,7 @@ fn firewall_script() -> Result<PathBuf, String> {
     )
 }
 
+#[cfg(target_os = "linux")]
 fn installer_path() -> Result<PathBuf, String> {
     if let Ok(path) = env::var("LEMO_GAMEPAD_INSTALLER") {
         if !path.trim().is_empty() {
