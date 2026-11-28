@@ -10,6 +10,11 @@
    for the app you used to open the file (Files, Chrome, …).
 3. Open **lemoGamePad ultimate** and turn the phone **landscape**.
 
+On every app start the phone checks GitHub for a newer release in the background.
+If one exists it shows **UPDATE AVAILABLE** with **DOWNLOAD** and **LATER**;
+nothing is downloaded or installed automatically. Network failures are ignored,
+and the notice waits until onboarding or another dialog is closed.
+
 The app is distributed outside the Play Store. Official releases use the same
 signing key going forward. Version 1.3.2 uses a new key, so uninstall 1.3.1
 before installing it. Locally built APKs use your own key; see

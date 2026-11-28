@@ -45,6 +45,9 @@ internal object LayoutDialogs {
         remove(activity, root)
     }
 
+    /** True while any themed dialog is on screen, so callers can avoid stacking. */
+    fun isShowing(): Boolean = current != null
+
     /**
      * Asks for a layout name and calls [onSave] with the trimmed value.
      * [existing] is used to warn that saving will replace a layout with the

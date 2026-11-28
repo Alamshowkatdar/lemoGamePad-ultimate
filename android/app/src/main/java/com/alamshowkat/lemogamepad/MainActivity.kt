@@ -61,6 +61,7 @@ class MainActivity : Activity() {
     private var doctorStep = 0
     @Volatile private var doctorCheckRunning = false
     @Volatile private var updateCheckRunning = false
+    private var updateCheckStarted = false
     private var pendingUpdate: ReleaseChecker.Release? = null
     private var doctorCheckResult = ""
     private var startupOverlaysChecked = false
@@ -139,6 +140,9 @@ class MainActivity : Activity() {
     private val ticker = object : Runnable {
         override fun run() {
             refreshStatus()
+            // A startup card or dialog can close without another onResume, so
+            // release a queued update notice as soon as the UI is clear.
+            flushPendingUpdate()
             handler.postDelayed(this, 350)
         }
     }
@@ -299,6 +303,12 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         resumed = true
+        // Check once per app process start, even when onboarding cards are
+        // still queued; the notice waits until the screen is clear.
+        if (!updateCheckStarted) {
+            updateCheckStarted = true
+            checkForUpdate()
+        }
         if (!startupOverlaysChecked && wifiGuide == null && setupGuide == null && connectionDoctor == null) {
             startupOverlaysChecked = true
             continueStartupOverlays()
@@ -312,14 +322,7 @@ class MainActivity : Activity() {
         handler.post(adaptiveTicker)
         view.startMotion()
         if (screenEnabled) showScreenPreview(true)
-        pendingUpdate?.let { release ->
-            if (wifiGuide == null && setupGuide == null && connectionDoctor == null &&
-                settingsPanel?.isShowing != true
-            ) {
-                pendingUpdate = null
-                showUpdate(release)
-            }
-        }
+        flushPendingUpdate()
         // Bluetooth stays off until the user picks a host in the settings card.
         // If a gamepad was already started explicitly, resume its report ticker.
         if (phoneGamepadActive) {
@@ -644,8 +647,8 @@ class MainActivity : Activity() {
         if (!SettingsGuard.bool(prefs, PrefsKeys.CONNECTION_DOCTOR_SEEN, false)) {
             doctorStartup = true
             showConnectionDoctor()
-        } else if (!maybeShowWhatsNew()) {
-            checkForUpdate()
+        } else {
+            maybeShowWhatsNew()
         }
     }
 
@@ -934,15 +937,10 @@ class MainActivity : Activity() {
         return true
     }
 
-    /** Checks GitHub at most twice a day; failures are silent and offline-safe. */
+    /** Checks GitHub once at app start; failures are silent and offline-safe. */
     private fun checkForUpdate() {
         if (updateCheckRunning || isFinishing) return
-        val now = System.currentTimeMillis()
-        val last = prefs.getLong(PrefsKeys.UPDATE_LAST_CHECK, 0L)
-        if (now - last < UPDATE_CHECK_INTERVAL_MS) return
         updateCheckRunning = true
-        prefs.edit().putLong(PrefsKeys.UPDATE_LAST_CHECK, now).apply()
-
         thread(name = "update-check") {
             val release = ReleaseChecker.latest(Brand.VERSION)
             updateCheckRunning = false
@@ -951,13 +949,26 @@ class MainActivity : Activity() {
             }
             handler.post {
                 if (isFinishing) return@post
-                if (!resumed) {
-                    pendingUpdate = release
-                } else {
+                if (canShowUpdate()) {
                     showUpdate(release)
+                } else {
+                    // An onboarding card, sheet, dialog or pause owns the screen.
+                    // The ticker shows this as soon as the UI is clear.
+                    pendingUpdate = release
                 }
             }
         }
+    }
+
+    private fun canShowUpdate(): Boolean = !isFinishing && resumed &&
+        wifiGuide == null && setupGuide == null && connectionDoctor == null &&
+        settingsPanel?.isShowing != true && !view.editMode && !LayoutDialogs.isShowing()
+
+    private fun flushPendingUpdate() {
+        val release = pendingUpdate ?: return
+        if (!canShowUpdate()) return
+        pendingUpdate = null
+        showUpdate(release)
     }
 
     private fun showUpdate(release: ReleaseChecker.Release) {
@@ -2672,8 +2683,5 @@ class MainActivity : Activity() {
         private const val ADAPTIVE_SAMPLE_MS = 2_000L
         private const val ADAPTIVE_NOTICE_MS = 60_000L
 
-        // Release checks are best-effort and cheap, but still rate limited so
-        // repeated launches do not hammer the public GitHub API.
-        private const val UPDATE_CHECK_INTERVAL_MS = 12L * 60L * 60L * 1000L
     }
 }
