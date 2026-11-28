@@ -10,6 +10,8 @@ pc/
   linux_pad.py              legacy Python Linux backend reference
   desktop_gui.py            earlier Python/Tk panel (protocol/UI reference only)
   simulate_client.py        fake controller for testing without a phone
+  test_protocol.py          golden INPUT bytes and layout snapshots
+  test_android_edit_ui.py   adb toggle/persistence test (skips without a device)
   test_multi.py             multi-phone suite: discovery, slots, rumble, reconnect
   test_latency.py           receive path, coalescing, ordering, PONG stats
   test_linux_pad.py         Linux pad + force-feedback test (no phone/game needed)
@@ -65,7 +67,7 @@ android/
     Protocol.kt             wire format constants + shared state
   keystore/                 your local signing key (git-ignored, never pushed)
 docs/
-  REVIEW.md                 what changed in 1.3.6-2.2.3 and why (bug list + notes)
+  REVIEW.md                 what changed in 1.3.6-2.2.4 and why (bug list + notes)
   INSTALL-WINDOWS.md        Windows install and manual setup
   INSTALL-LINUX.md          Linux release binary, source setup, capture notes
   ANDROID.md                app install, transports, pairing, usage, settings
@@ -81,6 +83,9 @@ SECURITY.md                 threat model and private vulnerability reporting
 CONTRIBUTING.md             build/test workflow, code style, PR rules
 THIRD_PARTY_LICENSES.md     licenses of bundled dependencies
 .github/                    CI, release workflow, issue/PR templates, dependabot
+tools/
+  check_versions.py         verifies every user-facing version label
+  preflight.sh              offline version/Rust/PC/Android check before tagging
 publish.ps1                 commit + push every change to this repository
 release/                    local build output (git-ignored; use GitHub Releases)
 ```
@@ -156,6 +161,7 @@ For a public release, sign with your own key and keep it on a machine you contro
 ### Run the tests
 
 ```powershell
+python pc\test_protocol.py  # golden INPUT bytes and layout snapshots
 python pc\test_multi.py     # multi-phone: discovery, slots, rumble routing, reconnect
 python pc\test_latency.py   # burst coalescing, ordering, PONG loss stats
 python pc\test_video.py     # streamed frames (two viewers), QR PNG
@@ -168,6 +174,7 @@ On Linux:
 
 ```bash
 cd pc
+python3 test_protocol.py    # golden INPUT bytes and layout snapshots
 python3 test_multi.py       # works with or without /dev/uinput
 python3 test_latency.py     # receive path, no driver or display needed
 python3 test_linux_pad.py   # real uinput pad, buttons/axes, force feedback

@@ -2055,7 +2055,7 @@
   });
 
   // ------------------------------------------------------------------ network
-  const VERSION = "2.2.3";
+  const VERSION = "2.2.4";
   let socket = null;
   let connected = false;
   let manualOffline = false;

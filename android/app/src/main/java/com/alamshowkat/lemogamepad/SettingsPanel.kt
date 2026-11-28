@@ -47,9 +47,9 @@ private val CARD_HELP: Map<String, Pair<String, String>> = mapOf(
     "controls" to ("CONTROLS" to
         "Deadzone and curve shape the analog sticks. Haptic strength scales touch and game vibration; vibration from games can be switched off separately. Face spacing changes the four face buttons together until you move one individually in the layout editor."),
     "studio" to ("CUSTOMIZATION STUDIO" to
-        "Edit layout unlocks drag, pinch resize, long-press hide, snap/grid, alignment guides, multi-select, copy/paste, lock and mirror. Undo/redo works during the edit session; save a named layout to keep it."),
+        "Edit layout unlocks drag, pinch resize, long-press hide, snap/grid, alignment guides, multi-select, copy/paste, lock, mirror and button shapes. ADD creates a button, DUP copies a selected button's look, and FUNC assigns one or two functions; up to eight extras are allowed. UNDO/REDO reverses layout changes and SNAP/GUIDES/SAFE/MULTI toggles (up to 40 steps). Hold an edit-bar button for a hint; IMPORT/EXPORT save and load the current layout as a text file."),
     "layouts" to ("LAYOUTS" to
-        "Named layouts are manual quick-switches. SHARE QR / SCAN QR hand a layout to another phone; EXPORT / IMPORT and game profiles use the same compact text, so an old saved layout still loads. Safe-area guides show notch and system-bar margins while editing."),
+        "Named layouts are manual quick-switches. SHARE QR / SCAN QR hand a layout to another phone; the edit bar's EXPORT / IMPORT use the Android file picker and the same compact layout text, so an old saved layout still loads. A file import becomes a custom layout and does not overwrite a named preset. Safe-area guides show notch and system-bar margins while editing."),
     "profiles" to ("GAME PROFILES" to
         "Profiles store your control feel as a snapshot: aim, motion, haptics, rate, face labels and layout. They never detect which game is running — save, name, and apply them yourself. COPY duplicates a profile; EXPORT copies a JSON backup to the clipboard and IMPORT merges profiles whose names are not already used. Connections are never included."),
     "screen" to ("PC SCREEN" to
@@ -1113,7 +1113,11 @@ class SettingsPanel(
             },
         )
         card.addView(
-            hint("EDIT LAYOUT lets you drag, pinch-resize and hide controls. The swipe pad resizes like the sticks.", top = px(2)),
+            hint(
+                "EDIT LAYOUT lets you drag, pinch-resize and hide controls; UNDO/REDO reverses up to 40 steps. " +
+                    "IMPORT / EXPORT move the current layout through a text file. Hold edit-bar buttons for hints.",
+                top = px(2),
+            ),
         )
         card.addView(
             action("EDIT LAYOUT", primary = true) { callbacks.onEditLayout() },
@@ -1720,11 +1724,10 @@ class SettingsPanel(
             }
         }
 
-        val actions = row()
-        actions.addView(
-            action("CUSTOMIZE", primary = false) { callbacks.onEditLayout() },
-            weightParams(1f, end = px(6)),
+        card.addView(
+            hint("EDIT LAYOUT is in CUSTOMIZATION STUDIO", top = px(4)),
         )
+        val actions = row()
         actions.addView(
             action("SAVE AS…", primary = true) {
                 LayoutDialogs.promptName(
@@ -1818,7 +1821,7 @@ class SettingsPanel(
             hint(
                 "Every control's position, size and visibility is remembered. " +
                     "Tap a saved layout to switch. SHARE QR / SCAN QR move a layout " +
-                    "between phones; the browser pad uses the same code as text.",
+                    "between phones; EDIT LAYOUT also has IMPORT / EXPORT for text files. The browser pad uses the same code as text.",
                 top = px(6),
             ),
         )

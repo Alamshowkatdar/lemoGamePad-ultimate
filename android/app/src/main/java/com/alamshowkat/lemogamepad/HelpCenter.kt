@@ -62,8 +62,11 @@ internal object HelpCenter {
         LayoutDialogs.HelpTopic(
             "LAYOUTS AND EDITING",
             "There is one Gamepad layout. EDIT LAYOUT unlocks drag, pinch resize, long-press hide, snap/grid, alignment " +
-                "and safe-area guides, multi-select, copy/paste, lock and mirror. Undo/redo works during the session. " +
-                "Named layouts are manual quick-switches; import/export uses compact layout text.",
+                "and safe-area guides, multi-select, copy/paste, lock and mirror. ADD creates a button, DUP copies a " +
+                "selected button's look, and FUNC assigns one or two functions; up to eight extra buttons are allowed. " +
+                "SHAPE changes button outlines. UNDO/REDO reverses layout changes and editor-option toggles (up to 40 steps). " +
+                "Hold any edit-bar button for a short explanation. IMPORT / EXPORT use the Android file picker and the same " +
+                "compact layout text as SHARE QR; a file import becomes a custom layout, leaving named presets untouched.",
         ),
         LayoutDialogs.HelpTopic(
             "PC SCREEN PREVIEW",

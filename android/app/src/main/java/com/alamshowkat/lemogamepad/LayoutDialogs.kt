@@ -2,6 +2,7 @@ package com.alamshowkat.lemogamepad
 
 import android.app.Activity
 import android.content.Context
+import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -16,6 +17,7 @@ import android.view.ViewGroup
 import android.view.animation.DecelerateInterpolator
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
+import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageView
@@ -272,6 +274,103 @@ internal object LayoutDialogs {
                 remove(activity, root)
             },
             wrapParams(),
+        )
+        card.addView(actions)
+        show(activity, root, card)
+    }
+
+    /**
+     * Picks one or two existing button functions for a user-added button.
+     * Checking a third option replaces the oldest choice instead of silently
+     * failing, so a combo can be changed in one pass.
+     */
+    fun chooseFunctions(
+        activity: Activity,
+        theme: PadTheme,
+        options: List<Pair<Int, String>>,
+        initial: Int,
+        onConfirm: (Int) -> Unit,
+    ) {
+        val root = overlay(activity, theme) ?: return
+        val card = card(activity, theme)
+        card.addView(eyebrow(activity, theme, "BUTTON FUNCTION"))
+        card.addView(
+            copy(
+                activity,
+                "Choose one or two buttons. A third pick replaces the oldest.",
+                11.5f, theme.textDim, top = px(activity, 8),
+            ),
+        )
+
+        val selected = LinkedHashSet<Int>()
+        for (bit in 0..16) {
+            if (initial and (1 shl bit) != 0 && options.any { it.first == bit }) selected += bit
+        }
+        val boxes = LinkedHashMap<Int, CheckBox>()
+        val list = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+        for ((bit, label) in options) {
+            val box = CheckBox(activity).apply {
+                this.text = label
+                textSize = 13f
+                setTextColor(theme.text)
+                buttonTintList = ColorStateList.valueOf(theme.accent)
+                isChecked = bit in selected
+                setPadding(px(activity, 6), px(activity, 5), px(activity, 6), px(activity, 5))
+                setOnCheckedChangeListener { _, checked ->
+                    if (checked) {
+                        if (selected.size >= 2) {
+                            val oldest = selected.first()
+                            selected.remove(oldest)
+                            boxes[oldest]?.isChecked = false
+                        }
+                        selected.add(bit)
+                    } else {
+                        selected.remove(bit)
+                    }
+                }
+            }
+            boxes[bit] = box
+            list.addView(
+                box,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ),
+            )
+        }
+        val scrollHeight = min(
+            px(activity, 340),
+            (activity.resources.displayMetrics.heightPixels * 0.52f).toInt(),
+        )
+        card.addView(
+            ScrollView(activity).apply {
+                overScrollMode = View.OVER_SCROLL_NEVER
+                isVerticalScrollBarEnabled = false
+                addView(list)
+            },
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                scrollHeight,
+            ).apply { topMargin = px(activity, 10) },
+        )
+
+        fun dismiss() = remove(activity, root)
+        val actions = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.END or Gravity.CENTER_VERTICAL
+            setPadding(0, px(activity, 14), 0, 0)
+        }
+        actions.addView(
+            button(activity, theme, "CANCEL", primary = false, color = theme.accent) { dismiss() },
+            wrapParams(),
+        )
+        actions.addView(
+            button(activity, theme, "OK", primary = true, color = theme.accent) {
+                val bits = selected.fold(0) { acc, bit -> acc or (1 shl bit) }
+                dismiss()
+                onConfirm(bits)
+            },
+            wrapParams().apply { marginStart = px(activity, 8) },
         )
         card.addView(actions)
         show(activity, root, card)

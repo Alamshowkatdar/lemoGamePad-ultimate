@@ -301,6 +301,49 @@ mod tests {
     }
 
     #[test]
+    fn wire_input_golden_bytes_and_offsets() {
+        // Same 29-byte vector as pc/test_protocol.py: header, 28-byte INPUT,
+        // then the optional want_slot byte. Never reorder these fields.
+        const GOLDEN: [u8; WIRE_INPUT_SIZE] = [
+            0x56, 0x50, 0x41, 0x44, VERSION, MSG_INPUT, 0x02, 0x01, //  0..11 header
+            0xD4, 0xC3, 0xB2, 0xA1,
+            0x00, 0x04, 0x01, 0x00, // 12..15 buttons
+            0x00, 0x80, 0xD2, 0x04, // 16..19 left stick
+            0xFF, 0xFF, 0xFF, 0x7F, // 20..23 right stick
+            0xC8, 0x4D, 0x5B, 0x01, // 24..27 triggers, battery, pad hint
+            0x03, //                      28 want_slot
+        ];
+        assert_eq!(HEADER_SIZE, 12);
+        assert_eq!(INPUT_SIZE, 28);
+        assert_eq!(WIRE_INPUT_SIZE, 29);
+        assert_eq!(GOLDEN[..4], MAGIC[..]);
+        assert_eq!(u16::from_le_bytes([GOLDEN[6], GOLDEN[7]]), 0x0102);
+        assert_eq!(u32::from_le_bytes(GOLDEN[8..12].try_into().unwrap()), 0xA1B2C3D4);
+        assert_eq!(u32::from_le_bytes(GOLDEN[12..16].try_into().unwrap()), 0x0001_0400);
+        assert_eq!(i16::from_le_bytes([GOLDEN[16], GOLDEN[17]]), -32768);
+        assert_eq!(i16::from_le_bytes([GOLDEN[18], GOLDEN[19]]), 1234);
+        assert_eq!(i16::from_le_bytes([GOLDEN[20], GOLDEN[21]]), -1);
+        assert_eq!(i16::from_le_bytes([GOLDEN[22], GOLDEN[23]]), 32767);
+        assert_eq!(&GOLDEN[24..28], &[200, 77, 91, 1]);
+        assert_eq!(GOLDEN[28], 3);
+
+        let header = Header::parse(&GOLDEN).unwrap();
+        let state = InputState::parse(&GOLDEN, header).unwrap();
+        assert_eq!(header.seq, 0x0102);
+        assert_eq!(header.token, 0xA1B2C3D4);
+        assert_eq!(state.buttons, 0x0001_0400);
+        assert_eq!((state.lx, state.ly, state.rx, state.ry), (-32768, 1234, -1, 32767));
+        assert_eq!((state.l2, state.r2, state.battery), (200, 77, 91));
+        assert_eq!(state.pad_hint, 1);
+        assert_eq!(state.want_slot, 3);
+
+        // A 1.3-era frame still parses with no trailing slot request.
+        let legacy = InputState::parse(&GOLDEN[..INPUT_SIZE], header).unwrap();
+        assert_eq!(legacy.want_slot, 0);
+        assert_eq!(legacy.buttons, state.buttons);
+    }
+
+    #[test]
     fn sequence_wrap() {
         assert!(seq_newer(0, Some(65535)));
         assert!(!seq_newer(65535, Some(0)));

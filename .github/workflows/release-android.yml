@@ -19,7 +19,23 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  preflight:
+    name: Version preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}
+
+      - name: Check version labels against the tag
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.event.release.tag_name }}
+        run: python3 tools/check_versions.py --expected "${RELEASE_TAG#v}"
+
   release:
+    needs: preflight
     if: github.event_name == 'release'
     name: Build and publish signed APK
     runs-on: ubuntu-latest
@@ -109,6 +125,7 @@ jobs:
           gh release delete-asset "$GITHUB_REF_NAME" app-release.apk --yes || true
 
   windows-server:
+    needs: preflight
     name: Build and publish Windows server
     runs-on: windows-latest
     timeout-minutes: 45
@@ -134,6 +151,7 @@ jobs:
         run: gh release upload "$env:RELEASE_TAG" pc/dist/lemoGamePad-server.exe pc/dist/lemoGamePad-app.exe pc/allow_firewall.ps1 --clobber
 
   linux-server:
+    needs: preflight
     name: Build and publish Linux server
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -159,8 +177,8 @@ jobs:
 
   checksums:
     name: Publish SHA256SUMS.txt
-    needs: [release, windows-server, linux-server]
-    if: always()
+    needs: [preflight, release, windows-server, linux-server]
+    if: ${{ always() && needs.preflight.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

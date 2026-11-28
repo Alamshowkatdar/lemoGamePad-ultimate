@@ -24,6 +24,9 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v7
 
+      - name: Version labels
+        run: python3 tools/check_versions.py
+
       - name: Set up Java
         uses: actions/setup-java@v6
         with:

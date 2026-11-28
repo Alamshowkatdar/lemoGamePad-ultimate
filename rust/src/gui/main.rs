@@ -39,7 +39,7 @@ use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-const APP_VERSION: &str = "2.2.3";
+const APP_VERSION: &str = "2.2.4";
 // Setup scripts and the signed ViGEmBus installer are compiled into the binary
 // so "Install dependencies" works offline with only the single EXE.
 #[cfg(target_os = "linux")]
@@ -184,7 +184,7 @@ struct Peer {
     token: u32,
     name: String,
     ip: String,
-    rate: u64,
+    rate: f64,
     lost: u64,
     battery: u8,
     host: bool,
@@ -219,7 +219,7 @@ impl Status {
                         token: number(peer, "token") as u32,
                         name: text(peer, "name"),
                         ip: text(peer, "ip"),
-                        rate: number(peer, "rate"),
+                        rate: decimal(peer, "rate"),
                         lost: number(peer, "lost"),
                         battery: number(peer, "battery") as u8,
                         host: boolean(peer, "host"),
@@ -246,6 +246,11 @@ impl Status {
             problems,
             peers,
         }
+    }
+
+    /// Total input packets per second across every connected controller.
+    fn input_rate(&self) -> f64 {
+        self.peers.iter().map(|peer| peer.rate).sum()
     }
 }
 
@@ -565,12 +570,29 @@ fn draw_status_pill(ui: &mut egui::Ui, label: &str, color: egui::Color32) {
     );
 }
 
+/// One row of the diagnostics grid. Values truncate inside the last column so
+/// a long URL or error can never run into the next column at narrow widths.
+fn diagnostic_row(ui: &mut egui::Ui, label: &str, value: String, color: egui::Color32) {
+    ui.label(label);
+    ui.add(
+        egui::Label::new(egui::RichText::new(value).monospace().color(color))
+            .truncate(),
+    );
+    ui.end_row();
+}
+
 fn boolean(value: &Value, key: &str) -> bool {
     value.get(key).and_then(Value::as_bool).unwrap_or(false)
 }
 
 fn number(value: &Value, key: &str) -> u64 {
     value.get(key).and_then(Value::as_u64).unwrap_or(0)
+}
+
+/// Rates are published as fractional JSON numbers; `as_u64` would silently
+/// drop them to zero.
+fn decimal(value: &Value, key: &str) -> f64 {
+    value.get(key).and_then(Value::as_f64).unwrap_or(0.0)
 }
 
 fn text(value: &Value, key: &str) -> String {
@@ -800,6 +822,99 @@ impl GuiApp {
         } else {
             "STOPPED"
         }
+    }
+
+    /// Local-only diagnostics: every field comes from the status JSON or the
+    /// pairing address already held by the GUI. No probes, no TLS, no DNS.
+    fn websocket_address(&self) -> String {
+        if self.status.web_port == 0 {
+            return "--".into();
+        }
+        // Prefer the LAN IP chosen on the Pairing tab; fall back to the
+        // hostname published by the receiver when the tab has not been opened.
+        let host = if !self.pair_ip.trim().is_empty() && !self.pair_ip.starts_with("127.") {
+            self.pair_ip.clone()
+        } else if !self.status.hostname.trim().is_empty() {
+            self.status.hostname.clone()
+        } else if !self.pair_ip.trim().is_empty() {
+            self.pair_ip.clone()
+        } else {
+            return "--".into();
+        };
+        format!("ws://{host}:{}/ws", self.status.web_port)
+    }
+
+    fn paired_host_text(&self) -> String {
+        if !self.status.running {
+            return "--".into();
+        }
+        if self.status.host_slot == 0 {
+            "none".into()
+        } else {
+            format!("P{}", self.status.host_slot)
+        }
+    }
+
+    fn connected_text(&self) -> String {
+        if !self.status.running {
+            return "--".into();
+        }
+        let total = self.status.max_phones.max(self.settings.max_phones);
+        format!("{}/{}", self.status.peers.len(), total)
+    }
+
+    fn input_rate_text(&self) -> String {
+        if !self.status.running {
+            return "--".into();
+        }
+        format!("{:.1} pkt/s", self.status.input_rate())
+    }
+
+    fn last_error_text(&self) -> String {
+        if !self.error.trim().is_empty() {
+            return self.error.clone();
+        }
+        if let Some(problem) = self
+            .status
+            .problems
+            .iter()
+            .rev()
+            .find(|problem| !problem.trim().is_empty())
+        {
+            return problem.clone();
+        }
+        "--".into()
+    }
+
+    /// Compact connection readout shared by the Status and Pairing tabs.
+    fn show_diagnostics(&self, ui: &mut egui::Ui) {
+        egui::Frame::new()
+            .fill(egui::Color32::from_rgba_unmultiplied(0, 229, 255, 10))
+            .stroke(egui::Stroke::new(
+                1.0,
+                egui::Color32::from_rgba_unmultiplied(0, 229, 255, 55),
+            ))
+            .corner_radius(6.0)
+            .inner_margin(8.0)
+            .show(ui, |ui| {
+                ui.colored_label(
+                    NEON_CYAN,
+                    egui::RichText::new("Connection diagnostics")
+                        .strong()
+                        .monospace(),
+                );
+                ui.add_space(4.0);
+                egui::Grid::new("connection_diagnostics_grid")
+                    .num_columns(2)
+                    .spacing([14.0, 4.0])
+                    .show(ui, |ui| {
+                        diagnostic_row(ui, "WebSocket / LAN", self.websocket_address(), NEON_CYAN);
+                        diagnostic_row(ui, "Paired host", self.paired_host_text(), NEON_GREEN);
+                        diagnostic_row(ui, "Connected", self.connected_text(), NEON_GREEN);
+                        diagnostic_row(ui, "Input rate", self.input_rate_text(), NEON_CYAN);
+                        diagnostic_row(ui, "Last error", self.last_error_text(), NEON_AMBER);
+                    });
+            });
     }
 
     fn poll(&mut self) {
@@ -1099,6 +1214,8 @@ try {{
         };
         draw_status_pill(ui, label, color);
         ui.add_space(8.0);
+        self.show_diagnostics(ui);
+        ui.add_space(10.0);
         egui::Grid::new("status_grid")
             .num_columns(2)
             .spacing([18.0, 6.0])
@@ -1158,7 +1275,7 @@ try {{
                         ui.monospace(format!("P{}", peer.slot));
                         ui.label(format!("{}{}", peer.name, if peer.host { " [HOST]" } else { "" }));
                         ui.monospace(&peer.ip);
-                        ui.monospace(peer.rate.to_string());
+                        ui.monospace(format!("{:.0}", peer.rate));
                         ui.monospace(peer.lost.to_string());
                         ui.monospace(format!("{}%", peer.battery));
                         ui.end_row();
@@ -1170,6 +1287,8 @@ try {{
     fn show_pairing(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
         ui.heading("Pairing");
         ui.add_space(8.0);
+        self.show_diagnostics(ui);
+        ui.add_space(10.0);
         let hostname = if self.status.hostname.is_empty() {
             util::hostname()
         } else {
@@ -1745,7 +1864,7 @@ mod tests {
             "web_key": "abc", "locked": true, "host_slot": 2,
             "problems": ["uinput missing"],
             "peers": [{"slot": 2, "name": "phone", "ip": "192.168.1.4",
-                       "rate": 60, "lost": 1, "battery": 77, "host": true}]
+                       "rate": 60.5, "lost": 1, "battery": 77, "host": true}]
         }"#;
         let value: Value = serde_json::from_str(payload).unwrap();
         let status = Status::from_value(&value);
@@ -1755,7 +1874,49 @@ mod tests {
         assert_eq!(status.problems, ["uinput missing"]);
         assert_eq!(status.peers.len(), 1);
         assert_eq!(status.peers[0].name, "phone");
+        assert!((status.peers[0].rate - 60.5).abs() < f64::EPSILON);
+        assert!((status.input_rate() - 60.5).abs() < f64::EPSILON);
         assert!(status.peers[0].host);
+    }
+
+    #[test]
+    fn diagnostics_show_dashes_until_status_arrives() {
+        let mut settings = Settings::default();
+        settings.check_updates = false;
+        let mut app = GuiApp::new(settings, true);
+        assert_eq!(app.websocket_address(), "--");
+        assert_eq!(app.paired_host_text(), "--");
+        assert_eq!(app.connected_text(), "--");
+        assert_eq!(app.input_rate_text(), "--");
+        assert_eq!(app.last_error_text(), "--");
+        app.error = "pairing failed".into();
+        assert_eq!(app.last_error_text(), "pairing failed");
+    }
+
+    #[test]
+    fn diagnostics_read_local_status_snapshot() {
+        let mut settings = Settings::default();
+        settings.check_updates = false;
+        let mut app = GuiApp::new(settings, true);
+        app.status = Status::from_value(&serde_json::json!({
+            "running": true,
+            "web_port": 9878,
+            "hostname": "pc",
+            "max_phones": 8,
+            "host_slot": 2,
+            "problems": ["old", "latest problem"],
+            "peers": [
+                {"slot": 2, "rate": 42.5, "host": true},
+                {"slot": 3, "rate": 7.5, "host": false}
+            ]
+        }));
+        assert_eq!(app.websocket_address(), "ws://pc:9878/ws");
+        assert_eq!(app.paired_host_text(), "P2");
+        assert_eq!(app.connected_text(), "2/8");
+        assert_eq!(app.input_rate_text(), "50.0 pkt/s");
+        assert_eq!(app.last_error_text(), "latest problem");
+        app.pair_ip = "192.168.1.20".into();
+        assert_eq!(app.websocket_address(), "ws://192.168.1.20:9878/ws");
     }
 
     #[test]
@@ -1770,10 +1931,10 @@ mod tests {
 
     #[test]
     fn compares_release_tags() {
-        assert!(newer("v2.2.4", APP_VERSION));
+        assert!(newer("v2.2.5", APP_VERSION));
         assert!(newer("2.3", APP_VERSION));
         assert!(!newer("v2.1.6", APP_VERSION));
-        assert!(!newer("2.2.3", APP_VERSION));
+        assert!(!newer("2.2.4", APP_VERSION));
         assert!(!newer("v2", "2.0.1"));
     }
 

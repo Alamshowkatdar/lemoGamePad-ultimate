@@ -37,6 +37,31 @@ private const val K_PEDAL = 7
 private const val K_STEER = 8
 private const val K_TOUCHPAD = 9
 private const val K_ACTION = 10
+/** User-added combo button: one touch performs one or two existing buttons. */
+private const val K_MACRO = 11
+
+/** Marker chunk in new layout snapshots; older/foreign codes do not have it. */
+private const val LAYOUT_META = "__meta"
+private const val LAYOUT_META_VERSION = 2
+private const val MAX_MACROS = 8
+
+/**
+ * Shapes available for the rectangular buttons (shoulders, SELECT/START and
+ * stick clicks). ROUND is the original pill and stays the default so saved
+ * layouts and QR codes from older versions render exactly as before.
+ */
+object ButtonShape {
+    const val ROUND = 0
+    const val RECT = 1
+    const val CIRCLE = 2
+    const val SQUARE = 3
+    const val HEX = 4
+    const val DIAMOND = 5
+
+    val labels = arrayOf("ROUND", "RECT", "CIRCLE", "SQUARE", "HEX", "DIAMOND")
+
+    fun valid(value: Int): Boolean = value in ROUND..DIAMOND
+}
 
 // Swipe-pad feedback. Points are stored in pad-normalised coordinates so the
 // streak survives layout moves and rotation.
@@ -80,7 +105,20 @@ private const val TRAINER_FEEDBACK_MS = 700L
 /** Transient alignment line drawn while a control is being dragged. */
 private data class EditorGuide(val vertical: Boolean, val position: Float)
 
-/** Copyable layout attributes. Identity and button mapping stay fixed. */
+/**
+ * One undo step: the complete arrangement plus the editing aids that affect how
+ * it is edited. Keeping the options here means UNDO/REDO also restores the
+ * SNAP/GUIDES/SAFE/MULTI state instead of only the control positions.
+ */
+private data class EditorSnapshot(
+    val layout: String,
+    val snap: Boolean,
+    val guides: Boolean,
+    val safe: Boolean,
+    val multi: Boolean,
+)
+
+/** Copyable layout attributes. Built-in identities stay fixed; clones carry a function. */
 private data class NodeLayoutState(
     val fx: Float,
     val fy: Float,
@@ -88,7 +126,34 @@ private data class NodeLayoutState(
     val hidden: Boolean,
     val locked: Boolean,
     val customized: Boolean,
+    val shape: Int,
+    val bits: Int,
+    val template: Int,
+    val faceIdx: Int,
+    val bw: Float,
+    val bh: Float,
 )
+
+/** A cloned button: its function plus the look of the control it copied. */
+private data class MacroDef(
+    val bits: Int,
+    val template: Int,
+    val faceIdx: Int,
+    val shape: Int,
+    val bw: Float,
+    val bh: Float,
+) {
+    companion object {
+        fun default(bits: Int = 0) = MacroDef(
+            bits = bits,
+            template = K_PILL,
+            faceIdx = -1,
+            shape = ButtonShape.ROUND,
+            bw = 0.105f,
+            bh = 0.062f,
+        )
+    }
+}
 
 /** Measured result of one calibration run, used to suggest concrete settings. */
 data class AimTrainerResult(
@@ -150,6 +215,10 @@ class GamepadView(context: Context) : View(context) {
     var onHaptic: ((Int) -> Unit)? = null
     var onLayoutChanged: (() -> Unit)? = null
     var onToast: ((String) -> Unit)? = null
+    /** Lets the editor highlight the shape of the currently selected button. */
+    var onSelectionChanged: (() -> Unit)? = null
+    /** Notifies the activity when undo/redo changes an editing option. */
+    var onEditorOptionsChanged: (() -> Unit)? = null
     /** Notifies the activity so it can hide/restore the screen PiP. */
     var onAimTrainerChanged: ((Boolean) -> Unit)? = null
     /** Delivers the end-of-run summary so the activity can show it once. */
@@ -437,6 +506,9 @@ class GamepadView(context: Context) : View(context) {
         set(value) {
             if (field == value) return
             field = value
+            for (n in nodes) {
+                if (n.kind == K_MACRO) n.label = macroLabel(n.bits)
+            }
             invalidate()
         }
 
@@ -460,10 +532,10 @@ class GamepadView(context: Context) : View(context) {
         val key: String,
         val kind: Int,
         val bit: Int,
-        val label: String,
+        var label: String,
         var fx: Float,
         var fy: Float,
-        val faceIdx: Int = -1,
+        var faceIdx: Int = -1,
         val homeDx: Float = 0f,
         val homeDy: Float = 0f,
     ) {
@@ -471,6 +543,15 @@ class GamepadView(context: Context) : View(context) {
         var defFy = fy
         var scale = 1f
         var hidden = false
+
+        /** Outline used by pill-shaped buttons; ROUND keeps the original pill. */
+        var shape = ButtonShape.ROUND
+
+        /** Bit mask performed by a user-added clone. */
+        var bits = 0
+
+        /** Look this clone copied; built-in nodes simply use their own kind. */
+        var templateKind = K_PILL
 
         /** True once the user moves or resizes a face button. */
         var customized = false
@@ -586,21 +667,55 @@ class GamepadView(context: Context) : View(context) {
         var bw = 0f
         var bh = 0f
 
-        fun extW(): Float = when (kind) {
-            K_PILL, K_PS, K_SHOULDER, K_PEDAL, K_STEER, K_TOUCHPAD -> hw
+        /** Face and PS clones are circular; pill/shoulder clones keep a box. */
+        private fun roundClone(): Boolean =
+            kind == K_MACRO && (templateKind == K_FACE || templateKind == K_PS)
+
+        fun extW(): Float = if (roundClone()) r else when (kind) {
+            K_PILL, K_PS, K_SHOULDER, K_PEDAL, K_STEER, K_TOUCHPAD, K_MACRO -> hw
             else -> r
         }
 
-        fun extH(): Float = when (kind) {
-            K_PILL, K_PS, K_SHOULDER, K_PEDAL, K_STEER, K_TOUCHPAD -> hh
+        fun extH(): Float = if (roundClone()) r else when (kind) {
+            K_PILL, K_PS, K_SHOULDER, K_PEDAL, K_STEER, K_TOUCHPAD, K_MACRO -> hh
             else -> r
         }
 
-        fun hit(x: Float, y: Float): Boolean = when (kind) {
-            K_PILL, K_PS, K_SHOULDER, K_PEDAL, K_STEER, K_TOUCHPAD ->
-                x >= cx - hw * 1.1f && x <= cx + hw * 1.1f &&
-                    y >= cy - hh * 1.15f && y <= cy + hh * 1.15f
-            K_FACE -> hypot(x - cx, y - cy) <= r * 1.4f
+        /** Only pill-style buttons, including their clones, have an outline. */
+        fun supportsShape(): Boolean = when (kind) {
+            K_SHOULDER, K_PILL -> true
+            K_MACRO -> templateKind == K_SHOULDER || templateKind == K_PILL
+            else -> false
+        }
+
+        fun hit(x: Float, y: Float): Boolean = when {
+            roundClone() || kind == K_FACE || kind == K_PS ->
+                hypot(x - cx, y - cy) <= r * 1.4f
+            kind == K_PILL || kind == K_SHOULDER || kind == K_PEDAL ||
+                kind == K_STEER || kind == K_TOUCHPAD || kind == K_MACRO -> {
+                if (supportsShape()) {
+                    when (shape) {
+                        ButtonShape.CIRCLE ->
+                            hypot(x - cx, y - cy) <= min(hw, hh) * 1.15f
+                        ButtonShape.SQUARE -> {
+                            val s = min(hw, hh) * 1.15f
+                            abs(x - cx) <= s && abs(y - cy) <= s
+                        }
+                        ButtonShape.DIAMOND -> {
+                            val s = min(hw, hh) * 1.2f
+                            abs(x - cx) / s + abs(y - cy) / s <= 1f
+                        }
+                        // Hexagons keep the generous box so the slanted edges
+                        // stay easy to hit with a thumb.
+                        else ->
+                            x >= cx - hw * 1.1f && x <= cx + hw * 1.1f &&
+                                y >= cy - hh * 1.15f && y <= cy + hh * 1.15f
+                    }
+                } else {
+                    x >= cx - hw * 1.1f && x <= cx + hw * 1.1f &&
+                        y >= cy - hh * 1.15f && y <= cy + hh * 1.15f
+                }
+            }
             else -> hypot(x - cx, y - cy) <= r * 1.5f
         }
     }
@@ -608,6 +723,8 @@ class GamepadView(context: Context) : View(context) {
     private val nodes = ArrayList<Node>(20)
     private val playOrder = ArrayList<Node>(20)
     private val faceNodes = ArrayList<Node>(4)
+    /** Stable IDs, functions and copied looks for user-added buttons. */
+    private val macroDefs = LinkedHashMap<String, MacroDef>()
     private var dpadNode: Node? = null
     private var leftStick: Node? = null
     private var rightStick: Node? = null
@@ -691,9 +808,9 @@ class GamepadView(context: Context) : View(context) {
     private val clipboard = LinkedHashMap<String, NodeLayoutState>()
 
     /** Snapshot taken before an in-progress drag, pushed only if it changed. */
-    private var editBefore: String? = null
-    private val undoStack = ArrayDeque<String>()
-    private val redoStack = ArrayDeque<String>()
+    private var editBefore: EditorSnapshot? = null
+    private val undoStack = ArrayDeque<EditorSnapshot>()
+    private val redoStack = ArrayDeque<EditorSnapshot>()
 
     var snapEnabled = false
     var guidesEnabled = true
@@ -716,7 +833,7 @@ class GamepadView(context: Context) : View(context) {
     private val longPressRunnable = Runnable {
         val n = editNode ?: return@Runnable
         if (moved || n.locked) return@Runnable
-        n.hidden = true
+        commitLayoutChange { n.hidden = true }
         onHaptic?.invoke(20)
         onToast?.invoke("${n.label} hidden · SHOW ALL restores it")
         invalidate()
@@ -814,6 +931,41 @@ class GamepadView(context: Context) : View(context) {
                 bw = 0.055f; bh = 0.033f
             }
         }
+        restoreDynamicNodes()
+    }
+
+    /** Rebuilds user-added buttons after any full node rebuild. */
+    private fun restoreDynamicNodes() {
+        var i = 0
+        for ((key, def) in macroDefs) {
+            if (nodes.any { it.key == key }) continue
+            val col = i % 4
+            val row = i / 4
+            nodes += newMacroNode(
+                key, def,
+                0.40f + col * 0.065f,
+                0.40f + row * 0.085f,
+            )
+            i++
+        }
+    }
+
+    private fun newMacroNode(key: String, def: MacroDef, fx: Float, fy: Float): Node =
+        Node(key, K_MACRO, -1, macroLabel(def.bits), fx, fy, def.faceIdx).apply {
+            templateKind = def.template
+            shape = def.shape
+            bw = def.bw
+            bh = def.bh
+            bits = def.bits
+        }
+
+    /** First unused stable key, so layouts keep pointing at the same clone. */
+    private fun nextMacroKey(): String? {
+        for (i in 1..MAX_MACROS) {
+            val key = "m$i"
+            if (!macroDefs.containsKey(key)) return key
+        }
+        return null
     }
 
     /** Small controls are hit-tested before the sticks so actions stay reachable. */
@@ -822,7 +974,7 @@ class GamepadView(context: Context) : View(context) {
         dpadNode?.let { playOrder += it }
         for (n in nodes) {
             if (n.kind == K_SHOULDER || n.kind == K_PILL || n.kind == K_PS ||
-                n.kind == K_ACTION || n.kind == K_PEDAL
+                n.kind == K_ACTION || n.kind == K_PEDAL || n.kind == K_MACRO
             ) {
                 playOrder += n
             }
@@ -977,6 +1129,22 @@ class GamepadView(context: Context) : View(context) {
                     n.hw = H * n.bw * s
                     n.hh = H * n.bh * s
                 }
+                K_MACRO -> when (n.templateKind) {
+                    K_FACE -> n.r = H * 0.058f * a * s
+                    K_PS -> {
+                        n.r = H * 0.05f * s
+                        n.hw = n.r
+                        n.hh = n.r
+                    }
+                    K_SHOULDER -> {
+                        n.hw = W * 0.0975f * s
+                        n.hh = H * 0.0625f * s
+                    }
+                    else -> {
+                        n.hw = H * n.bw * s
+                        n.hh = H * n.bh * s
+                    }
+                }
                 K_PS -> {
                     n.r = H * n.bw * s
                     n.hw = n.r
@@ -1048,6 +1216,7 @@ class GamepadView(context: Context) : View(context) {
                 K_STEER -> drawSteer(canvas, n)
                 K_TOUCHPAD -> drawTouchpad(canvas, n)
                 K_ACTION -> drawAction(canvas, n)
+                K_MACRO -> if (n.templateKind == K_FACE) drawFace(canvas, n) else drawPill(canvas, n)
                 else -> drawPill(canvas, n)
             }
         }
@@ -1882,13 +2051,58 @@ class GamepadView(context: Context) : View(context) {
     /** Tilt steering is active only while a calibrated tilt is off centre. */
     private fun effectiveSteer(): Float = if (gyroSteering) steerValue else 0f
 
+    /**
+     * Outline of a button in [rect]. Uses the shared [path] so drawing the glow,
+     * fill and stroke allocates nothing. ROUND is the original rounded pill.
+     */
+    private fun buttonOutline(n: Node, rect: RectF, radius: Float): Path {
+        path.reset()
+        if (!n.supportsShape() || n.shape == ButtonShape.ROUND) {
+            path.addRoundRect(rect, radius, radius, Path.Direction.CW)
+            return path
+        }
+        val cx = rect.centerX()
+        val cy = rect.centerY()
+        val hw = rect.width() / 2f
+        val hh = rect.height() / 2f
+        when (n.shape) {
+            ButtonShape.RECT -> path.addRect(rect, Path.Direction.CW)
+            ButtonShape.CIRCLE -> {
+                val r = min(hw, hh)
+                path.addOval(cx - r, cy - r, cx + r, cy + r, Path.Direction.CW)
+            }
+            ButtonShape.SQUARE -> {
+                val r = min(hw, hh)
+                path.addRect(cx - r, cy - r, cx + r, cy + r, Path.Direction.CW)
+            }
+            ButtonShape.HEX -> {
+                path.moveTo(cx - hw, cy)
+                path.lineTo(cx - hw * 0.5f, cy - hh)
+                path.lineTo(cx + hw * 0.5f, cy - hh)
+                path.lineTo(cx + hw, cy)
+                path.lineTo(cx + hw * 0.5f, cy + hh)
+                path.lineTo(cx - hw * 0.5f, cy + hh)
+                path.close()
+            }
+            ButtonShape.DIAMOND -> {
+                path.moveTo(cx, cy - hh)
+                path.lineTo(cx + hw, cy)
+                path.lineTo(cx, cy + hh)
+                path.lineTo(cx - hw, cy)
+                path.close()
+            }
+            else -> path.addRoundRect(rect, radius, radius, Path.Direction.CW)
+        }
+        return path
+    }
+
     private fun drawPill(canvas: Canvas, n: Node) {
         val accent = theme.accent
         val pressed = n.pressed
         val p = n.pressT.coerceIn(0f, 1f)
         fillPaint.shader = null
 
-        if (n.kind == K_PS) {
+        if (n.kind == K_PS || (n.kind == K_MACRO && n.templateKind == K_PS)) {
             if (p > 0.01f) {
                 glowPaint.color = glow(withAlpha(accent, (69 * p).toInt()))
                 canvas.drawCircle(n.cx, n.cy, n.r * (1.08f + 0.14f * p), glowPaint)
@@ -1916,19 +2130,27 @@ class GamepadView(context: Context) : View(context) {
                 n.cx - n.hw - dp(3f), n.cy - n.hh - dp(3f),
                 n.cx + n.hw + dp(3f), n.cy + n.hh + dp(3f),
             )
-            canvas.drawRoundRect(rect, radius + dp(3f), radius + dp(3f), glowPaint)
+            canvas.drawPath(buttonOutline(n, rect, radius + dp(3f)), glowPaint)
         }
         rect.set(n.cx - hw, n.cy - hh, n.cx + hw, n.cy + hh)
         fillPaint.color = if (pressed) blend(theme.surface, accent, 0.42f * p) else theme.surface
-        canvas.drawRoundRect(rect, radius, radius, fillPaint)
+        canvas.drawPath(buttonOutline(n, rect, radius), fillPaint)
         strokePaint.color = if (pressed) withAlpha(accent, (140 + 115 * p).toInt()) else withAlpha(theme.text, 40)
         strokePaint.strokeWidth = dp(1.2f + 0.8f * p)
-        canvas.drawRoundRect(rect, radius, radius, strokePaint)
+        canvas.drawPath(buttonOutline(n, rect, radius), strokePaint)
 
         drawPressFx(canvas, n, n.cx, n.cy, max(n.hw, n.hh), accent)
 
         val label = displayLabel(n)
-        val size = fitTrackedSize(label, n.hw * 1.6f, min(n.hh * 1.05f, n.hw * 0.60f))
+        val compact = n.supportsShape() && (
+            n.shape == ButtonShape.CIRCLE || n.shape == ButtonShape.SQUARE ||
+                n.shape == ButtonShape.DIAMOND
+            )
+        val size = fitTrackedSize(
+            label,
+            if (compact) min(n.hw, n.hh) * 1.35f else n.hw * 1.6f,
+            min(n.hh * 1.05f, n.hw * 0.60f),
+        )
         drawTracked(
             canvas, label, n.cx, n.cy, size,
             if (p > 0.55f) theme.bgBottom else theme.textDim, size * 0.09f, true,
@@ -2178,6 +2400,7 @@ class GamepadView(context: Context) : View(context) {
             W / 2f, H * 0.44f, H * 0.019f, withAlpha(theme.muted, 225), H * 0.0048f, true,
         )
     }
+
     // ---------------------------------------------------------------- status
     fun setStatus(text: String, kind: Int) {
         if (text == statusText && kind == statusKind) return
@@ -2543,6 +2766,7 @@ class GamepadView(context: Context) : View(context) {
                 if (n == null) {
                     if (multiSelectEnabled && selectedNodes.isNotEmpty()) {
                         selectedNodes.clear()
+                        onSelectionChanged?.invoke()
                         invalidate()
                     }
                     return
@@ -2557,10 +2781,11 @@ class GamepadView(context: Context) : View(context) {
                     selectedNodes.clear()
                     selectedNodes.add(n)
                 }
+                onSelectionChanged?.invoke()
                 editNode = n
                 editPointer = event.getPointerId(i)
                 if (n.hidden) {
-                    n.hidden = false
+                    commitLayoutChange { n.hidden = false }
                     onToast?.invoke("${n.label} restored")
                 }
                 dragOffX = n.cx - x
@@ -2723,8 +2948,17 @@ class GamepadView(context: Context) : View(context) {
         return outX to outY
     }
 
+    /** Captures layout and editor options together, so one UNDO reverses both. */
+    private fun snapshotEditor(): EditorSnapshot = EditorSnapshot(
+        layout = layoutSnapshot(),
+        snap = snapEnabled,
+        guides = guidesEnabled,
+        safe = safeAreaEnabled,
+        multi = multiSelectEnabled,
+    )
+
     private fun beginEditChange() {
-        if (editBefore == null) editBefore = layoutSnapshot()
+        if (editBefore == null) editBefore = snapshotEditor()
     }
 
     /** Commits the snapshot taken when the current drag began, if it changed. */
@@ -2732,27 +2966,40 @@ class GamepadView(context: Context) : View(context) {
         val before = editBefore ?: return
         editBefore = null
         layoutControls()
-        val after = layoutSnapshot()
+        val after = snapshotEditor()
         if (after == before) return
         pushHistory(before)
         onLayoutChanged?.invoke()
+        notifyEditorOptions(after, before)
         invalidate()
     }
 
     /** Applies a tool action as one undoable step. */
     private fun commitLayoutChange(change: () -> Unit) {
         commitPendingEdit()
-        val before = layoutSnapshot()
+        val before = snapshotEditor()
         change()
         layoutControls()
-        val after = layoutSnapshot()
+        val after = snapshotEditor()
         if (after == before) return
         pushHistory(before)
         onLayoutChanged?.invoke()
+        notifyEditorOptions(after, before)
         invalidate()
     }
 
-    private fun pushHistory(snapshot: String) {
+    /** Public entry for the SNAP/GUIDES/SAFE/MULTI buttons in the edit bar. */
+    fun commitEditorChange(change: () -> Unit) = commitLayoutChange(change)
+
+    private fun notifyEditorOptions(after: EditorSnapshot, before: EditorSnapshot) {
+        if (after.snap != before.snap || after.guides != before.guides ||
+            after.safe != before.safe || after.multi != before.multi
+        ) {
+            onEditorOptionsChanged?.invoke()
+        }
+    }
+
+    private fun pushHistory(snapshot: EditorSnapshot) {
         if (undoStack.lastOrNull() == snapshot) return
         undoStack.addLast(snapshot)
         while (undoStack.size > 40) undoStack.removeFirst()
@@ -2875,6 +3122,7 @@ class GamepadView(context: Context) : View(context) {
                 K_PEDAL -> {
                     if (n.bit >= 0 && n.value > 0.02f) b = b or (1 shl n.bit)
                 }
+                K_MACRO -> if (n.pressed) b = b or n.bits
                 else -> if (n.bit >= 0 && n.pressed) b = b or (1 shl n.bit)
             }
         }
@@ -2915,6 +3163,10 @@ class GamepadView(context: Context) : View(context) {
             }
             if (n.bit == Proto.L2) l2 = max(l2, value)
             if (n.bit == Proto.R2) r2 = max(r2, value)
+            if (n.kind == K_MACRO && n.pressed) {
+                if (n.bits and (1 shl Proto.L2) != 0) l2 = 1f
+                if (n.bits and (1 shl Proto.R2) != 0) r2 = 1f
+            }
         }
         state.l2 = (l2 * 255f).roundToInt().coerceIn(0, 255)
         state.r2 = (r2 * 255f).roundToInt().coerceIn(0, 255)
@@ -2949,10 +3201,56 @@ class GamepadView(context: Context) : View(context) {
                 .append((n.fy * 10000f).toInt()).append(',')
                 .append((n.scale * 1000f).toInt()).append(',')
                 .append(if (n.hidden) 1 else 0)
-            // Trailing field keeps every existing 4-field layout byte-identical.
-            if (n.locked) sb.append(",1")
+            // Trailing fields keep every existing 4-/5-field layout byte-identical.
+            // Added buttons carry their button mask as a seventh field.
+            if (n.locked || n.shape != ButtonShape.ROUND || n.kind == K_MACRO) {
+                sb.append(',').append(if (n.locked) 1 else 0)
+                if (n.shape != ButtonShape.ROUND || n.kind == K_MACRO) {
+                    sb.append(',').append(n.shape)
+                }
+                if (n.kind == K_MACRO) {
+                    sb.append(',').append(n.bits)
+                        .append(',').append(n.templateKind)
+                        .append(',').append(n.faceIdx)
+                        .append(',').append((n.bw * 10000f).toInt())
+                        .append(',').append((n.bh * 10000f).toInt())
+                }
+            }
         }
+        sb.append(';').append(LAYOUT_META).append(':')
+            .append(LAYOUT_META_VERSION).append(",0,0")
         return sb.toString()
+    }
+
+    /**
+     * Checks a file/QR payload before it is applied as a layout. The format is
+     * the same compact `key:x,y,scale,...` text written by [layoutSnapshot], so
+     * an exported file can be imported on another phone without a server.
+     */
+    fun isValidLayoutData(data: String?): Boolean {
+        if (data.isNullOrBlank() || data.length > MAX_LAYOUT_IMPORT_CHARS) return false
+        val chunks = data.split(';')
+        if (chunks.isEmpty() || chunks.size > MAX_LAYOUT_IMPORT_CHUNKS) return false
+        var controls = 0
+        for (chunk in chunks) {
+            if (chunk.isBlank()) continue
+            val pair = chunk.split(':', limit = 2)
+            if (pair.size != 2) return false
+            val key = pair[0].trim()
+            if (key.isEmpty() || key.length > 16) return false
+            val fields = pair[1].split(',')
+            if (fields.size !in 3..11) return false
+            for (field in fields) {
+                if (field.toIntOrNull() == null) return false
+            }
+            val fx = fields[0].toInt()
+            val fy = fields[1].toInt()
+            if (fx !in 0..10000 || fy !in 0..10000) return false
+            if (key == LAYOUT_META) continue
+            if (key !in LAYOUT_IMPORT_KEYS && !isMacroKey(key)) return false
+            controls++
+        }
+        return controls > 0
     }
 
     /** Applies a saved snapshot without touching undo history. */
@@ -2976,8 +3274,32 @@ class GamepadView(context: Context) : View(context) {
                 v[2].toIntOrNull() ?: 1000,
                 if (v.getOrNull(3) == "1") 1 else 0,
                 if (v.getOrNull(4) == "1") 1 else 0,
+                v.getOrNull(5)?.toIntOrNull() ?: ButtonShape.ROUND,
+                v.getOrNull(6)?.toIntOrNull() ?: 0,
+                v.getOrNull(7)?.toIntOrNull() ?: K_PILL,
+                v.getOrNull(8)?.toIntOrNull() ?: -1,
+                v.getOrNull(9)?.toIntOrNull() ?: 1050,
+                v.getOrNull(10)?.toIntOrNull() ?: 620,
             )
         }
+
+        // A snapshot written by this version owns the complete set of added
+        // buttons, so undo and saved-layout switches can remove them. Older or
+        // browser-written codes lack the marker: keep the buttons the user made.
+        if (parsed.containsKey(LAYOUT_META)) {
+            macroDefs.clear()
+            for (n in nodes.filter { it.kind == K_MACRO }) nodes.remove(n)
+        }
+        for ((key, v) in parsed) {
+            if (!isMacroKey(key)) continue
+            val def = macroDefFrom(v)
+            if (def.bits == 0) continue
+            macroDefs[key] = def
+            if (nodes.none { it.key == key }) {
+                nodes += newMacroNode(key, def, 0.5f, 0.5f)
+            }
+        }
+        rebuildPlayOrder()
 
         // Keep a customised right-stick placement when swapping to or from the
         // swipe pad, but never inherit a hidden flag.
@@ -3008,10 +3330,17 @@ class GamepadView(context: Context) : View(context) {
             n.scale = scale
             n.hidden = v[3] == 1
             n.locked = v.getOrNull(4) == 1
+            val savedShape = v.getOrNull(5) ?: ButtonShape.ROUND
+            n.shape = if (ButtonShape.valid(savedShape)) savedShape else ButtonShape.ROUND
+            if (n.kind == K_MACRO) {
+                val def = macroDefFrom(v)
+                applyMacroState(n, if (def.bits == 0) stateOf(n) else def)
+            }
             // A saved layout that still sits exactly on the defaults
             // must not lock the face cluster out of the spacing slider.
             val moved = abs(fx - n.defFx) > 0.0008f || abs(fy - n.defFy) > 0.0008f
-            n.customized = moved || n.hidden || abs(scale - 1f) > 0.01f
+            n.customized = moved || n.hidden || abs(scale - 1f) > 0.01f ||
+                n.shape != ButtonShape.ROUND
         }
         layoutControls()
         invalidate()
@@ -3020,15 +3349,20 @@ class GamepadView(context: Context) : View(context) {
     fun resetLayout() = commitLayoutChange {
         legacyFace = null
         clearAim()
+        macroDefs.clear()
+        for (n in nodes.filter { it.kind == K_MACRO }) nodes.remove(n)
+        rebuildPlayOrder()
         for (n in nodes) {
             n.scale = 1f
             n.hidden = false
             n.locked = false
             n.customized = false
+            n.shape = ButtonShape.ROUND
             n.fx = n.defFx
             n.fy = n.defFy
         }
         selectedNodes.clear()
+        onSelectionChanged?.invoke()
     }
 
     fun showAll() = commitLayoutChange {
@@ -3050,11 +3384,12 @@ class GamepadView(context: Context) : View(context) {
     fun undoLayout(): Boolean {
         commitPendingEdit()
         if (undoStack.isEmpty()) return false
-        val current = layoutSnapshot()
+        val current = snapshotEditor()
         val previous = undoStack.removeLast()
         redoStack.addLast(current)
-        applyLayoutData(previous)
+        applyEditorSnapshot(previous)
         onLayoutChanged?.invoke()
+        onEditorOptionsChanged?.invoke()
         invalidate()
         return true
     }
@@ -3062,16 +3397,25 @@ class GamepadView(context: Context) : View(context) {
     fun redoLayout(): Boolean {
         commitPendingEdit()
         if (redoStack.isEmpty()) return false
-        val current = layoutSnapshot()
+        val current = snapshotEditor()
         val next = redoStack.removeLast()
         undoStack.addLast(current)
-        applyLayoutData(next)
+        applyEditorSnapshot(next)
         onLayoutChanged?.invoke()
+        onEditorOptionsChanged?.invoke()
         invalidate()
         return true
     }
 
-    /** Copies position/scale/visibility/lock from every selected control. */
+    private fun applyEditorSnapshot(snapshot: EditorSnapshot) {
+        applyLayoutData(snapshot.layout)
+        snapEnabled = snapshot.snap
+        guidesEnabled = snapshot.guides
+        safeAreaEnabled = snapshot.safe
+        multiSelectEnabled = snapshot.multi
+    }
+
+    /** Copies position/scale/visibility/lock/shape/function from every selected control. */
     fun copySelected(): Int {
         val targets = selectedNodes.filter { !it.locked }
         if (targets.isEmpty()) {
@@ -3081,7 +3425,8 @@ class GamepadView(context: Context) : View(context) {
         clipboard.clear()
         for (n in targets) {
             clipboard[n.key] = NodeLayoutState(
-                n.fx, n.fy, n.scale, n.hidden, n.locked, n.customized,
+                n.fx, n.fy, n.scale, n.hidden, n.locked, n.customized, n.shape, n.bits,
+                n.templateKind, n.faceIdx, n.bw, n.bh,
             )
         }
         onToast?.invoke("Copied ${clipboard.size} control(s)")
@@ -3089,8 +3434,8 @@ class GamepadView(context: Context) : View(context) {
     }
 
     /**
-     * Pastes by key, or in key order onto the current selection. Button bits and
-     * identities never change, so this cannot alter the HID report mapping.
+     * Pastes by key, or in key order onto the current selection. Built-in button
+     * mappings never change; added buttons may also inherit a function.
      */
     fun pasteSelected(): Int {
         if (clipboard.isEmpty()) {
@@ -3119,6 +3464,20 @@ class GamepadView(context: Context) : View(context) {
                 target.hidden = s.hidden
                 target.locked = s.locked
                 target.customized = s.customized
+                if (target.supportsShape()) target.shape = s.shape
+                if (target.kind == K_MACRO) {
+                    applyMacroState(
+                        target,
+                        MacroDef(
+                            bits = if (s.bits != 0) filterMacroBits(s.bits) else stateOf(target).bits,
+                            template = if (validTemplate(s.template)) s.template else stateOf(target).template,
+                            faceIdx = s.faceIdx,
+                            shape = s.shape,
+                            bw = if (s.bw > 0f) s.bw else stateOf(target).bw,
+                            bh = if (s.bh > 0f) s.bh else stateOf(target).bh,
+                        ),
+                    )
+                }
                 applied++
             }
         }
@@ -3165,6 +3524,285 @@ class GamepadView(context: Context) : View(context) {
         }
         onToast?.invoke("Mirrored ${targets.size} control(s)")
         return targets.size
+    }
+
+    /** Shape of the first selected control, for highlighting the editor chip. */
+    fun selectedShape(): Int = selectedNodes.firstOrNull()?.shape ?: ButtonShape.ROUND
+
+    /**
+     * Applies [shape] to every selected button that has an editable outline.
+     * Returns the number of buttons changed, or 0 with a hint when the selection
+     * contains only sticks/D-pad or locked controls.
+     */
+    fun setSelectedShape(shape: Int): Int {
+        if (!ButtonShape.valid(shape)) return 0
+        val targets = selectedNodes.filter { !it.locked && it.supportsShape() }
+        if (targets.isEmpty()) {
+            onToast?.invoke(
+                if (selectedNodes.isEmpty()) "Tap a button to select it first"
+                else "Shape applies to L1/R1/L2/R2, SELECT/START, stick clicks and added buttons",
+            )
+            return 0
+        }
+        var applied = 0
+        commitLayoutChange {
+            for (n in targets) {
+                if (n.shape == shape) continue
+                n.shape = shape
+                applied++
+            }
+        }
+        return applied
+    }
+
+    // ------------------------------------------------------------ added buttons
+    private fun isMacroKey(key: String): Boolean =
+        key.length > 1 && key[0] == 'm' && key.substring(1).all { it in '0'..'9' }
+
+    private fun filterMacroBits(raw: Int): Int {
+        var out = 0
+        var count = 0
+        for (bit in 0..Proto.PS) {
+            if (raw and (1 shl bit) == 0 || count >= 2) continue
+            out = out or (1 shl bit)
+            count++
+        }
+        return out
+    }
+
+    /** Fallback names for functions with no separate node, such as D-pad arms. */
+    private fun functionLabel(bit: Int): String = when (bit) {
+        Proto.SELECT -> "SELECT"
+        Proto.L3 -> "L3"
+        Proto.R3 -> "R3"
+        Proto.START -> "START"
+        Proto.UP -> "UP"
+        Proto.RIGHT -> "RIGHT"
+        Proto.DOWN -> "DOWN"
+        Proto.LEFT -> "LEFT"
+        Proto.L2 -> "L2"
+        Proto.R2 -> "R2"
+        Proto.L1 -> "L1"
+        Proto.R1 -> "R1"
+        Proto.TRIANGLE -> "TRIANGLE"
+        Proto.CIRCLE -> "CIRCLE"
+        Proto.CROSS -> "CROSS"
+        Proto.SQUARE -> "SQUARE"
+        Proto.PS -> "PS"
+        else -> "?"
+    }
+
+    /** Short, label-aware names used on added buttons and in the chooser. */
+    private fun shortLabel(bit: Int): String {
+        val fromNode = nodes.firstOrNull { it.kind != K_MACRO && it.bit == bit }
+            ?.let { displayLabel(it) }
+        val full = if (faceLabels == FaceLabels.XBOX) {
+            when (bit) {
+                Proto.TRIANGLE -> "Y"
+                Proto.CIRCLE -> "B"
+                Proto.CROSS -> "A"
+                Proto.SQUARE -> "X"
+                else -> fromNode ?: functionLabel(bit)
+            }
+        } else {
+            fromNode ?: functionLabel(bit)
+        }
+        return when (full) {
+            "SELECT" -> "SEL"
+            "START" -> "STA"
+            "TRIANGLE" -> "TRI"
+            "CIRCLE" -> "CIR"
+            "CROSS" -> "CRO"
+            "SQUARE" -> "SQU"
+            else -> full
+        }
+    }
+
+    private fun macroLabel(bits: Int): String {
+        val names = (0..Proto.PS).filter { bits and (1 shl it) != 0 }.map { shortLabel(it) }
+        return if (names.isEmpty()) "+" else names.joinToString("+")
+    }
+
+    private fun validTemplate(kind: Int): Boolean =
+        kind == K_FACE || kind == K_PILL || kind == K_SHOULDER || kind == K_PS
+
+    /** Reads the persisted clone definition, tolerating older 7-field codes. */
+    private fun macroDefFrom(v: IntArray): MacroDef {
+        val rawTemplate = v.getOrNull(7) ?: K_PILL
+        val shape = v.getOrNull(5) ?: ButtonShape.ROUND
+        return MacroDef(
+            bits = filterMacroBits(v.getOrNull(6) ?: 0),
+            template = if (validTemplate(rawTemplate)) rawTemplate else K_PILL,
+            faceIdx = v.getOrNull(8) ?: -1,
+            shape = if (ButtonShape.valid(shape)) shape else ButtonShape.ROUND,
+            bw = (v.getOrNull(9) ?: 1050) / 10000f,
+            bh = (v.getOrNull(10) ?: 620) / 10000f,
+        )
+    }
+
+    /** Current definition of a clone, with safe fallbacks for legacy nodes. */
+    private fun stateOf(n: Node): MacroDef = macroDefs[n.key] ?: MacroDef.default(n.bits).copy(
+        template = if (validTemplate(n.templateKind)) n.templateKind else K_PILL,
+        faceIdx = n.faceIdx,
+        shape = if (ButtonShape.valid(n.shape)) n.shape else ButtonShape.ROUND,
+        bw = if (n.bw > 0f) n.bw else 0.105f,
+        bh = if (n.bh > 0f) n.bh else 0.062f,
+    )
+
+    private fun applyMacroState(n: Node, def: MacroDef) {
+        val clean = if (def.bits == 0) stateOf(n).bits else filterMacroBits(def.bits)
+        val state = def.copy(bits = clean)
+        n.templateKind = state.template
+        n.faceIdx = state.faceIdx
+        n.shape = state.shape
+        n.bw = state.bw
+        n.bh = state.bh
+        n.bits = clean
+        n.label = macroLabel(clean)
+        if (n.kind == K_MACRO) macroDefs[n.key] = state
+    }
+
+    private fun applyMacroBits(n: Node, bits: Int) =
+        applyMacroState(n, stateOf(n).copy(bits = bits))
+
+    /** Functions this pad can perform, in a stable order for the chooser. */
+    fun assignableFunctions(): List<Pair<Int, String>> {
+        val order = intArrayOf(
+            Proto.CROSS, Proto.CIRCLE, Proto.SQUARE, Proto.TRIANGLE,
+            Proto.L1, Proto.R1, Proto.L2, Proto.R2,
+            Proto.UP, Proto.DOWN, Proto.LEFT, Proto.RIGHT,
+            Proto.SELECT, Proto.START, Proto.L3, Proto.R3, Proto.PS,
+        )
+        return order.map { bit -> bit to shortLabel(bit) }
+    }
+
+    fun hasSelectedMacro(): Boolean = selectedNodes.any { it.kind == K_MACRO }
+
+    fun selectedMacroBits(): Int =
+        selectedNodes.firstOrNull { it.kind == K_MACRO }?.bits ?: 0
+
+    /** Adds a plain button near the centre and selects it for editing. */
+    fun addMacro(): Boolean {
+        val key = nextMacroKey()
+        if (key == null) {
+            onToast?.invoke("Maximum $MAX_MACROS added buttons reached")
+            return false
+        }
+        val def = MacroDef.default(1 shl Proto.CROSS)
+        val col = (macroDefs.size) % 4
+        val row = (macroDefs.size) / 4
+        val node = newMacroNode(key, def, 0.40f + col * 0.065f, 0.40f + row * 0.085f)
+        commitLayoutChange {
+            macroDefs[key] = def
+            nodes += node
+            rebuildPlayOrder()
+        }
+        selectClone(node)
+        onToast?.invoke("Button added · set its function")
+        return true
+    }
+
+    /** Copies selected buttons, keeping their look and current function. */
+    fun duplicateSelectedButtons(): Int {
+        val sources = selectedNodes.filter {
+            !it.locked && (
+                it.kind == K_FACE || it.kind == K_PILL ||
+                    it.kind == K_SHOULDER || it.kind == K_PS || it.kind == K_MACRO
+                )
+        }
+        if (sources.isEmpty()) {
+            onToast?.invoke("Tap a button to duplicate it")
+            return 0
+        }
+        if (macroDefs.size + sources.size > MAX_MACROS) {
+            onToast?.invoke("Maximum $MAX_MACROS added buttons reached")
+            return 0
+        }
+        val made = ArrayList<Pair<Node, MacroDef>>()
+        for (source in sources) {
+            val key = nextMacroKey() ?: break
+            val def = if (source.kind == K_MACRO) {
+                stateOf(source)
+            } else {
+                MacroDef.default(1 shl source.bit.coerceIn(0, Proto.PS)).copy(
+                    template = source.kind,
+                    faceIdx = if (source.kind == K_FACE) source.faceIdx else -1,
+                    shape = source.shape,
+                    bw = if (source.bw > 0f) source.bw else 0.105f,
+                    bh = if (source.bh > 0f) source.bh else 0.062f,
+                )
+            }
+            val node = newMacroNode(
+                key, def,
+                (source.fx + 0.06f).coerceIn(0.04f, 0.96f),
+                (source.fy + 0.06f).coerceIn(0.04f, 0.96f),
+            )
+            node.scale = source.scale
+            made += node to def
+        }
+        if (made.isEmpty()) return 0
+        commitLayoutChange {
+            for ((node, def) in made) {
+                macroDefs[node.key] = def
+                nodes += node
+            }
+            rebuildPlayOrder()
+        }
+        selectedNodes.clear()
+        for ((node, _) in made) selectedNodes += node
+        editNode = made.first().first
+        onSelectionChanged?.invoke()
+        onToast?.invoke(
+            if (made.size == 1) "Button duplicated · set its function"
+            else "Duplicated ${made.size} buttons · tap FUNC to assign",
+        )
+        return made.size
+    }
+
+    private fun selectClone(node: Node) {
+        selectedNodes.clear()
+        selectedNodes.add(node)
+        editNode = node
+        onSelectionChanged?.invoke()
+    }
+
+    /** Assigns one or two functions to every selected added button. */
+    fun setSelectedMacroBits(raw: Int): Int {
+        val targets = selectedNodes.filter { it.kind == K_MACRO && !it.locked }
+        val bits = filterMacroBits(raw)
+        if (targets.isEmpty()) {
+            onToast?.invoke("Tap an added button first")
+            return 0
+        }
+        if (bits == 0) {
+            onToast?.invoke("Choose one or two functions")
+            return 0
+        }
+        commitLayoutChange {
+            for (n in targets) applyMacroBits(n, bits)
+        }
+        onToast?.invoke("Function: ${macroLabel(bits)}")
+        return targets.size
+    }
+
+    fun deleteSelectedMacro(): Boolean {
+        val targets = selectedNodes.filter { it.kind == K_MACRO && !it.locked }
+        if (targets.isEmpty()) {
+            onToast?.invoke("Tap an added button to delete it")
+            return false
+        }
+        commitLayoutChange {
+            for (n in targets) {
+                nodes.remove(n)
+                macroDefs.remove(n.key)
+                selectedNodes.remove(n)
+            }
+            if (editNode in targets) editNode = null
+            rebuildPlayOrder()
+        }
+        onSelectionChanged?.invoke()
+        onToast?.invoke("Deleted ${targets.size} added button${if (targets.size == 1) "" else "s"}")
+        return true
     }
 
     // ------------------------------------------------------------- aim trainer
@@ -3572,5 +4210,16 @@ class GamepadView(context: Context) : View(context) {
 
         /** Fire is hot red in every theme, like the trigger it maps to. */
         private val FIRE_RED = 0xFFFF5A45.toInt()
+
+        /** Bounds for imported text: large enough for every layout, small enough to reject junk. */
+        private const val MAX_LAYOUT_IMPORT_CHARS = 8_000
+        private const val MAX_LAYOUT_IMPORT_CHUNKS = 48
+
+        /** Built-in and legacy keys understood by [applyLayoutData]. */
+        private val LAYOUT_IMPORT_KEYS = setOf(
+            "dpad", "ls", "rs", "touchpad", "tri", "cir", "cro", "squ",
+            "l1", "l2", "r1", "r2", "select", "start", "ps", "l3", "r3",
+            "face", "pedal", "steer",
+        )
     }
 }

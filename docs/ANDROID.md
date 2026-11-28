@@ -290,7 +290,8 @@ Every change applies immediately.
 - **Game profiles** — save a named snapshot of aim/motion settings, haptics,
   input rate, face labels and the current layout, then switch by tapping a name.
   No foreground-game detection is involved.
-- **Customize layout** — drag, resize and hide controls.
+- **Edit layout** — drag, resize, hide and add controls, undo/redo changes, and
+  export/import the arrangement as a text file with the system file picker.
 - **Stick deadzone** — 0–40 %, default 12 %.
 - **Stick curve** — 0–100 %, linear at 0; higher values keep small corrections
   near the centre.
@@ -350,7 +351,25 @@ cadence with less or more sharpness.
 
 ### Customizing the pad
 
-Tap the status pill → **Customize layout**. A toolbar slides in at the top:
+Tap the status pill, then open **CUSTOMIZATION STUDIO → EDIT LAYOUT**. A toolbar slides in at the top:
+
+- **SNAP**, **GUIDES**, **SAFE**, and **MULTI** are ON/OFF toggles. The active
+  ones are highlighted in the accent colour. **SNAP** rounds movement to a grid;
+  **GUIDES** aligns controls with each other and the screen centre; **SAFE**
+  shows notch/cutout and system-bar margins (only if the device reports an
+  inset); **MULTI** lets you select several controls and move or copy them
+  together. **Hold any button in the edit bar** for a short explanation.
+- **UNDO** and **REDO** step through the last 40 changes, including drags,
+  resizes, add/duplicate/delete, function and shape edits, mirror/reset and
+  SNAP/GUIDES/SAFE/MULTI toggles. Undo restores both the layout and those
+  editor options; the result is saved when you tap **DONE** (and is also saved
+  as you work).
+- **IMPORT** and **EXPORT** use the Android file picker. **EXPORT** writes the
+  current layout (including added buttons, functions and shapes) as compact
+  text with a `.txt` suggestion; **IMPORT** checks that text, applies it to the
+  live pad and saves it as a custom layout. Named presets are left untouched.
+  A damaged or unrelated file is rejected with a toast. The same text format is
+  used by **SHARE QR** / **SCAN QR**.
 
 - **Drag** any control to move it. Positions are stored as screen fractions, so
   the layout survives rotation and different resolutions, and controls stay fully
@@ -358,6 +377,21 @@ Tap the status pill → **Customize layout**. A toolbar slides in at the top:
 - **Pinch** with a second finger while holding a control to resize it (55–190 %).
 - **Hold** a control for about half a second to hide it. Hidden controls show as
   faint dashed placeholders; tap one to restore it, or use **SHOW ALL**.
+- **ADD** creates a plain button near the centre. **DUP** copies the selected
+  button — face, shoulder, trigger, SELECT/START, stick click or PS — including
+  its look and size. Up to 8 added buttons are allowed. **FUNC** opens a chooser
+  to assign one or two functions — face buttons, shoulders, triggers, D-pad,
+  SELECT/START, stick clicks or PS. A third pick replaces the oldest. **DEL**
+  removes the selected added button. Added buttons can be dragged, resized,
+  locked, hidden and reshaped like any other control.
+- Select a button and use the **SHAPE** chips to change its outline: **ROUND**
+  (the default pill), **RECT**, **CIRCLE**, **SQUARE**, **HEX** or **DIAMOND**.
+  This works on L1/L2/R1/R2, SELECT/START and the stick-click buttons; the
+  active shape is highlighted after you tap a control. Shapes survive rotation,
+  **COPY**/**PASTE**, saved layouts, game profiles and Android **SHARE QR**.
+  Added buttons and their functions travel in the same layout data. The browser
+  pad ignores both extras, so a layout re-exported from it returns to ROUND
+  outlines without the added buttons.
 - **SAVE AS** names the current arrangement; **DONE** saves and leaves edit mode;
   **RESET** restores the built-in layout. The layout is also saved when you leave
   edit mode, background the app, or press Back.
@@ -367,19 +401,21 @@ Tap the status pill → **Customize layout**. A toolbar slides in at the top:
 Open settings → **LAYOUTS**. The card lists **DEFAULT** and every layout you
 have named:
 
-- **SAVE AS…** stores the current positions, sizes and hidden controls under a
-  name (up to 24 characters). Saving over an existing name replaces it, and the
-  dialog warns you first.
+- **SAVE AS…** stores the current positions, sizes, hidden controls and button
+  shapes under a name (up to 24 characters). Saving over an existing name
+  replaces it, and the dialog warns you first.
 - Tap a saved name to switch to it immediately. The active name is shown under
   the list and is highlighted.
 - **DELETE** removes a saved name after a confirmation. The pad keeps the
   arrangement it is showing; it just stops being tied to that name.
 - **DEFAULT** restores the built-in arrangement and forgets the active name.
-- **CUSTOMIZE** opens edit mode. If a saved layout is active, edits update that
-  layout in place, so switching away and back keeps your changes.
+- **EDIT LAYOUT** in **CUSTOMIZATION STUDIO** opens edit mode. If a saved layout
+  is active, edits update that layout in place, so switching away and back keeps
+  your changes.
 
 The live layout is still stored separately, so updating from an older version
-keeps the arrangement you already had.
+keeps the arrangement you already had. A layout loaded with **IMPORT** is also
+live and saved, but has no name until you use **SAVE AS**.
 
 ### Game profiles
 

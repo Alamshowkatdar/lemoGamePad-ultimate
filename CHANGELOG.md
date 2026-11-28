@@ -2,6 +2,18 @@
 
 Newest first. The reasoning behind each release is in [`docs/REVIEW.md`](docs/REVIEW.md).
 
+## 2.2.4
+
+- **Button shapes in the Android layout editor.** Selected buttons can be
+  switched between rounded pill, rectangle, circle, square, hexagon and diamond
+  outlines. Shapes are part of the layout data, so they survive copy/paste,
+  saved layouts, game profiles and Android-to-Android QR sharing. Older layouts
+  still render with their original pill outline.
+- **Duplicated and assignable buttons.** The editor's **ADD** / **DUP** / **FUNC**
+  / **DEL** tools create up to eight extra buttons. **DUP** copies an existing
+  button's look and size; **FUNC** assigns one or two functions to any added
+  button. They support shapes, copy/paste, saved layouts, profiles and QR codes.
+
 ## 2.2.3
 
 - **Offline Windows dependency setup.** The signed ViGEmBus 1.22.0 installer is

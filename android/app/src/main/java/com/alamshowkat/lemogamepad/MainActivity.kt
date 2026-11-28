@@ -45,6 +45,9 @@ class MainActivity : Activity() {
     private lateinit var profiles: GameProfileStore
     private lateinit var root: FrameLayout
     private var editBar: LinearLayout? = null
+    private val shapeChips = ArrayList<TextView>()
+    /** Repaints SNAP/GUIDES/SAFE/MULTI after undo/redo restores editor options. */
+    private var repaintEditorOptions: (() -> Unit)? = null
     private var settingsPanel: SettingsPanel? = null
     private var wifiGuide: View? = null
     private var setupGuide: View? = null
@@ -235,6 +238,11 @@ class MainActivity : Activity() {
         view.onHaptic = { ms -> tapFeedback(ms) }
         view.onLayoutChanged = { persistLayout() }
         view.onToast = { msg -> toast(msg) }
+        view.onSelectionChanged = { refreshShapeChips() }
+        view.onEditorOptionsChanged = {
+            repaintEditorOptions?.invoke()
+            persistEditorOptions()
+        }
         view.onAimTrainerChanged = { active -> onAimTrainerChanged(active) }
         view.onAimTrainerFinished = { summary -> toast(summary) }
         view.onAimTrainerResult = { result ->
@@ -413,6 +421,12 @@ class MainActivity : Activity() {
                 if (replaced) "Layout \"${shared.name}\" updated from QR"
                 else "Layout \"${shared.name}\" imported from QR",
             )
+            return
+        }
+        if (requestCode == REQ_IMPORT_LAYOUT || requestCode == REQ_EXPORT_LAYOUT) {
+            if (resultCode != RESULT_OK || data == null) return
+            val uri = data.data ?: return
+            if (requestCode == REQ_IMPORT_LAYOUT) importLayoutFile(uri) else exportLayoutFile(uri)
             return
         }
         if (requestCode != REQ_QR || resultCode != RESULT_OK || data == null) return
@@ -914,7 +928,8 @@ class MainActivity : Activity() {
                 "• Calibration can suggest concrete sensitivity and gyro-revert values.\n" +
                 "• Manual game profiles, adaptive quality and one merged live connection card.\n" +
                 "• Connection Doctor links to the website for downloads and guides; battery saver pauses live stats.\n" +
-                "• Layout editor adds undo/redo, snap/grid, alignment guides, safe-area guides, multi-select, copy/paste, lock and mirror.",
+                "• Layout editor adds undo/redo, snap/grid, alignment guides, safe-area guides, multi-select, copy/paste, lock and mirror.\n" +
+                    "• Layouts can be exported to and imported from files with the system picker; hold editor buttons for hints.",
         )
         return true
     }
@@ -1399,7 +1414,10 @@ class MainActivity : Activity() {
     }
 
     private fun exitEditing(save: Boolean) {
-        if (save) persistLayout()
+        if (save) {
+            persistLayout()
+            persistEditorOptions()
+        }
         view.editMode = false
         screenView?.visibility = View.VISIBLE
         screenView?.let { placeScreenView(it, animate = true) }
@@ -1622,17 +1640,63 @@ class MainActivity : Activity() {
             return b
         }
 
+        // Long-press is used instead of TooltipCompat: the app has no AndroidX
+        // dependency, and this works from minSdk 24 onward.
+        fun explain(button: TextView, message: String) {
+            button.contentDescription = message
+            button.setOnLongClickListener {
+                toast(message)
+                true
+            }
+        }
+
         val actions = editRow()
         val tools = editRow()
         val clipboardRow = editRow()
+        val shapeRow = editRow()
+        val customRow = editRow()
+        shapeRow.addView(TextView(this).apply {
+            text = "SHAPE"
+            textSize = 10f
+            setTextColor(t.textDim)
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(px(4), 0, px(6), 0)
+        })
+        shapeChips.clear()
+        for (label in ButtonShape.labels) {
+            val chip = addButton(shapeRow, label, false) {
+                val applied = view.setSelectedShape(ButtonShape.labels.indexOf(label))
+                if (applied > 0) {
+                    toast("Shape: $label ($applied button${if (applied == 1) "" else "s"})")
+                    refreshShapeChips()
+                }
+            }
+            shapeChips += chip
+        }
+        refreshShapeChips()
+
+        addButton(customRow, "ADD", false) {
+            if (view.addMacro()) showFunctionDialog()
+        }
+        addButton(customRow, "DUP", false) {
+            if (view.duplicateSelectedButtons() == 1) showFunctionDialog()
+        }
+        addButton(customRow, "FUNC", false) { showFunctionDialog() }
+        addButton(customRow, "DEL", false) { view.deleteSelectedMacro() }
 
         addButton(actions, "DONE", true) { exitEditing(save = true) }
-        addButton(actions, "UNDO", false) {
+        val undoButton = addButton(actions, "UNDO", false) {
             if (!view.undoLayout()) toast("Nothing to undo")
         }
-        addButton(actions, "REDO", false) {
+        val redoButton = addButton(actions, "REDO", false) {
             if (!view.redoLayout()) toast("Nothing to redo")
         }
+        val importButton = addButton(actions, "IMPORT", false) { pickLayoutImport() }
+        val exportButton = addButton(actions, "EXPORT", false) { pickLayoutExport() }
+        explain(undoButton, "Undo the last layout or editor-option change (up to 40 steps)")
+        explain(redoButton, "Redo the last change you undid")
+        explain(importButton, "Import a layout text file chosen with the system file picker")
+        explain(exportButton, "Save the current layout to a text file you choose")
         addButton(actions, "SAVE AS", false) {
             LayoutDialogs.promptName(
                 this@MainActivity,
@@ -1647,31 +1711,66 @@ class MainActivity : Activity() {
         }
 
         fun toggleLabel(base: String, on: Boolean) = if (on) "$base ON" else "$base OFF"
-        val snapButton = addButton(tools, toggleLabel("SNAP", view.snapEnabled), false) {}
-        snapButton.setOnClickListener {
-            view.snapEnabled = !view.snapEnabled
-            snapButton.text = toggleLabel("SNAP", view.snapEnabled)
-            persistEditorOptions()
+        fun paintToggle(button: TextView, base: String, on: Boolean) {
+            button.text = toggleLabel(base, on)
+            button.setTextColor(if (on) t.bgBottom else t.text)
+            button.background = GradientDrawable().apply {
+                cornerRadius = px(13).toFloat()
+                setColor(if (on) t.accent else withAlpha(t.surfaceAlt, 210))
+                if (!on) setStroke(px(1), withAlpha(t.text, 45))
+            }
+            view.invalidate()
         }
-        val guidesButton = addButton(tools, toggleLabel("GUIDES", view.guidesEnabled), false) {}
-        guidesButton.setOnClickListener {
-            view.guidesEnabled = !view.guidesEnabled
-            guidesButton.text = toggleLabel("GUIDES", view.guidesEnabled)
-            persistEditorOptions()
+        fun optionValue(base: String): Boolean = when (base) {
+            "SNAP" -> view.snapEnabled
+            "GUIDES" -> view.guidesEnabled
+            "SAFE" -> view.safeAreaEnabled
+            else -> view.multiSelectEnabled
         }
-        val safeButton = addButton(tools, toggleLabel("SAFE", view.safeAreaEnabled), false) {}
-        safeButton.setOnClickListener {
-            view.safeAreaEnabled = !view.safeAreaEnabled
-            safeButton.text = toggleLabel("SAFE", view.safeAreaEnabled)
-            persistEditorOptions()
-            if (view.safeArea.isEmpty) toast("No notch/bars inset reported on this device")
+
+        fun setOption(base: String, value: Boolean) {
+            when (base) {
+                "SNAP" -> view.snapEnabled = value
+                "GUIDES" -> view.guidesEnabled = value
+                "SAFE" -> view.safeAreaEnabled = value
+                "MULTI" -> view.multiSelectEnabled = value
+            }
         }
-        val multiButton = addButton(tools, toggleLabel("MULTI", view.multiSelectEnabled), false) {}
-        multiButton.setOnClickListener {
-            view.multiSelectEnabled = !view.multiSelectEnabled
-            multiButton.text = toggleLabel("MULTI", view.multiSelectEnabled)
-            persistEditorOptions()
-            toast(if (view.multiSelectEnabled) "Tap controls to add them to the selection" else "Single-select mode")
+
+        fun optionTip(base: String): String = when (base) {
+            "SNAP" -> "Snap moves controls to a grid while you drag them"
+            "GUIDES" -> "Guides align a control with other controls and the screen centre"
+            "SAFE" -> "Safe-area guides show notch, cutout and system-bar margins"
+            else -> "Multi-select lets you pick several controls and move or copy them together"
+        }
+
+        fun optionButton(base: String): TextView {
+            val button = addButton(tools, toggleLabel(base, optionValue(base)), false) {}
+            paintToggle(button, base, optionValue(base))
+            explain(button, optionTip(base))
+            button.setOnClickListener {
+                view.commitEditorChange { setOption(base, !optionValue(base)) }
+                paintToggle(button, base, optionValue(base))
+                persistEditorOptions()
+                if (base == "SAFE" && view.safeArea.isEmpty) {
+                    toast("No notch/bars inset reported on this device")
+                }
+                if (base == "MULTI") {
+                    toast(if (view.multiSelectEnabled) "Tap controls to add them to the selection" else "Single-select mode")
+                }
+            }
+            return button
+        }
+
+        val snapButton = optionButton("SNAP")
+        val guidesButton = optionButton("GUIDES")
+        val safeButton = optionButton("SAFE")
+        val multiButton = optionButton("MULTI")
+        repaintEditorOptions = {
+            paintToggle(snapButton, "SNAP", view.snapEnabled)
+            paintToggle(guidesButton, "GUIDES", view.guidesEnabled)
+            paintToggle(safeButton, "SAFE", view.safeAreaEnabled)
+            paintToggle(multiButton, "MULTI", view.multiSelectEnabled)
         }
 
         addButton(clipboardRow, "COPY", false) { view.copySelected() }
@@ -1712,15 +1811,118 @@ class MainActivity : Activity() {
             .apply()
     }
 
+    // ---------------------------------------------------------- layout files (SAF)
+    private fun pickLayoutImport() {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "text/plain"
+        }
+        try {
+            startActivityForResult(intent, REQ_IMPORT_LAYOUT)
+        } catch (_: ActivityNotFoundException) {
+            toast("No file picker available")
+        }
+    }
+
+    private fun pickLayoutExport() {
+        val name = (layouts.activeName() ?: "custom")
+            .replace(Regex("[^A-Za-z0-9._-]"), "_")
+            .take(24)
+        val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TITLE, "${name}_layout.txt")
+        }
+        try {
+            startActivityForResult(intent, REQ_EXPORT_LAYOUT)
+        } catch (_: ActivityNotFoundException) {
+            toast("No file picker available")
+        }
+    }
+
+    private fun importLayoutFile(uri: Uri) {
+        val text = try {
+            contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+        } catch (_: Exception) {
+            null
+        }
+        if (text == null) {
+            toast("Could not read that file")
+            return
+        }
+        val data = text.trim()
+        if (!view.isValidLayoutData(data)) {
+            toast("That is not a lemoGamePad layout file")
+            return
+        }
+        view.applyLayout(data)
+        // A file has no saved name, so keep it separate from named presets.
+        layouts.clearActive()
+        persistLayout()
+        persistEditorOptions()
+        toast("Layout imported from file")
+    }
+
+    private fun exportLayoutFile(uri: Uri) {
+        val output = try {
+            contentResolver.openOutputStream(uri)
+        } catch (_: Exception) {
+            null
+        }
+        if (output == null) {
+            toast("Could not write that file")
+            return
+        }
+        try {
+            output.use { it.write(view.layoutSnapshot().toByteArray(Charsets.UTF_8)) }
+            toast("Layout exported")
+        } catch (_: Exception) {
+            toast("Could not write that file")
+        }
+    }
+
     private fun hideEditBar() {
         val bar = editBar ?: return
         editBar = null
+        shapeChips.clear()
+        repaintEditorOptions = null
         bar.animate().alpha(0f).translationY(-px(16).toFloat())
             .setDuration(160L)
             .withEndAction {
                 root.removeView(bar)
             }
             .start()
+    }
+
+    /** Lets an added button perform one or two existing button functions. */
+    private fun showFunctionDialog() {
+        if (!view.hasSelectedMacro()) {
+            toast("Tap an added button first")
+            return
+        }
+        LayoutDialogs.chooseFunctions(
+            this,
+            view.theme,
+            view.assignableFunctions(),
+            view.selectedMacroBits(),
+        ) { bits -> view.setSelectedMacroBits(bits) }
+    }
+
+    /** Highlights the outline used by the selected button(s) in the edit bar. */
+    private fun refreshShapeChips() {
+        if (shapeChips.isEmpty()) return
+        val t = view.theme
+        val active = view.selectedShape()
+        for (i in shapeChips.indices) {
+            val chip = shapeChips[i]
+            val on = i == active
+            chip.setTextColor(if (on) t.bgBottom else t.text)
+            chip.background = GradientDrawable().apply {
+                cornerRadius = px(13).toFloat()
+                setColor(if (on) t.accent else withAlpha(t.surfaceAlt, 210))
+                if (!on) setStroke(px(1), withAlpha(t.text, 45))
+            }
+        }
     }
 
     // ---------------------------------------------------------------- settings
@@ -2456,6 +2658,9 @@ class MainActivity : Activity() {
         /** Permission prompt opened by SELECT HOST; only it may consume a pick. */
         private const val REQ_BT_HOST = 79
         private const val REQ_LAYOUT_QR = 80
+        /** SAF document pickers for layout IMPORT / EXPORT. */
+        private const val REQ_IMPORT_LAYOUT = 81
+        private const val REQ_EXPORT_LAYOUT = 82
 
         // Rumble follows the game's motor levels. The server repeats a live
         // level every 500 ms; this timeout only covers lost refreshes.

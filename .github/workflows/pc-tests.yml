@@ -29,6 +29,9 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Version labels
+        run: python3 tools/check_versions.py
+
       - name: Install dependencies
         working-directory: pc
         run: |
@@ -45,6 +48,14 @@ jobs:
         run: |
           sudo modprobe uinput || true
           sudo chmod 666 /dev/uinput || true
+
+      - name: Protocol golden vectors
+        working-directory: pc
+        run: python test_protocol.py
+
+      - name: Android EDIT LAYOUT toggles (skipped without adb/device)
+        working-directory: pc
+        run: python test_android_edit_ui.py
 
       - name: Protocol, slots, rumble routing, reconnect
         working-directory: pc

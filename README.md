@@ -13,7 +13,7 @@ by **Alam showkat**
 
 [**Website & downloads →**](https://alamshowkatdar.github.io/lemoGamePad-ultimate/) · [Download the latest release →](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) · [Report an issue](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/issues)
 
-**App source version:** 2.2.3. Download the signed APK and the Windows/Linux server from the [latest release](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) — use the **2.2.3** APK and receiver together for matching version labels. The release workflow also publishes a `SHA256SUMS.txt` so you can verify your download.
+**App source version:** 2.2.4. Download the signed APK and the Windows/Linux server from the [latest release](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) — use the **2.2.4** APK and receiver together for matching version labels. The release workflow also publishes a `SHA256SUMS.txt` so you can verify your download.
 
 ---
 
@@ -82,6 +82,18 @@ changed. From a source checkout, run `pc/gui.sh` after
 `pc/linux/install-linux.sh`; add `--manual-start` to open the panel without
 starting the server. `pc/desktop_gui.py` is the earlier Python/Tk reference and
 is not part of the shipped binaries.
+
+### New in 2.2.4
+
+- **Button shapes in the Android layout editor.** Select a button and choose
+  **ROUND**, **RECT**, **CIRCLE**, **SQUARE**, **HEX** or **DIAMOND** from the new
+  **SHAPE** row. Shapes apply to the shoulder buttons, SELECT/START and stick
+  clicks; they survive saved layouts, game profiles and Android-to-Android QR
+  sharing (the browser pad ignores the shape field).
+- **Duplicable, assignable buttons on Android.** **ADD** creates a plain button,
+  **DUP** copies an existing button's look and size, and **FUNC** assigns one or
+  two functions to any added button. Up to eight extra buttons persist in
+  layouts, profiles and QR codes.
 
 ### New in 2.2.1
 
@@ -470,4 +482,4 @@ licenses are listed in [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md).
 
 ---
 
-**lemoGamePad ultimate™ © Alam showkat** · v2.2.3
+**lemoGamePad ultimate™ © Alam showkat** · v2.2.4
