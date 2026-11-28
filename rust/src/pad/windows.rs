@@ -1,15 +1,13 @@
-//! Windows virtual pad backed by the ViGEmBus client DLL.
+//! Windows virtual pad backed by the ViGEmBus client.
 //!
-//! ViGEm's C ABI is loaded dynamically so the binary still starts when the
-//! driver is not installed; the failure is reported in the server banner.
+//! The upstream ViGEm Client C++ source is compiled into this binary by
+//! `rust/build.rs`, so no separate `ViGEmClient.dll` has to be shipped or
+//! discovered at runtime. Only the signed ViGEmBus driver is required.
 
-use super::{RumbleEvent, VirtualPad};
+use super::{vigem_error_text, vigem_is_success, RumbleEvent, VirtualPad};
 use crate::proto::{axis, ButtonIndex, InputState, BUTTON_CROSS, BUTTON_PS};
-use libloading::{Library, Symbol};
 use std::ffi::c_void;
 use std::sync::mpsc::Sender;
-
-const ERROR_SUCCESS: u32 = 0;
 
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
@@ -36,85 +34,71 @@ struct Ds4Report {
     trigger_r: u8,
 }
 
-type AllocateClient = unsafe extern "C" fn() -> *mut c_void;
-type Connect = unsafe extern "C" fn(*mut c_void) -> u32;
-type AllocateTarget = unsafe extern "C" fn() -> *mut c_void;
-type AddTarget = unsafe extern "C" fn(*mut c_void, *mut c_void) -> u32;
-type X360Update = unsafe extern "C" fn(*mut c_void, *mut c_void, XusbReport) -> u32;
-type Ds4Update = unsafe extern "C" fn(*mut c_void, *mut c_void, Ds4Report) -> u32;
-type Unregister = unsafe extern "C" fn(*mut c_void);
-type RemoveTarget = unsafe extern "C" fn(*mut c_void, *mut c_void) -> u32;
-type FreeTarget = unsafe extern "C" fn(*mut c_void);
-type Disconnect = unsafe extern "C" fn(*mut c_void);
-type FreeClient = unsafe extern "C" fn(*mut c_void);
-type X360Register = unsafe extern "C" fn(
-    *mut c_void,
-    *mut c_void,
-    Option<unsafe extern "C" fn(*mut c_void, *mut c_void, u8, u8, u8, *mut c_void)>,
-    *mut c_void,
-) -> u32;
-type Ds4Register = unsafe extern "C" fn(
-    *mut c_void,
-    *mut c_void,
-    Option<unsafe extern "C" fn(*mut c_void, *mut c_void, u8, u8, u32, *mut c_void)>,
-    *mut c_void,
-) -> u32;
-
-struct Api {
-    _library: &'static Library,
-    allocate_client: Symbol<'static, AllocateClient>,
-    connect: Symbol<'static, Connect>,
-    allocate_x360: Symbol<'static, AllocateTarget>,
-    allocate_ds4: Symbol<'static, AllocateTarget>,
-    add_target: Symbol<'static, AddTarget>,
-    x360_update: Symbol<'static, X360Update>,
-    ds4_update: Symbol<'static, Ds4Update>,
-    x360_register: Symbol<'static, X360Register>,
-    ds4_register: Symbol<'static, Ds4Register>,
-    x360_unregister: Symbol<'static, Unregister>,
-    ds4_unregister: Symbol<'static, Unregister>,
-    remove_target: Symbol<'static, RemoveTarget>,
-    free_target: Symbol<'static, FreeTarget>,
-    disconnect: Symbol<'static, Disconnect>,
-    free_client: Symbol<'static, FreeClient>,
+/// `DS4_LIGHTBAR_COLOR` from ViGEm's `Common.h`.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct Ds4LightbarColor {
+    red: u8,
+    green: u8,
+    blue: u8,
 }
 
-impl Api {
-    unsafe fn load() -> Result<Self, String> {
-        let library = Library::new("ViGEmClient.dll")
-            .or_else(|_| Library::new("ViGEmClient64.dll"))
-            .map_err(|err| format!("ViGEmClient.dll not available ({err})"))?;
-        let library: &'static Library = Box::leak(Box::new(library));
-        macro_rules! symbol {
-            ($name:literal, $type:ty) => {
-                library
-                    .get::<$type>(concat!($name, "\0").as_bytes())
-                    .map_err(|err| format!("{} missing from ViGEmClient.dll ({err})", $name))?
-            };
-        }
-        Ok(Self {
-            _library: library,
-            allocate_client: symbol!("vigem_alloc", AllocateClient),
-            connect: symbol!("vigem_connect", Connect),
-            allocate_x360: symbol!("vigem_target_x360_alloc", AllocateTarget),
-            allocate_ds4: symbol!("vigem_target_ds4_alloc", AllocateTarget),
-            add_target: symbol!("vigem_target_add", AddTarget),
-            x360_update: symbol!("vigem_target_x360_update", X360Update),
-            ds4_update: symbol!("vigem_target_ds4_update", Ds4Update),
-            x360_register: symbol!("vigem_target_x360_register_notification", X360Register),
-            ds4_register: symbol!("vigem_target_ds4_register_notification", Ds4Register),
-            x360_unregister: symbol!("vigem_target_x360_unregister_notification", Unregister),
-            ds4_unregister: symbol!("vigem_target_ds4_unregister_notification", Unregister),
-            remove_target: symbol!("vigem_target_remove", RemoveTarget),
-            free_target: symbol!("vigem_target_free", FreeTarget),
-            disconnect: symbol!("vigem_disconnect", Disconnect),
-            free_client: symbol!("vigem_free", FreeClient),
-        })
-    }
+type X360Notification = unsafe extern "system" fn(
+    *mut c_void,
+    *mut c_void,
+    u8,
+    u8,
+    u8,
+    *mut c_void,
+);
+type Ds4Notification = unsafe extern "system" fn(
+    *mut c_void,
+    *mut c_void,
+    u8,
+    u8,
+    Ds4LightbarColor,
+    *mut c_void,
+);
+
+// ViGEm uses the C ABI for its API functions and `CALLBACK` (__stdcall on
+// x86) for notification callbacks. The static library is linked by build.rs.
+unsafe extern "C" {
+    fn vigem_alloc() -> *mut c_void;
+    fn vigem_free(client: *mut c_void);
+    fn vigem_connect(client: *mut c_void) -> u32;
+    fn vigem_disconnect(client: *mut c_void);
+    fn vigem_target_x360_alloc() -> *mut c_void;
+    fn vigem_target_ds4_alloc() -> *mut c_void;
+    fn vigem_target_add(client: *mut c_void, target: *mut c_void) -> u32;
+    fn vigem_target_x360_update(
+        client: *mut c_void,
+        target: *mut c_void,
+        report: XusbReport,
+    ) -> u32;
+    fn vigem_target_ds4_update(
+        client: *mut c_void,
+        target: *mut c_void,
+        report: Ds4Report,
+    ) -> u32;
+    fn vigem_target_x360_register_notification(
+        client: *mut c_void,
+        target: *mut c_void,
+        notification: Option<X360Notification>,
+        user_data: *mut c_void,
+    ) -> u32;
+    fn vigem_target_ds4_register_notification(
+        client: *mut c_void,
+        target: *mut c_void,
+        notification: Option<Ds4Notification>,
+        user_data: *mut c_void,
+    ) -> u32;
+    fn vigem_target_x360_unregister_notification(target: *mut c_void);
+    fn vigem_target_ds4_unregister_notification(target: *mut c_void);
+    fn vigem_target_remove(client: *mut c_void, target: *mut c_void) -> u32;
+    fn vigem_target_free(target: *mut c_void);
 }
 
 pub struct WindowsVirtualPad {
-    api: Api,
     client: *mut c_void,
     target: *mut c_void,
     user_data: *mut c_void,
@@ -132,44 +116,48 @@ unsafe impl Send for WindowsVirtualPad {}
 
 impl WindowsVirtualPad {
     pub fn new(kind: &str, rumble: Sender<RumbleEvent>, slot: usize) -> Result<Self, String> {
-        let api = unsafe { Api::load()? };
-        let client = unsafe { (api.allocate_client)() };
+        let client = unsafe { vigem_alloc() };
         if client.is_null() {
             return Err("vigem_alloc returned null".into());
         }
-        let code = unsafe { (api.connect)(client) };
-        if code != ERROR_SUCCESS {
-            unsafe { (api.free_client)(client) };
-            return Err(format!("ViGEm connection failed (error {code})"));
+        let code = unsafe { vigem_connect(client) };
+        if !vigem_is_success(code) {
+            unsafe { vigem_free(client) };
+            return Err(format!(
+                "ViGEmBus connection failed: {}",
+                vigem_error_text(code)
+            ));
         }
         let target = unsafe {
             if kind == "ds4" {
-                (api.allocate_ds4)()
+                vigem_target_ds4_alloc()
             } else {
-                (api.allocate_x360)()
+                vigem_target_x360_alloc()
             }
         };
         if target.is_null() {
             unsafe {
-                (api.disconnect)(client);
-                (api.free_client)(client);
+                vigem_disconnect(client);
+                vigem_free(client);
             }
             return Err("ViGEm target allocation failed".into());
         }
-        let code = unsafe { (api.add_target)(client, target) };
-        if code != ERROR_SUCCESS {
+        let code = unsafe { vigem_target_add(client, target) };
+        if !vigem_is_success(code) {
             unsafe {
-                (api.free_target)(target);
-                (api.disconnect)(client);
-                (api.free_client)(client);
+                vigem_target_free(target);
+                vigem_disconnect(client);
+                vigem_free(client);
             }
-            return Err(format!("could not add virtual pad (error {code})"));
+            return Err(format!(
+                "could not add virtual pad: {}",
+                vigem_error_text(code)
+            ));
         }
 
         let state = Box::new((rumble.clone(), slot));
         let user_data = Box::into_raw(state) as *mut c_void;
         let mut pad = Self {
-            api,
             client,
             target,
             user_data,
@@ -187,28 +175,37 @@ impl WindowsVirtualPad {
     }
 
     fn register(&mut self) {
-        let api = &self.api;
         let result = unsafe {
             if self.kind == "ds4" {
-                (api.ds4_register)(self.client, self.target, Some(ds4_notification), self.user_data)
+                vigem_target_ds4_register_notification(
+                    self.client,
+                    self.target,
+                    Some(ds4_notification),
+                    self.user_data,
+                )
             } else {
-                (api.x360_register)(self.client, self.target, Some(x360_notification), self.user_data)
+                vigem_target_x360_register_notification(
+                    self.client,
+                    self.target,
+                    Some(x360_notification),
+                    self.user_data,
+                )
             }
         };
-        if result != ERROR_SUCCESS {
-            self.rumble_error = format!("error {result}");
+        if !vigem_is_success(result) {
+            self.rumble_error = vigem_error_text(result);
         }
     }
 
     fn write(&mut self, state: &InputState) -> Result<(), u32> {
         let code = unsafe {
             if self.kind == "ds4" {
-                (self.api.ds4_update)(self.client, self.target, ds4_report(state))
+                vigem_target_ds4_update(self.client, self.target, ds4_report(state))
             } else {
-                (self.api.x360_update)(self.client, self.target, x360_report(state))
+                vigem_target_x360_update(self.client, self.target, x360_report(state))
             }
         };
-        if code == ERROR_SUCCESS {
+        if vigem_is_success(code) {
             Ok(())
         } else {
             Err(code)
@@ -221,15 +218,17 @@ impl WindowsVirtualPad {
         }
         unsafe {
             if self.kind == "ds4" {
-                (self.api.ds4_unregister)(self.target);
+                vigem_target_ds4_unregister_notification(self.target);
             } else {
-                (self.api.x360_unregister)(self.target);
+                vigem_target_x360_unregister_notification(self.target);
             }
-            (self.api.remove_target)(self.client, self.target);
-            (self.api.free_target)(self.target);
-            (self.api.disconnect)(self.client);
-            (self.api.free_client)(self.client);
-            drop(Box::from_raw(self.user_data as *mut (Sender<RumbleEvent>, usize)));
+            vigem_target_remove(self.client, self.target);
+            vigem_target_free(self.target);
+            vigem_disconnect(self.client);
+            vigem_free(self.client);
+            drop(Box::from_raw(
+                self.user_data as *mut (Sender<RumbleEvent>, usize),
+            ));
         }
         self.target = std::ptr::null_mut();
         self.client = std::ptr::null_mut();
@@ -247,7 +246,7 @@ impl VirtualPad for WindowsVirtualPad {
             Ok(()) => self.failures = 0,
             Err(code) => {
                 self.failures += 1;
-                println!("\n[!] pad update failed: ViGEm error {code}");
+                println!("\n[!] pad update failed: {}", vigem_error_text(code));
                 if self.failures <= 3 {
                     self.destroy();
                     if let Ok(recreated) =
@@ -255,7 +254,7 @@ impl VirtualPad for WindowsVirtualPad {
                     {
                         *self = recreated;
                         if let Err(code) = self.write(state) {
-                            println!("\n[!] pad retry failed: ViGEm error {code}");
+                            println!("\n[!] pad retry failed: {}", vigem_error_text(code));
                             self.failures -= 1;
                         } else {
                             self.failures = 0;
@@ -263,7 +262,10 @@ impl VirtualPad for WindowsVirtualPad {
                     }
                 } else {
                     self.ok = false;
-                    self.error = format!("virtual pad updates keep failing (error {code})");
+                    self.error = format!(
+                        "virtual pad updates keep failing: {}",
+                        vigem_error_text(code)
+                    );
                 }
             }
         }
@@ -293,7 +295,7 @@ impl Drop for WindowsVirtualPad {
     }
 }
 
-unsafe extern "C" fn x360_notification(
+unsafe extern "system" fn x360_notification(
     _client: *mut c_void,
     _target: *mut c_void,
     large: u8,
@@ -312,12 +314,12 @@ unsafe extern "C" fn x360_notification(
     });
 }
 
-unsafe extern "C" fn ds4_notification(
+unsafe extern "system" fn ds4_notification(
     _client: *mut c_void,
     _target: *mut c_void,
     large: u8,
     small: u8,
-    _lightbar: u32,
+    _lightbar: Ds4LightbarColor,
     user_data: *mut c_void,
 ) {
     if user_data.is_null() {

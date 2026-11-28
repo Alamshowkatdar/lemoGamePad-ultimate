@@ -1,4 +1,4 @@
-# Review notes — 1.3.6 / 1.3.7 / 1.4.0 / 1.5.0 / 1.6.0 / 1.6.1 / 1.6.2 / 1.6.3 / 1.6.4 / 1.6.5 / 1.6.6 / 1.6.7 / 1.6.8 / 1.6.9 / 1.6.10 / 1.6.11 / 1.6.12 / 1.6.13 / 1.7.0 / 2.0.0 / 2.0.1 / 2.0.2 / 2.0.3 / 2.1.0 / 2.1.1 / 2.1.2 / 2.1.3 / 2.1.4 / 2.1.5 / 2.2 / 2.2.1 / 2.2.2 / 2.2.3 / 2.2.4 / 2.2.5
+# Review notes — 1.3.6 / 1.3.7 / 1.4.0 / 1.5.0 / 1.6.0 / 1.6.1 / 1.6.2 / 1.6.3 / 1.6.4 / 1.6.5 / 1.6.6 / 1.6.7 / 1.6.8 / 1.6.9 / 1.6.10 / 1.6.11 / 1.6.12 / 1.6.13 / 1.7.0 / 2.0.0 / 2.0.1 / 2.0.2 / 2.0.3 / 2.1.0 / 2.1.1 / 2.1.2 / 2.1.3 / 2.1.4 / 2.1.5 / 2.2 / 2.2.1 / 2.2.2 / 2.2.3 / 2.2.4 / 2.2.5 / 2.2.6
 
 A pass over the whole app (Kotlin sources, manifest, Gradle files, CI) focused on
 bugs, UI smoothness, and making the phone-to-phone Bluetooth gamepad honest.
@@ -34,6 +34,23 @@ This file records what was found and what changed, so the reasoning does not get
 lost between releases.
 
 ---
+
+## Windows ViGEm client fix (2.2.6)
+
+The reported error was `ViGEmClient.dll not available (loadlibraryExw failed)`.
+`Api::load` used `libloading` to call `LoadLibraryExW` for a separately installed
+client DLL, which the release never shipped. The ViGEmBus driver setup does not
+provide that DLL either, so a clean Windows PC could pair but never create a
+virtual pad.
+
+The upstream MIT ViGEm Client C++ source is now vendored in
+`vendor/vigembus/client/` and compiled into both Windows binaries by
+`rust/build.rs`. The Rust backend calls the C API directly, so there is no
+runtime DLL lookup at all. A second bug treated `0` as `VIGEM_ERROR_NONE` while
+ViGEm actually returns `0x20000000`; every success was therefore reported as a
+driver failure. Success checks now use the correct constant, failures are mapped
+to readable messages, and the rumble callbacks use `CALLBACK` (`__stdcall` on
+x86) with the real three-byte `DS4_LIGHTBAR_COLOR` struct.
 
 ## Startup release check (2.2.5)
 

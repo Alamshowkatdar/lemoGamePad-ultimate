@@ -11,9 +11,11 @@ license; their own licenses apply.
 | [eframe](https://github.com/emilk/egui) | Native window and render loop for the desktop panel | MIT OR Apache-2.0 | emilk/egui |
 | [egui](https://github.com/emilk/egui) | Immediate-mode widgets for the desktop panel | MIT OR Apache-2.0 | emilk/egui |
 | [image](https://github.com/image-rs/image) | JPEG encoding for the screen stream | MIT OR Apache-2.0 | image-rs/image |
-| [libloading](https://github.com/nagisa/rust_libloading) | Loading ViGEmClient.dll / Windows system APIs | MIT OR Apache-2.0 | nagisa/rust_libloading |
+| [libloading](https://github.com/nagisa/rust_libloading) | Windows system API lookups | MIT OR Apache-2.0 | nagisa/rust_libloading |
 | [libc](https://github.com/rust-lang/libc) | Linux uinput ioctls and Unix signals | MIT OR Apache-2.0 | rust-lang/libc |
 | [qrcode](https://github.com/kennytm/qrcode-rust) | Pairing QR code | MIT OR Apache-2.0 | kennytm/qrcode-rust |
+| [cc](https://github.com/rust-lang/cc-rs) | Windows build step that compiles the ViGEm client | MIT OR Apache-2.0 | rust-lang/cc-rs |
+| [ViGEm Client](https://github.com/nefarius/ViGEmClient) (`vendor/vigembus/client/`, statically linked into the Windows binaries) | Talking to the ViGEmBus driver without a separate DLL | MIT | nefarius/ViGEmClient |
 | [ViGEmBus 1.22.0 setup](https://github.com/nefarius/ViGEmBus/releases/tag/v1.22.0) (`vendor/vigembus/ViGEmBus_1.22.0_x64_x86_arm64.exe`, embedded in the Windows app) | Offline driver install from **Install dependencies** | BSD-3-Clause | nefarius/ViGEmBus |
 
 The Python packages listed in `pc/requirements.txt` are used only by the
@@ -30,7 +32,9 @@ binaries.
 
 The Android app uses only the Android framework. The native receiver uses the
 Rust crates above and the operating system's socket, uinput/ViGEm and capture
-interfaces. The Windows app embeds the signed [ViGEmBus](https://github.com/nefarius/ViGEmBus)
+interfaces. The Windows binaries statically link the MIT-licensed ViGEm Client
+source in `vendor/vigembus/client/`, so no `ViGEmClient.dll` is needed at
+runtime. The Windows app also embeds the signed [ViGEmBus](https://github.com/nefarius/ViGEmBus)
 1.22.0 setup binary and its BSD-3-Clause license in `vendor/vigembus/`, and only
 runs it after the user confirms and Windows UAC approves. Windows and Android
 system components (including the camera and Bluetooth stacks) are covered by

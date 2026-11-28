@@ -1032,8 +1032,9 @@ dependencies = [
 
 [[package]]
 name = "lemoGamePad-server"
-version = "2.2.5"
+version = "2.2.6"
 dependencies = [
+ "cc",
  "eframe",
  "image",
  "libc",

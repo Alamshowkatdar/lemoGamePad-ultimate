@@ -2,6 +2,17 @@
 
 Newest first. The reasoning behind each release is in [`docs/REVIEW.md`](docs/REVIEW.md).
 
+## 2.2.6
+
+- **Fixed the Windows `ViGEmClient.dll not available` error.** The MIT ViGEm
+  client source is now compiled into the Windows binaries instead of being
+  loaded with `LoadLibraryExW`, so no separate client DLL has to be installed.
+  Only the signed ViGEmBus driver is required.
+- **Fixed ViGEm success handling.** `VIGEM_ERROR_NONE` is `0x20000000`; the old
+  code compared it to `0` and reported every successful call as a failure.
+  Errors now include readable ViGEm codes, and rumble callbacks use the correct
+  `CALLBACK` ABI and DS4 lightbar struct.
+
 ## 2.2.5
 
 - **Android checks for updates on app start.** A GitHub release check now runs

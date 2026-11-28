@@ -13,7 +13,7 @@ by **Alam showkat**
 
 [**Website & downloads →**](https://alamshowkatdar.github.io/lemoGamePad-ultimate/) · [Download the latest release →](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) · [Report an issue](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/issues)
 
-**App source version:** 2.2.5. Download the signed APK and the Windows/Linux server from the [latest release](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) — use the **2.2.5** APK and receiver together for matching version labels. The release workflow also publishes a `SHA256SUMS.txt` so you can verify your download.
+**App source version:** 2.2.6. Download the signed APK and the Windows/Linux server from the [latest release](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) — use the **2.2.6** APK and receiver together for matching version labels. The release workflow also publishes a `SHA256SUMS.txt` so you can verify your download.
 
 ---
 
@@ -75,6 +75,8 @@ is downloaded automatically. Use **Check update** in the title bar to recheck.
   opens a confirmation, then a system admin prompt (`pkexec` on Linux, UAC on
   Windows); it never runs by itself. On Windows it elevates one helper that adds
   the firewall rules and installs the bundled, signed ViGEmBus driver offline.
+  The ViGEm client is compiled into the binaries, so no separate
+  `ViGEmClient.dll` is needed.
 - **Log** — the same messages the console receiver prints.
 
 It still uses the existing protocol — no packet layout or pairing format
@@ -82,6 +84,16 @@ changed. From a source checkout, run `pc/gui.sh` after
 `pc/linux/install-linux.sh`; add `--manual-start` to open the panel without
 starting the server. `pc/desktop_gui.py` is the earlier Python/Tk reference and
 is not part of the shipped binaries.
+
+### New in 2.2.6
+
+- **Windows ViGEm failure fixed.** The receiver no longer looks for
+  `ViGEmClient.dll` at runtime; the ViGEm client is compiled into both Windows
+  binaries. The old `ViGEmClient.dll not available (loadlibraryExw failed)` error
+  cannot occur in a rebuilt binary. Only the ViGEmBus driver is still needed.
+- **Windows ViGEm success codes corrected.** ViGEm returns `0x20000000` for
+  success, not `0`; previous builds reported successful calls as driver errors.
+  Failures now show readable ViGEm error text.
 
 ### New in 2.2.5
 
@@ -493,4 +505,4 @@ licenses are listed in [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md).
 
 ---
 
-**lemoGamePad ultimate™ © Alam showkat** · v2.2.5
+**lemoGamePad ultimate™ © Alam showkat** · v2.2.6

@@ -8,6 +8,43 @@ use std::sync::mpsc::Sender;
 pub const VIGEM_PAGE: &str =
     "https://github.com/nefarius/ViGEmBus/releases/tag/v1.22.0";
 
+/// ViGEm's success value is not zero. Treating 0 as success makes every
+/// successful call look like a driver failure.
+pub const VIGEM_SUCCESS: u32 = 0x2000_0000;
+
+pub fn vigem_is_success(code: u32) -> bool {
+    code == VIGEM_SUCCESS
+}
+
+pub fn vigem_error_text(code: u32) -> String {
+    if vigem_is_success(code) {
+        return "OK".to_owned();
+    }
+    let message = match code {
+        0xE000_0001 => "compatible ViGEmBus driver not found",
+        0xE000_0002 => "all virtual gamepad slots are occupied",
+        0xE000_0003 => "invalid virtual gamepad target",
+        0xE000_0004 => "virtual gamepad removal failed",
+        0xE000_0005 => "virtual gamepad is already connected",
+        0xE000_0006 => "virtual gamepad target is not initialized",
+        0xE000_0007 => "virtual gamepad target is not plugged in",
+        0xE000_0008 => "ViGEmBus driver version mismatch",
+        0xE000_0009 => "ViGEmBus driver access denied",
+        0xE000_0010 => "rumble callback is already registered",
+        0xE000_0011 => "rumble callback was not found",
+        0xE000_0012 => "ViGEmBus is already connected",
+        0xE000_0013 => "invalid ViGEmBus handle",
+        0xE000_0014 => "XInput user index out of range",
+        0xE000_0015 => "invalid ViGEm parameter",
+        0xE000_0016 => "ViGEm operation is not supported by this driver",
+        0xE000_0017 => "Windows API error while talking to ViGEmBus",
+        0xE000_0018 => "ViGEm operation timed out",
+        0xE000_0019 => "ViGEm target is being disposed",
+        _ => "unknown ViGEm error",
+    };
+    format!("{message} (code 0x{code:08X})")
+}
+
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "windows")]
@@ -81,7 +118,7 @@ pub fn create_pad(
         match WindowsVirtualPad::new(kind, rumble, slot) {
             Ok(pad) => Box::new(pad),
             Err(error) => Box::new(MissingPad::new(format!(
-                "{error}. Install ViGEmBus once from {VIGEM_PAGE}"
+                "{error}. Run Install dependencies in the desktop panel, or install ViGEmBus from {VIGEM_PAGE}"
             ))),
         }
     }
@@ -152,5 +189,24 @@ fn win_driver_status() -> (bool, String) {
             false,
             format!("install ViGEmBus once from {VIGEM_PAGE}"),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{vigem_error_text, vigem_is_success, VIGEM_SUCCESS};
+
+    #[test]
+    fn vigem_success_is_not_zero() {
+        assert_eq!(VIGEM_SUCCESS, 0x2000_0000);
+        assert!(vigem_is_success(VIGEM_SUCCESS));
+        assert!(!vigem_is_success(0));
+    }
+
+    #[test]
+    fn vigem_errors_are_readable() {
+        let text = vigem_error_text(0xE000_0001);
+        assert!(text.contains("ViGEmBus"), "{text}");
+        assert!(text.contains("0xE0000001"), "{text}");
     }
 }

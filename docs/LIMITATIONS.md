@@ -46,4 +46,4 @@
 
 ---
 
-**lemoGamePad ultimate™ © Alam showkat** · v2.2.5
+**lemoGamePad ultimate™ © Alam showkat** · v2.2.6
