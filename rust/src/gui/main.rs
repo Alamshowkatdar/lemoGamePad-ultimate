@@ -39,7 +39,7 @@ use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-const APP_VERSION: &str = "2.2.6";
+const APP_VERSION: &str = "2.2.7";
 // Setup scripts and the signed ViGEmBus installer are compiled into the binary
 // so "Install dependencies" works offline with only the single EXE.
 #[cfg(target_os = "linux")]
@@ -579,6 +579,37 @@ fn diagnostic_row(ui: &mut egui::Ui, label: &str, value: String, color: egui::Co
             .truncate(),
     );
     ui.end_row();
+}
+
+/// QR textures are keyed by payload so a stop/restart with a new browser key
+/// renders a new code instead of reusing the last one.
+fn qr_cache_key(name: &str, payload: &str) -> String {
+    format!("{name}\u{0}{payload}")
+}
+
+struct PairingLinks {
+    pad: String,
+    guest_pad: String,
+    web: String,
+    guest_web: String,
+}
+
+/// All four pairing payloads derived from the current receiver state. Keeping
+/// this in one place makes it testable and ensures every QR refreshes together.
+fn pairing_links(ip: &str, hostname: &str, port: u16, web_port: u16, key: &str) -> PairingLinks {
+    let pad = format!(
+        "vpad://connect?h={}&p={}&n={}",
+        util::uri_escape(ip),
+        port,
+        util::uri_escape(hostname)
+    );
+    let web = format!("http://{ip}:{web_port}/?k={}", util::uri_escape(key));
+    PairingLinks {
+        guest_pad: format!("{pad}&a=1"),
+        guest_web: format!("{web}&a=1"),
+        pad,
+        web,
+    }
 }
 
 fn boolean(value: &Value, key: &str) -> bool {
@@ -1173,7 +1204,11 @@ try {{
     }
 
     fn qr(&mut self, ctx: &egui::Context, name: &str, payload: &str) -> Option<egui::TextureHandle> {
-        if let Some(texture) = self.textures.get(name) {
+        // Cache by payload as well as name: the browser key changes whenever the
+        // receiver restarts, so a name-only cache would keep showing a QR that
+        // points at the previous server.
+        let cache_key = qr_cache_key(name, payload);
+        if let Some(texture) = self.textures.get(&cache_key) {
             return Some(texture.clone());
         }
         let image = qr::render(payload).ok()?;
@@ -1182,8 +1217,12 @@ try {{
             [width as usize, height as usize],
             image.as_raw().iter().map(|value| egui::Color32::from_gray(*value)).collect(),
         );
-        let texture = ctx.load_texture(name, color, egui::TextureOptions::NEAREST);
-        self.textures.insert(name.to_owned(), texture.clone());
+        let texture = ctx.load_texture(cache_key.clone(), color, egui::TextureOptions::NEAREST);
+        // Drop the previous texture for this logical code so repeated starts do
+        // not accumulate GPU memory.
+        let prefix = format!("{name}\u{0}");
+        self.textures.retain(|key, _| !key.starts_with(&prefix));
+        self.textures.insert(cache_key, texture.clone());
         Some(texture)
     }
 
@@ -1289,6 +1328,13 @@ try {{
         ui.add_space(8.0);
         self.show_diagnostics(ui);
         ui.add_space(10.0);
+        if self.server.is_none() {
+            ui.colored_label(
+                NEON_AMBER,
+                "Receiver is stopped — codes refresh when it starts.",
+            );
+            ui.add_space(8.0);
+        }
         let hostname = if self.status.hostname.is_empty() {
             util::hostname()
         } else {
@@ -1314,13 +1360,6 @@ try {{
                 });
         });
         let port = if self.status.port == 0 { self.settings.port } else { self.status.port };
-        let pad_payload = format!(
-            "vpad://connect?h={}&p={}&n={}",
-            util::uri_escape(&ip),
-            port,
-            util::uri_escape(&hostname)
-        );
-        let guest_payload = format!("{pad_payload}&a=1");
         let key = if self.status.web_key.is_empty() {
             self.settings.web_key.clone()
         } else {
@@ -1331,7 +1370,11 @@ try {{
         } else {
             self.status.web_port
         };
-        let web_url = format!("http://{ip}:{web_port}/?k={}", util::uri_escape(&key));
+        let links = pairing_links(&ip, &hostname, port, web_port, &key);
+        let pad_payload = links.pad;
+        let guest_payload = links.guest_pad;
+        let web_url = links.web;
+        let guest_url = links.guest_web;
         ui.label("Phone controller — scan in the app");
         ui.horizontal(|ui| {
             let pad_name = format!("pad-{ip}");
@@ -1366,7 +1409,6 @@ try {{
             if let Some(texture) = self.qr(ctx, &web_name, &web_url) {
                 ui.add(egui::Image::from_texture(&texture).fit_to_exact_size(egui::vec2(210.0, 210.0)));
             }
-            let guest_url = format!("{web_url}&a=1");
             ui.vertical(|ui| {
                 ui.label("Guest browser");
                 let guest_name = format!("web-guest-{ip}");
@@ -1931,10 +1973,10 @@ mod tests {
 
     #[test]
     fn compares_release_tags() {
-        assert!(newer("v2.2.7", APP_VERSION));
+        assert!(newer("v2.2.8", APP_VERSION));
         assert!(newer("2.3", APP_VERSION));
         assert!(!newer("v2.1.6", APP_VERSION));
-        assert!(!newer("2.2.6", APP_VERSION));
+        assert!(!newer("2.2.7", APP_VERSION));
         assert!(!newer("v2", "2.0.1"));
     }
 
@@ -2012,6 +2054,31 @@ mod tests {
         app.status_seen = true;
         app.status.running = true;
         assert_eq!(app.status_text(true), "RUNNING");
+    }
+
+    #[test]
+    fn pairing_codes_track_the_live_receiver_state() {
+        let running = pairing_links("192.168.1.5", "pc", 9876, 9878, "key-one");
+        let restarted = pairing_links("192.168.1.5", "pc", 9876, 9878, "key-two");
+        let stopped = pairing_links("192.168.1.5", "pc", 9876, 9878, "");
+        assert!(running.pad.starts_with("vpad://connect?h=192.168.1.5&p=9876"));
+        assert_eq!(running.guest_pad, format!("{}&a=1", running.pad));
+        assert_eq!(running.guest_web, format!("{}&a=1", running.web));
+        assert_ne!(running.web, restarted.web);
+        assert_ne!(running.web, stopped.web);
+        // The cache key must change with the payload or the old QR is redrawn.
+        assert_eq!(
+            qr_cache_key("web-192.168.1.5", &running.web),
+            qr_cache_key("web-192.168.1.5", &running.web)
+        );
+        assert_ne!(
+            qr_cache_key("web-192.168.1.5", &running.web),
+            qr_cache_key("web-192.168.1.5", &restarted.web)
+        );
+        assert_ne!(
+            qr_cache_key("web-192.168.1.5", &running.web),
+            qr_cache_key("pad-192.168.1.5", &running.web)
+        );
     }
 
     #[test]

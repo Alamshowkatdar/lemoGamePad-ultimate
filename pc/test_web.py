@@ -312,8 +312,8 @@ def test_page_and_key(server, port):
     assert status == 200 and "WebSocket" in script, status
     assert "createImageBitmap" in script and "lmgb.layouts" in script
     # The browser pad must advertise the same release as the app and server.
-    assert 'const VERSION = "2.2.6";' in script
-    assert body.count(">v2.2.6</span>") == 2
+    assert 'const VERSION = "2.2.7";' in script
+    assert body.count(">v2.2.7</span>") == 2
     # The animated-button feature ships with every palette and the toggle.
     assert "const MOTIONS" in script and "function drawPressFx" in script
     assert 'id: "amoled"' in script and "pitchBlack" in script
@@ -327,6 +327,15 @@ def test_page_and_key(server, port):
     # The sheet opens on the pad's pointerup, so its backdrop must not close on
     # the compatibility click that follows the same tap.
     assert 'scrim.addEventListener("pointerdown"' in script
+    # A restarted receiver rotates the browser key; an old tab must say so
+    # instead of showing CONNECTING forever.
+    for marker in (
+        "function checkPairingLink",
+        "response.status === 401",
+        '"LINK EXPIRED',
+        "linkStale = false",
+    ):
+        assert marker in script, f"app.js is missing stale-link marker {marker}"
 
     # iPhone / Safari compatibility. Home Screen mode must be declared by the
     # page, the canvas must avoid the safe area, iOS focus zoom must be avoided,

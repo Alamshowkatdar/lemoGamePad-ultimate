@@ -13,7 +13,7 @@ by **Alam showkat**
 
 [**Website & downloads →**](https://alamshowkatdar.github.io/lemoGamePad-ultimate/) · [Download the latest release →](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) · [Report an issue](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/issues)
 
-**App source version:** 2.2.6. Download the signed APK and the Windows/Linux server from the [latest release](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) — use the **2.2.6** APK and receiver together for matching version labels. The release workflow also publishes a `SHA256SUMS.txt` so you can verify your download.
+**App source version:** 2.2.7. Download the signed APK and the Windows/Linux server from the [latest release](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) — use the **2.2.7** APK and receiver together for matching version labels. The release workflow also publishes a `SHA256SUMS.txt` so you can verify your download.
 
 ---
 
@@ -84,6 +84,16 @@ changed. From a source checkout, run `pc/gui.sh` after
 `pc/linux/install-linux.sh`; add `--manual-start` to open the panel without
 starting the server. `pc/desktop_gui.py` is the earlier Python/Tk reference and
 is not part of the shipped binaries.
+
+### New in 2.2.7
+
+- **Pairing QR codes refresh correctly.** Stopping or restarting the receiver
+  now redraws every QR from the live server state instead of reusing the last
+  cached image. A restart generates a new browser key, so the old code could no
+  longer open a working link.
+- **Browser pad explains an expired link.** An open tab whose key belongs to a
+  previous server now shows **LINK EXPIRED — RESCAN QR** instead of staying on
+  **CONNECTING…** forever. Scan the current browser QR from the Pairing tab.
 
 ### New in 2.2.6
 
@@ -505,4 +515,4 @@ licenses are listed in [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md).
 
 ---
 
-**lemoGamePad ultimate™ © Alam showkat** · v2.2.6
+**lemoGamePad ultimate™ © Alam showkat** · v2.2.7

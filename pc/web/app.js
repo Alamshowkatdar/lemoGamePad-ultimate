@@ -2055,12 +2055,16 @@
   });
 
   // ------------------------------------------------------------------ network
-  const VERSION = "2.2.6";
+  const VERSION = "2.2.7";
   let socket = null;
   let connected = false;
   let manualOffline = false;
   let retry = 0;
   let reconnectTimer = 0;
+  // A restarted receiver issues a new browser key. An already-open tab keeps
+  // the old one, so detect the 401 instead of showing CONNECTING forever.
+  let linkStale = false;
+  let linkCheckPending = false;
   let serverName = "lemoGamePad";
   let maxPlayers = MAX_PLAYERS;
   let screenAvailable = false;
@@ -2091,7 +2095,9 @@
 
   function updateStatus() {
     if (!connected) {
-      setStatus(manualOffline ? "OFFLINE" : "CONNECTING\u2026", manualOffline ? STATUS_IDLE : STATUS_WARN);
+      if (manualOffline) setStatus("OFFLINE", STATUS_IDLE);
+      else if (linkStale) setStatus("LINK EXPIRED \u2014 RESCAN QR", STATUS_WARN);
+      else setStatus("CONNECTING\u2026", STATUS_WARN);
       return;
     }
     if (assignedSlot <= 0) {
@@ -2125,6 +2131,7 @@
     ws.addEventListener("open", () => {
       if (ws !== socket) return;
       connected = true;
+      linkStale = false;
       retry = 0;
       lastSnapshot = "";
       lastSentAt = 0;
@@ -2220,7 +2227,10 @@
       updateStatus();
       refreshSlotChips();
       syncSheet();
-      if (!manualOffline) scheduleReconnect();
+      if (!manualOffline) {
+        checkPairingLink();
+        scheduleReconnect();
+      }
     });
 
     ws.addEventListener("error", () => {
@@ -2256,6 +2266,25 @@
       reconnectTimer = 0;
       openSocket();
     }, delay);
+  }
+
+  // The WebSocket API hides HTTP handshake failures, so probe the page with the
+  // same query string. A 401 means this tab's key belongs to an old server.
+  function checkPairingLink() {
+    if (manualOffline || connected || linkCheckPending) return;
+    linkCheckPending = true;
+    fetch(location.pathname + location.search, { cache: "no-store" })
+      .then((response) => {
+        if (response.status === 401 && !connected) {
+          linkStale = true;
+          updateStatus();
+          syncSheet();
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        linkCheckPending = false;
+      });
   }
 
   // A sleeping iPhone can freeze the WebSocket without a close event. When the
@@ -2513,7 +2542,13 @@
     const ok = connected;
     sheetDot.classList.toggle("ok", ok);
     sheetDot.classList.toggle("warn", !ok && !manualOffline);
-    sheetTitle.textContent = connected ? "CONNECTED" : manualOffline ? "OFFLINE" : "LINKING\u2026";
+    sheetTitle.textContent = connected
+      ? "CONNECTED"
+      : manualOffline
+        ? "OFFLINE"
+        : linkStale
+          ? "LINK EXPIRED"
+          : "LINKING\u2026";
     const parts = ["WEB"];
     if (connected && assignedSlot > 0) parts.push(`P${assignedSlot}`);
     if (connected && lastRtt >= 0) parts.push(`${lastRtt} ms`);
@@ -3818,12 +3853,14 @@
 
     connectBtn.addEventListener("click", () => {
       manualOffline = false;
+      linkStale = false;
       openSocket();
       syncSheet();
     });
 
     reconnectBtn.addEventListener("click", () => {
       manualOffline = false;
+      linkStale = false;
       clearTimeout(reconnectTimer);
       reconnectTimer = 0;
       dropSocket();
@@ -3833,6 +3870,7 @@
 
     disconnectBtn.addEventListener("click", () => {
       manualOffline = true;
+      linkStale = false;
       clearTimeout(reconnectTimer);
       reconnectTimer = 0;
       dropSocket();

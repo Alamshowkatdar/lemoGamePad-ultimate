@@ -166,8 +166,8 @@ class DesktopGuiTest(unittest.TestCase):
 
         payload = json.dumps(
             {
-                "tag_name": "v2.2.7",
-                "name": "2.2.7",
+                "tag_name": "v2.2.8",
+                "name": "2.2.8",
                 "html_url": "https://example.invalid/not-trusted",
             }
         ).encode()
@@ -175,8 +175,8 @@ class DesktopGuiTest(unittest.TestCase):
             gui.urllib.request, "urlopen", return_value=FakeResponse(payload)
         ) as urlopen:
             info = gui.fetch_latest_release()
-        self.assertEqual(info["version"], "2.2.7")
-        self.assertEqual(info["url"], gui.release_url("v2.2.7"))
+        self.assertEqual(info["version"], "2.2.8")
+        self.assertEqual(info["url"], gui.release_url("v2.2.8"))
         self.assertNotIn("example.invalid", info["url"])
         self.assertEqual(urlopen.call_args.args[0].full_url, gui.RELEASES_API)
 

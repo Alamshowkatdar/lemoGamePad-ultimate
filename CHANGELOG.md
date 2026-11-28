@@ -2,6 +2,17 @@
 
 Newest first. The reasoning behind each release is in [`docs/REVIEW.md`](docs/REVIEW.md).
 
+## 2.2.7
+
+- **Pairing QR codes now update on stop/restart.** QR textures were cached by
+  name only, so the desktop panel kept drawing the previous code after the
+  receiver restarted with a new browser key. The cache key now includes the
+  payload, old textures are released, and the Pairing tab shows a stopped notice.
+- **Browser pad reports an expired pairing link.** The WebSocket API hides HTTP
+  handshake failures, so a tab holding an old key stayed on `CONNECTING…`
+  forever. It now probes the page with the same query string and shows
+  `LINK EXPIRED — RESCAN QR` when the key is rejected.
+
 ## 2.2.6
 
 - **Fixed the Windows `ViGEmClient.dll not available` error.** The MIT ViGEm

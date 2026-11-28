@@ -1,4 +1,4 @@
-# Review notes — 1.3.6 / 1.3.7 / 1.4.0 / 1.5.0 / 1.6.0 / 1.6.1 / 1.6.2 / 1.6.3 / 1.6.4 / 1.6.5 / 1.6.6 / 1.6.7 / 1.6.8 / 1.6.9 / 1.6.10 / 1.6.11 / 1.6.12 / 1.6.13 / 1.7.0 / 2.0.0 / 2.0.1 / 2.0.2 / 2.0.3 / 2.1.0 / 2.1.1 / 2.1.2 / 2.1.3 / 2.1.4 / 2.1.5 / 2.2 / 2.2.1 / 2.2.2 / 2.2.3 / 2.2.4 / 2.2.5 / 2.2.6
+# Review notes — 1.3.6 / 1.3.7 / 1.4.0 / 1.5.0 / 1.6.0 / 1.6.1 / 1.6.2 / 1.6.3 / 1.6.4 / 1.6.5 / 1.6.6 / 1.6.7 / 1.6.8 / 1.6.9 / 1.6.10 / 1.6.11 / 1.6.12 / 1.6.13 / 1.7.0 / 2.0.0 / 2.0.1 / 2.0.2 / 2.0.3 / 2.1.0 / 2.1.1 / 2.1.2 / 2.1.3 / 2.1.4 / 2.1.5 / 2.2 / 2.2.1 / 2.2.2 / 2.2.3 / 2.2.4 / 2.2.5 / 2.2.6 / 2.2.7
 
 A pass over the whole app (Kotlin sources, manifest, Gradle files, CI) focused on
 bugs, UI smoothness, and making the phone-to-phone Bluetooth gamepad honest.
@@ -34,6 +34,23 @@ This file records what was found and what changed, so the reasoning does not get
 lost between releases.
 
 ---
+
+## Pairing refresh and stale browser links (2.2.7)
+
+The desktop panel cached each QR texture under a fixed name such as
+`web-<ip>`. The browser key is regenerated whenever the receiver starts, so
+after Stop/Start the payload changed but the cache hit returned the old image.
+Scanning that image sent the previous `k` value, the WebSocket upgrade was
+answered with `401`, and the browser pad had no way to tell the difference from
+a slow connection — it stayed on `CONNECTING…` and kept retrying.
+
+The QR cache is now keyed by `name + payload`, the previous texture for that
+code is dropped, and all four pairing payloads are built by one helper so they
+refresh together. A stopped receiver is called out on the Pairing tab. On the
+browser side, a failed WebSocket triggers a no-store fetch of the same URL; a
+`401` marks the link stale and the UI says `LINK EXPIRED — RESCAN QR`. A
+successful connection or an explicit CONNECT/RECONNECT clears the flag. No
+protocol, port or TLS behaviour changed.
 
 ## Windows ViGEm client fix (2.2.6)
 
