@@ -2,6 +2,14 @@
 
 Newest first. The reasoning behind each release is in [`docs/REVIEW.md`](docs/REVIEW.md).
 
+## 2.2.3
+
+- **Offline Windows dependency setup.** The signed ViGEmBus 1.22.0 installer is
+  now embedded in `lemoGamePad-app.exe`, alongside the firewall helper. After
+  confirmation and one UAC approval, both install with no download. The driver
+  is BSD-3-Clause; its license is in `vendor/vigembus/` and
+  `THIRD_PARTY_LICENSES.md`.
+
 ## 2.2.2
 
 - **Embedded receiver in the desktop panel.** `lemoGamePad-app` now runs the

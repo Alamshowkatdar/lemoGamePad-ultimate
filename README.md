@@ -13,7 +13,7 @@ by **Alam showkat**
 
 [**Website & downloads →**](https://alamshowkatdar.github.io/lemoGamePad-ultimate/) · [Download the latest release →](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) · [Report an issue](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/issues)
 
-**App source version:** 2.2.2. Download the signed APK and the Windows/Linux server from the [latest release](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) — use the **2.2.2** APK and receiver together for matching version labels. The release workflow also publishes a `SHA256SUMS.txt` so you can verify your download.
+**App source version:** 2.2.3. Download the signed APK and the Windows/Linux server from the [latest release](https://github.com/Alamshowkatdar/lemoGamePad-ultimate/releases/latest) — use the **2.2.3** APK and receiver together for matching version labels. The release workflow also publishes a `SHA256SUMS.txt` so you can verify your download.
 
 ---
 
@@ -73,8 +73,8 @@ is downloaded automatically. Use **Check update** in the title bar to recheck.
 - **Settings** — ports, pad type, player count, rumble, screen stream and
   browser key. **Apply & Restart** is needed for changes. **Install dependencies**
   opens a confirmation, then a system admin prompt (`pkexec` on Linux, UAC on
-  Windows); it never runs by itself. On Windows it opens the ViGEmBus download
-  and elevates `allow_firewall.ps1`.
+  Windows); it never runs by itself. On Windows it elevates one helper that adds
+  the firewall rules and installs the bundled, signed ViGEmBus driver offline.
 - **Log** — the same messages the console receiver prints.
 
 It still uses the existing protocol — no packet layout or pairing format
@@ -470,4 +470,4 @@ licenses are listed in [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md).
 
 ---
 
-**lemoGamePad ultimate™ © Alam showkat** · v2.2.2
+**lemoGamePad ultimate™ © Alam showkat** · v2.2.3

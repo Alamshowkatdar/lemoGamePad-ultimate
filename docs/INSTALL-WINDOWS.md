@@ -31,11 +31,10 @@ Linux and Android have their own guides:
 
 ## Install on a fresh PC
 
-1. Install the signed **ViGEmBus 1.22.0** driver once from
-   <https://github.com/nefarius/ViGEmBus/releases/tag/v1.22.0>. Reboot if the
-   installer asks.
-2. Put the release files in a folder (for example `C:\lemoGamePad\`) and run
-   `allow_firewall.ps1` as Administrator:
+1. Put the release files in a folder (for example `C:\lemoGamePad\`). Only
+   `lemoGamePad-app.exe` is needed: it contains the receiver, the firewall
+   helper and the signed **ViGEmBus 1.22.0** installer, so setup works offline.
+2. To set up manually, run `allow_firewall.ps1` as Administrator:
 
    ```powershell
    powershell -ExecutionPolicy Bypass -File .\allow_firewall.ps1
@@ -45,9 +44,10 @@ Linux and Android have their own guides:
    browser-pad ports for all network profiles (Domain, Private, Public), because
    Windows often classifies USB tethering as *Public*.
 
-   The desktop panel can do this for you: open **Settings → Install dependencies
-   (asks UAC)**, confirm, approve the UAC prompt, and install the signed ViGEmBus
-   driver from the page it opens. Nothing downloads or installs automatically.
+   The desktop panel can do both steps for you: open **Settings → Install
+   dependencies (asks UAC)**, confirm, and approve the UAC prompt. It adds the
+   firewall rules and silently installs the bundled signed ViGEmBus driver, with
+   no download. Nothing is installed without that confirmation and approval.
 3. Double-click `lemoGamePad-app.exe` for the desktop panel, or
    `lemoGamePad-server.exe` for the console banner and QR. The panel supervises
    the native receiver and starts it automatically.
@@ -76,8 +76,8 @@ most four pads; pads 5–8 automatically use the DualShock 4/HID backend so
 DirectInput/Raw Input games and emulators can use all eight. Use
 `--max-phones 4` if you want the old limit.
 
-If ViGEmBus is missing, the banner prints the pinned download link instead of
-trying to install it. The receiver still runs, but no virtual pad is created.
+If ViGEmBus is still missing after setup, the banner prints the pinned download
+link as a fallback. The receiver still runs, but no virtual pad is created.
 The `--no-install-deps` flag suppresses the one-time setup reminder in the log;
 it does not change the network protocol.
 

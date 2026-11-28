@@ -29,7 +29,9 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::env;
 use std::fs;
-use std::path::{Path, PathBuf};
+#[cfg(target_os = "windows")]
+use std::path::Path;
+use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver};
@@ -37,13 +39,16 @@ use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-const APP_VERSION: &str = "2.2.2";
-// Setup scripts are compiled into the binary so "Install dependencies" works
-// even when the user downloaded only the EXE, without a separate asset.
+const APP_VERSION: &str = "2.2.3";
+// Setup scripts and the signed ViGEmBus installer are compiled into the binary
+// so "Install dependencies" works offline with only the single EXE.
 #[cfg(target_os = "linux")]
 const EMBEDDED_INSTALLER: &str = include_str!("../../../pc/linux/install-linux.sh");
 #[cfg(target_os = "windows")]
 const EMBEDDED_FIREWALL: &str = include_str!("../../../pc/allow_firewall.ps1");
+#[cfg(target_os = "windows")]
+const EMBEDDED_VIGEM: &[u8] =
+    include_bytes!("../../../vendor/vigembus/ViGEmBus_1.22.0_x64_x86_arm64.exe");
 #[cfg(target_os = "windows")]
 const VIGEM_PAGE: &str = "https://github.com/nefarius/ViGEmBus/releases/tag/v1.22.0";
 const RELEASES_API: &str =
@@ -883,8 +888,8 @@ impl GuiApp {
     }
 
     /// Runs the one-time setup only after an explicit confirmation. Linux uses
-    /// `pkexec`; Windows uses a UAC-elevated PowerShell for the firewall script
-    /// and opens the ViGEmBus download page. Nothing is automatic.
+    /// `pkexec`; Windows uses one UAC-elevated PowerShell for both the firewall
+    /// script and the bundled ViGEmBus driver. Nothing is automatic.
     fn run_install(&mut self) {
         self.confirm_install = false;
         #[cfg(target_os = "linux")]
@@ -929,12 +934,21 @@ impl GuiApp {
                     return;
                 }
             };
+            let vigem = match vigem_installer() {
+                Ok(path) => path,
+                Err(err) => {
+                    let _ = std::fs::remove_file(&script);
+                    self.error = err;
+                    return;
+                }
+            };
             let powershell = if program_available("powershell.exe") {
                 "powershell.exe"
             } else if program_available("powershell") {
                 "powershell"
             } else {
                 let _ = std::fs::remove_file(&script);
+                let _ = std::fs::remove_file(&vigem);
                 self.error = format!(
                     "PowerShell not found. Run this as Administrator: {}",
                     script.display()
@@ -974,24 +988,66 @@ impl GuiApp {
                 }
                 Err(_) => PathBuf::from("lemoGamePad-app.exe"),
             };
-            open_url(VIGEM_PAGE);
-            self.push_log(format!("[installer] ViGEmBus download: {VIGEM_PAGE}"));
-            self.push_log(format!(
-                "[installer] bundled firewall setup (ports {port}/{video_port}/{web_port})"
+            let quote = |path: &Path| path.to_string_lossy().replace('\'', "''");
+            let result = env::temp_dir().join(format!(
+                "lemoGamePad-install-result-{}.txt",
+                std::process::id()
             ));
-            let cleanup = script.clone();
+            // One UAC prompt runs both steps from an elevated wrapper, so the
+            // driver never has to be downloaded from VIGEM_PAGE.
+            let wrapper = format!(
+                r#"$ErrorActionPreference = 'Stop'
+$result = '{result_q}'
+try {{
+    & '{powershell}' -NoProfile -ExecutionPolicy Bypass -File '{firewall_q}' -Program '{program_q}' -Port {port} -VideoPort {video_port} -WebPort {web_port} | Out-Host
+    if ($LASTEXITCODE -ne 0) {{ throw "firewall setup exited with $LASTEXITCODE" }}
+    $driver = Start-Process -FilePath '{vigem_q}' -ArgumentList '/exenoui','/qn','/norestart' -Wait -PassThru
+    if ($driver.ExitCode -ne 0 -and $driver.ExitCode -ne 3010) {{ throw "ViGEmBus setup exited with $($driver.ExitCode)" }}
+    if ($driver.ExitCode -eq 3010) {{ 'ok: restart required' | Set-Content -Path $result -Encoding ASCII }} else {{ 'ok' | Set-Content -Path $result -Encoding ASCII }}
+}} catch {{
+    "fail: $($_.Exception.Message)" | Set-Content -Path $result -Encoding ASCII
+    exit 1
+}}
+"#,
+                result_q = quote(&result),
+                powershell = powershell,
+                firewall_q = quote(&script),
+                program_q = quote(&program),
+                port = port,
+                video_port = video_port,
+                web_port = web_port,
+                vigem_q = quote(&vigem),
+            );
+            let wrapper_path = match write_temp_file(
+                &format!("lemoGamePad-install-{}.ps1", std::process::id()),
+                wrapper.as_bytes(),
+            ) {
+                Ok(path) => path,
+                Err(err) => {
+                    let _ = std::fs::remove_file(&script);
+                    let _ = std::fs::remove_file(&vigem);
+                    self.error = err;
+                    return;
+                }
+            };
+            self.push_log(format!(
+                "[installer] bundled firewall + ViGEmBus setup (offline, ports {port}/{video_port}/{web_port}; manual driver: {VIGEM_PAGE})"
+            ));
+            let outer = format!(
+                "Start-Process -FilePath '{powershell}' -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','{wrapper_q}' -Verb RunAs -Wait | Out-Null; $text = if (Test-Path '{result_q}') {{ (Get-Content '{result_q}' -Raw).Trim() }} else {{ 'fail: installer did not report a result' }}; Write-Output $text; if ($text -notlike 'ok*') {{ exit 1 }}",
+                powershell = powershell,
+                wrapper_q = quote(&wrapper_path),
+                result_q = quote(&result),
+            );
             thread::spawn(move || {
-                let escaped = script.to_string_lossy().replace('\'', "''");
-                let escaped_program = program.to_string_lossy().replace('\'', "''");
-                let command = format!(
-                    "Start-Process -FilePath '{powershell}' -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','{escaped}','-Program','{escaped_program}','-Port','{port}','-VideoPort','{video_port}','-WebPort','{web_port}' -Verb RunAs -Wait"
-                );
                 let output = Command::new(powershell)
                     .arg("-NoProfile")
                     .arg("-Command")
-                    .arg(command)
+                    .arg(outer)
                     .output();
-                let _ = std::fs::remove_file(&cleanup);
+                for path in [&script, &vigem, &wrapper_path, &result] {
+                    let _ = std::fs::remove_file(path);
+                }
                 report_install_output(output, tx);
             });
         }
@@ -1585,6 +1641,27 @@ fn firewall_script() -> Result<PathBuf, String> {
     )
 }
 
+/// Files used by the elevated installer do not need to sit beside the app.
+#[cfg(target_os = "windows")]
+fn write_temp_file(file_name: &str, bytes: &[u8]) -> Result<PathBuf, String> {
+    let path = env::temp_dir().join(file_name);
+    std::fs::write(&path, bytes).map_err(|err| format!("Could not write {file_name}: {err}"))?;
+    Ok(path)
+}
+
+#[cfg(target_os = "windows")]
+fn vigem_installer() -> Result<PathBuf, String> {
+    if let Ok(path) = env::var("LEMO_GAMEPAD_VIGEM_INSTALLER") {
+        if !path.trim().is_empty() {
+            return Ok(PathBuf::from(path));
+        }
+    }
+    write_temp_file(
+        &format!("lemoGamePad-ViGEmBus-{}.exe", std::process::id()),
+        EMBEDDED_VIGEM,
+    )
+}
+
 #[cfg(target_os = "linux")]
 fn installer_path() -> Result<PathBuf, String> {
     if let Ok(path) = env::var("LEMO_GAMEPAD_INSTALLER") {
@@ -1693,10 +1770,10 @@ mod tests {
 
     #[test]
     fn compares_release_tags() {
-        assert!(newer("v2.2.3", APP_VERSION));
+        assert!(newer("v2.2.4", APP_VERSION));
         assert!(newer("2.3", APP_VERSION));
         assert!(!newer("v2.1.6", APP_VERSION));
-        assert!(!newer("2.2.2", APP_VERSION));
+        assert!(!newer("2.2.3", APP_VERSION));
         assert!(!newer("v2", "2.0.1"));
     }
 
@@ -1735,6 +1812,13 @@ mod tests {
     fn windows_firewall_script_is_bundled() {
         assert!(EMBEDDED_FIREWALL.contains("param("));
         assert!(EMBEDDED_FIREWALL.contains("New-NetFirewallRule"));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_vigembus_installer_is_bundled() {
+        assert_eq!(&EMBEDDED_VIGEM[..2], b"MZ");
+        assert!(EMBEDDED_VIGEM.len() > 5_000_000);
     }
 
     #[test]

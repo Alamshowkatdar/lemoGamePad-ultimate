@@ -7,10 +7,10 @@
 | Symptom | Fix |
 |---|---|
 | SmartScreen blocks the EXE | **More info → Run anyway**. The EXE is unsigned. |
-| A UAC prompt asks for permission | It only appears after **Settings → Install dependencies** in the desktop panel. Approve it to run the firewall helper; ViGEmBus is installed manually. |
+| A UAC prompt asks for permission | It only appears after **Settings → Install dependencies** in the desktop panel. Approve it to add the firewall rules and install the bundled ViGEmBus driver offline. |
 | Scan finds nothing | Look at the diagnostics line: `no interface` means the phone has no link of that transport (enable USB tethering); `no reply` means probes left but nothing answered. If the link is up, read the server's `Firewall` line. Otherwise disable "AP/client isolation" on the router and avoid guest networks. |
 | Server says `Firewall : NOT open` | Accept the UAC prompt, or run `pc\allow_firewall.ps1` as Administrator. |
-| Server says `ViGEmBus : MISSING` | Install [ViGEmBus 1.22.0](https://github.com/nefarius/ViGEmBus/releases/tag/v1.22.0) once and reboot if asked. `--no-install-deps` only hides reminders. |
+| Server says `ViGEmBus : MISSING` | Run **Settings → Install dependencies**, confirm and approve UAC; the bundled signed driver installs offline. If that fails, install [ViGEmBus 1.22.0](https://github.com/nefarius/ViGEmBus/releases/tag/v1.22.0) manually and reboot if asked. `--no-install-deps` only hides reminders. |
 | `CONNECTING · 192.168.x.x` forever | Wrong IP, firewall blocked, or the server is not running. Check the `PC IP` line. |
 | Wi-Fi works for internet but not for the pad | The network isolates clients (guest Wi-Fi, "AP isolation"). Use **USB**, or move both devices to a normal network. |
 | `WI-FI found no PC — linked over USB instead` | Wi-Fi answered with nothing while the USB tether did answer. Use the link that works. |
