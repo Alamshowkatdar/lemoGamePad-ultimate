@@ -2,6 +2,22 @@
 
 Newest first. The reasoning behind each release is in [`docs/REVIEW.md`](docs/REVIEW.md).
 
+## 2.2.2
+
+- **Embedded receiver in the desktop panel.** `lemoGamePad-app` now runs the
+  receiver in-process instead of spawning a separate EXE. The Status tab reflects
+  the live receiver immediately, and the Log tab shows receiver output directly.
+- **Fixed the false "Update check failed" notice.** Being up to date is no longer
+  reported as a failed check; an up-to-date result now reads "No releases
+  available — you are up to date", and only real network/parse errors warn.
+- **Cyberpunk desktop panel.** Monospace neon fonts, animated tab/status icons,
+  and a responsive title that scales down instead of colliding with the header.
+  Buttons collapse to animated icons below 450px.
+- **Fixed Stop → Restart "address already in use".** Shutdown now drops the
+  web server that held an `Arc` back to the receiver, releasing the UDP socket.
+- **Self-contained dependency setup.** The Linux and Windows setup scripts are
+  embedded in the app, and the install result is reported on the main page.
+
 ## 2.2.1
 
 - **Fixed the Windows receiver build.** The ViGEm client library is reused for

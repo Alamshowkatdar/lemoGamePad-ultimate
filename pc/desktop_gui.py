@@ -29,7 +29,7 @@ from typing import Any, Optional
 
 
 MAX_PHONES = 8
-APP_VERSION = "2.2.1"
+APP_VERSION = "2.2.2"
 REPO_OWNER = "Alamshowkatdar"
 REPO_NAME = "lemoGamePad-ultimate"
 RELEASES_API = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/releases/latest"

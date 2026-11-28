@@ -32,12 +32,12 @@ At minimum:
 
 ## 3. Tag and publish
 
-Use the exact version label as the tag (`2.2.1`). The workflow strips an optional
+Use the exact version label as the tag (`2.2.2`). The workflow strips an optional
 leading `v`, but plain labels keep the APK name, documentation and update checks
 identical. Do not reuse a tag that has already been published.
 
 ```bash
-git tag -a 2.2.1 -m "lemoGamePad ultimate 2.2.1"
+git tag -a 2.2.2 -m "lemoGamePad ultimate 2.2.2"
 git push origin main --tags
 ```
 

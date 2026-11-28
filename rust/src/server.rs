@@ -277,8 +277,11 @@ impl Server {
         {
             let _ = thread.join();
         }
-        if let Some(web) = self.web.lock().unwrap_or_else(|err| err.into_inner()).as_mut() {
-            web.stop();
+        // Take the WebServer out so its Drop runs. It holds Arc<Self> as its
+        // host, so leaving it in place keeps a reference cycle alive and the
+        // UDP socket bound after Stop.
+        if let Some(web) = self.web.lock().unwrap_or_else(|err| err.into_inner()).take() {
+            drop(web);
         }
         if let Some(video) = self.video.lock().unwrap_or_else(|err| err.into_inner()).as_mut() {
             video.stop();
@@ -2069,5 +2072,37 @@ impl WebHost for Server {
 
     fn log(&self, message: String) {
         log::line(message);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cli::Config;
+    use std::time::Duration;
+
+    #[test]
+    fn shutdown_releases_udp_port_for_restart() {
+        let mut config = Config::default();
+        config.port = 39777;
+        config.video_port = 39778;
+        config.web_port = 39779;
+        config.video = false;
+        config.web = true;
+        config.qr = false;
+        config.install_deps = false;
+
+        let server = Arc::new(Server::new(&config).expect("first bind"));
+        let worker = Arc::clone(&server);
+        let thread = thread::spawn(move || worker.run());
+        thread::sleep(Duration::from_millis(60));
+        server.stop();
+        thread.join().expect("server thread");
+        drop(server);
+
+        // Without dropping the WebServer's Arc<Self> cycle, this fails with
+        // "address already in use" because the UDP socket is still alive.
+        let restart = Server::new(&config).expect("second bind after stop");
+        drop(restart);
     }
 }

@@ -18,8 +18,8 @@ android {
         applicationId = "com.alamshowkat.lemogamepad"
         minSdk = 24
         targetSdk = 34
-        versionCode = 40
-        versionName = "2.2.1"
+        versionCode = 41
+        versionName = "2.2.2"
     }
 
     signingConfigs {

@@ -1,11 +1,26 @@
-//! Minimal timestamped logging. All lines go to stdout so the desktop panel
-//! can read them exactly as it read the Python server's console output.
+//! Minimal timestamped logging. All lines go to stdout so standalone runs keep
+//! the same console output, and subscribers (the desktop panel) get a copy.
 
 use std::io::{self, Write};
+use std::sync::mpsc::Sender;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 static STDOUT_LOCK: Mutex<()> = Mutex::new(());
+static SUBSCRIBERS: Mutex<Vec<Sender<String>>> = Mutex::new(Vec::new());
+
+/// Receive a copy of every log line. Used by the embedded receiver in the GUI.
+pub fn subscribe(sender: Sender<String>) {
+    SUBSCRIBERS
+        .lock()
+        .unwrap_or_else(|err| err.into_inner())
+        .push(sender);
+}
+
+fn broadcast(line: &str) {
+    let mut subscribers = SUBSCRIBERS.lock().unwrap_or_else(|err| err.into_inner());
+    subscribers.retain(|sender| sender.send(line.to_owned()).is_ok());
+}
 
 fn stamp() -> String {
     let now = SystemTime::now()
@@ -19,15 +34,25 @@ fn stamp() -> String {
 }
 
 pub fn line(message: impl AsRef<str>) {
-    let _guard = STDOUT_LOCK.lock().unwrap_or_else(|err| err.into_inner());
-    let mut out = io::stdout().lock();
-    let _ = writeln!(out, "[{}] {}", stamp(), message.as_ref());
-    let _ = out.flush();
+    let text = {
+        let _guard = STDOUT_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+        let mut out = io::stdout().lock();
+        let formatted = format!("[{}] {}", stamp(), message.as_ref());
+        let _ = writeln!(out, "{formatted}");
+        let _ = out.flush();
+        formatted
+    };
+    broadcast(&text);
 }
 
 pub fn plain(message: impl AsRef<str>) {
-    let _guard = STDOUT_LOCK.lock().unwrap_or_else(|err| err.into_inner());
-    let mut out = io::stdout().lock();
-    let _ = writeln!(out, "{}", message.as_ref());
-    let _ = out.flush();
+    let text = {
+        let _guard = STDOUT_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+        let mut out = io::stdout().lock();
+        let text = message.as_ref().to_owned();
+        let _ = writeln!(out, "{text}");
+        let _ = out.flush();
+        text
+    };
+    broadcast(&text);
 }
