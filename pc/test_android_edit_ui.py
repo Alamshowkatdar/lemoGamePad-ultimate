@@ -120,8 +120,30 @@ def package_installed(adb, package):
     return "package:{}".format(package) in out
 
 
+def hierarchy_size(adb):
+    """Return the rotated window size from the uiautomator root node."""
+    match = re.search(
+        r'<hierarchy\b.*?<node\b[^>]*\bbounds="\[-?\d+,-?\d+\]\[(\d+),(\d+)\]"',
+        ui_dump(adb),
+        re.S,
+    )
+    if match:
+        return int(match.group(1)), int(match.group(2))
+    return None
+
+
 def screen_size(adb):
-    """Return the logical display size, preferring an active size override."""
+    """Return the size of the visible window, including rotation.
+
+    ``wm size`` reports the unrotated panel (for example 1080x2340 on a phone
+    held in landscape), while uiautomator reports the rotated window the app
+    actually draws into (2340x1080). Use the hierarchy first and fall back to
+    ``wm size`` only when no hierarchy is available.
+    """
+    size = hierarchy_size(adb)
+    if size:
+        return size
+
     physical = None
     for line in adb.text("shell", "wm", "size", check_result=False).splitlines():
         match = re.search(r"(\d+)\s*x\s*(\d+)", line)
@@ -301,21 +323,41 @@ def flip_toggle(adb, name):
 # ------------------------------------------------------------- navigation
 
 
-def enter_edit(adb, scale_x, scale_y):
-    """Open EDIT LAYOUT, using the known tap/swipe fallback when necessary."""
+def enter_edit(adb, scale_x=1.0, scale_y=1.0):
+    """Open EDIT LAYOUT from the pad through the settings sheet."""
     nodes = parse_nodes(ui_dump(adb))
     if any(node.text in ("SNAP ON", "SNAP OFF") for node in nodes):
         return  # already editing
 
-    bounds = find_node(adb, DUMP_NAME, timeout=2.0)
+    bounds = find_node(adb, DUMP_NAME, timeout=1.0)
     if bounds is None:
-        # Known-good sequence for the current app on a 1920x1080 landscape
-        # display; scaled for other logical resolutions as a best effort.
-        tap_xy(adb, 1170 * scale_x, 67 * scale_y)
-        tap_xy(adb, 1895 * scale_x, 195 * scale_y)
-        swipe_xy(adb, 1900 * scale_x, 850 * scale_y, 1900 * scale_x, 300 * scale_y)
-        swipe_xy(adb, 1900 * scale_x, 850 * scale_y, 1900 * scale_x, 550 * scale_y)
-        bounds = require_node(adb, DUMP_NAME, timeout=8.0)
+        size = hierarchy_size(adb) or (int(1920 * scale_x), int(1080 * scale_y))
+        # The status pill is drawn in the custom pad view, so it has no
+        # uiautomator text. It is centred at the top of the window.
+        tap_xy(adb, size[0] // 2, int(size[1] * 0.065))
+        require_node(adb, "CONTROL CENTRE", timeout=8.0)
+
+        if find_node(adb, "STYLE", timeout=2.0):
+            tap_text(adb, "STYLE")
+        if find_node(adb, DUMP_NAME, timeout=0.4) is None:
+            x = int(size[0] * 0.78)
+            top = int(size[1] * 0.78)
+            bottom = int(size[1] * 0.52)
+            for _ in range(10):
+                bounds = find_node(adb, DUMP_NAME, timeout=0.4)
+                if bounds:
+                    break
+                swipe_xy(adb, x, top, x, bottom, duration=250, pause=0.35)
+            if bounds is None:
+                # Scroll the other way in case the sheet remembered a deeper
+                # position from a previous run.
+                for _ in range(10):
+                    bounds = find_node(adb, DUMP_NAME, timeout=0.4)
+                    if bounds:
+                        break
+                    swipe_xy(adb, x, bottom, x, top, duration=250, pause=0.35)
+        if bounds is None:
+            bounds = require_node(adb, DUMP_NAME, timeout=5.0)
     tap_bounds(adb, bounds)
 
     state, _ = read_toggle(adb, "SNAP", timeout=8.0)
@@ -732,19 +774,17 @@ def main(argv=None):
 
     scale_x = scale_y = 1.0
     try:
+        launch_app(adb, args.package)
+        # Measure after launch: the app is landscape-locked, while ``wm size``
+        # reports the phone's unrotated panel. uiautomator bounds and the
+        # screencap already use the same window pixels, so no scaling is needed.
         size = screen_size(adb)
-        if size:
-            scale_x, scale_y = size[0] / BASE_W, size[1] / BASE_H
-        else:
-            scale_x = scale_y = 1.0
+        scale_x = scale_y = 1.0
         print(
-            "[edit-ui] package={} logical size={} scale=({:.3f}, {:.3f})".format(
-                args.package, size, scale_x, scale_y
-            ),
+            "[edit-ui] package={} window size={}".format(args.package, size),
             flush=True,
         )
 
-        launch_app(adb, args.package)
         enter_edit(adb, scale_x, scale_y)
         verify_toggles(adb, scale_x, scale_y, args.screenshot_dir)
         verify_persistence(adb, scale_x, scale_y)
